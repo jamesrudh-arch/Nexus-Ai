@@ -46,12 +46,11 @@ jobs:
           fetch-depth: 0
 
       - name: gitleaks (full history)
+        # No `with:` block on purpose. gitleaks-action@v2 accepts no inputs at all — passing
+        # config-path produces "Unexpected input(s) 'config-path', valid inputs are ['']" and is
+        # silently ignored. The gitleaks binary auto-discovers .gitleaks.toml at the repository
+        # root, which is where the narrow allowlist lives.
         uses: gitleaks/gitleaks-action@v2
-        with:
-          # Explicit rather than relying on discovery: the config carries a narrow allowlist for
-          # two fabricated redaction-test fixtures (see .gitleaks.toml). If this path ever stops
-          # resolving, the scan would fall back to the default ruleset and fail on fixtures.
-          config-path: .gitleaks.toml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

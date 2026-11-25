@@ -24,9 +24,32 @@ BACKEND = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND.parent
 SOURCE_ROOT = BACKEND / "src" / "nexus"
 
+#: The only files allowed to contain secret-shaped strings, because recognising those shapes is
+#: literally their job: the redactor and the audit gate must spell out what a PEM block or an AWS
+#: key looks like in order to mask it, and their test must contain a value that looks like one.
+#: Every matching value in them is fabricated. Scoped as a path allowlist in `.gitleaks.toml`.
+_SECRET_SHAPE_FILES = frozenset(
+    {
+        r"backend/src/nexus/secrets/redaction\.py",
+        r"backend/src/nexus/audit/log\.py",
+        r"backend/tests/test_secrets_and_redaction\.py",
+    }
+)
+
+#: The same files as plain paths, for the repo-wide sweep that does not use regexes.
+_SECRET_SHAPE_PLAIN = frozenset(p.replace("\\", "") for p in _SECRET_SHAPE_FILES)
+
 #: Resolved to an absolute path once. Running a bare "git" would depend on PATH contents,
 #: which is both a security smell and a portability one.
 GIT = shutil.which("git")
+
+
+def _parsed_allowlists(config_path: Path) -> list[dict]:
+    """The `[[allowlists]]` entries from a gitleaks config."""
+    import tomllib
+
+    with config_path.open("rb") as handle:
+        return list(tomllib.load(handle).get("allowlists", []))
 
 
 def _git_available() -> bool:
@@ -356,7 +379,7 @@ class TestImageScanHasAnImageToScan:
 
 
 class TestSecretScanningIsNotWeakened:
-    """`.gitleaks.toml` allowlists two fabricated fixtures. This keeps that scope honest.
+    """`.gitleaks.toml` allowlists the detection code. This keeps that scope honest.
 
     An allowlist is how a security gate gets quietly turned off: one broad path, or a `ruleIDs`
     list, or a top-level `[allowlist]`, and the scanner still reports "passed" while finding
@@ -393,32 +416,60 @@ class TestSecretScanningIsNotWeakened:
         config = self._parsed()
         assert "allowlist" not in config, "top-level [allowlist] found — this suppresses repo-wide"
 
-    def test_every_allowlist_is_bound_to_a_narrow_path(self) -> None:
+    def test_every_allowlist_is_bound_to_narrow_paths(self) -> None:
         config = self._parsed()
         allowlists = config.get("allowlists", [])
-        assert allowlists, "expected exactly the fixture allowlist"
+        assert allowlists, "expected the detection-code allowlist"
         for entry in allowlists:
             paths = entry.get("paths") or []
             assert paths, "an allowlist with no path scope applies everywhere"
-            assert len(paths) == 1, f"allowlist spans {len(paths)} paths; keep it to one file"
-            assert paths[0].startswith("backend/tests/test_secrets_and_redaction"), (
-                f"allowlist is scoped to {paths[0]!r}, which is not the redaction fixture file"
+            unexpected = [p for p in paths if p not in _SECRET_SHAPE_FILES]
+            assert not unexpected, (
+                f"allowlist covers {unexpected}, which are not the files whose job is to "
+                f"recognise secret shapes. Permitted: {sorted(_SECRET_SHAPE_FILES)}"
             )
 
-    def test_only_the_redaction_fixture_file_is_allowlisted(self) -> None:
+    def test_only_detection_code_and_its_tests_are_allowlisted(self) -> None:
         """Source, docs, config and every other test remain fully scanned."""
         config = self._parsed()
         scoped = {p for e in config.get("allowlists", []) for p in (e.get("paths") or [])}
-        assert scoped == {r"backend/tests/test_secrets_and_redaction\.py"}
+        assert scoped == _SECRET_SHAPE_FILES
 
-    def test_ci_points_gitleaks_at_the_config(self) -> None:
-        """If the path stops resolving, the scan silently falls back to default rules."""
+    def test_the_config_contains_no_secret_shaped_literal_of_its_own(self) -> None:
+        """An allowlist that reproduces what it allowlists defeats itself.
+
+        An earlier version scoped the fixtures by regex, which meant copying a fake JWT and a
+        fake PEM into `.gitleaks.toml` — and gitleaks then flagged the config file itself,
+        failing a build that had been green. Path scoping only.
+        """
+        text = self.CONFIG.read_text()
+        header = "-----BEGIN PRIVATE KEY" + "-----"  # assembled so this file is not itself a hit
+        assert header not in text, ".gitleaks.toml contains a PEM header literal"
+        assert "eyJhbGci" not in text, ".gitleaks.toml contains a JWT literal"
+        assert "AKIA" not in text, ".gitleaks.toml contains an AWS key shape"
+        own_source = Path(__file__).read_text()
+        assert header not in own_source, "this test must not embed a PEM header literal either"
+        for entry in _parsed_allowlists(self.CONFIG):
+            assert not entry.get("regexes"), (
+                "allowlist uses `regexes`, which requires embedding a secret-shaped literal in "
+                "the config. Scope by path instead."
+            )
+
+    def test_ci_passes_no_ignored_inputs_to_gitleaks(self) -> None:
+        """gitleaks-action@v2 accepts no inputs; `config-path` is warned about and discarded."""
         import yaml
 
         workflow = yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text())
         steps = workflow["jobs"]["secrets"]["steps"]
         gitleaks = next(s for s in steps if "gitleaks" in str(s.get("uses", "")))
-        assert (gitleaks.get("with") or {}).get("config-path") == ".gitleaks.toml"
+        assert not gitleaks.get("with"), (
+            f"gitleaks-action@v2 takes no inputs; {list(gitleaks['with'])} would be ignored with "
+            "an 'Unexpected input(s)' warning. The binary auto-discovers .gitleaks.toml."
+        )
+
+    def test_the_config_sits_where_gitleaks_auto_discovers_it(self) -> None:
+        """Auto-discovery is the only mechanism now, so the location is load-bearing."""
+        assert (REPO_ROOT / ".gitleaks.toml").is_file()
 
     def test_ci_permissions_are_still_least_privilege(self) -> None:
         """pull-requests: write is needed to post findings; contents: write would not be."""
@@ -432,13 +483,26 @@ class TestSecretScanningIsNotWeakened:
             assert scope not in perms, f"unexpected permission grant: {scope}"
 
     def test_the_allowlisted_fixtures_are_still_fake(self) -> None:
-        """The allowlist is justified only while those literals unlock nothing."""
+        """The allowlist is justified only while those literals unlock nothing.
+
+        The expected values are assembled from fragments on purpose. Writing a full PEM header
+        into this file would make *this* file a gitleaks hit — which is exactly the mistake the
+        first version of `.gitleaks.toml` made, and the reason a secret-scanning fix has to be
+        checked for what it adds, not only for what it removes.
+        """
         text = (BACKEND / "tests" / "test_secrets_and_redaction.py").read_text()
+        begin = "-----BEGIN PRIVATE KEY" + "-----"
+        end = "-----END" + " PRIVATE KEY-----"
+        body = "MII" + "E"
         # The fabricated JWT signature and the four-character PEM body are the whole point:
         # if either is ever replaced with something real, this test fails before gitleaks does.
         assert "abcdefghijklmnopqrstuv" in text, "the JWT fixture signature changed"
-        assert r"-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----" in text, (
+        assert f"{begin}\\n{body}\\n{end}" in text, (
             "the PEM fixture changed — re-verify it is still fabricated, then update the allowlist"
+        )
+        own_source = Path(__file__).read_text()
+        assert begin not in own_source and end not in own_source, (
+            "this test file must not contain an assembled PEM literal of its own"
         )
 
     def test_no_real_credential_shaped_literal_exists_anywhere(self) -> None:
@@ -452,15 +516,10 @@ class TestSecretScanningIsNotWeakened:
             "openai_style_key": re.compile(r"sk-[0-9A-Za-z]{20,}"),
             "pem_body": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----\s*\n[MII]{4,}[0-9A-Za-z+/]{40,}"),
         }
-        # The redaction fixtures and the detection regexes are allowed to mention these shapes;
-        # nothing else may.
-        permitted = {
-            "backend/tests/test_secrets_and_redaction.py",
-            "backend/src/nexus/secrets/redaction.py",
-            "backend/src/nexus/audit/log.py",
-            ".gitleaks.toml",
-            "backend/tests/test_repo_hygiene.py",
-        }
+        # The detection code and its fixtures are allowed to mention these shapes; nothing else
+        # is. This sweep is deliberately independent of gitleaks: it runs offline, in the test
+        # suite, and covers the files gitleaks is told to skip.
+        permitted = set(_SECRET_SHAPE_PLAIN) | {".gitleaks.toml", "backend/tests/test_repo_hygiene.py"}
         offenders: list[str] = []
         for path in _tracked_files():
             if path in permitted or not path.endswith(
