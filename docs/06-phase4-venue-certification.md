@@ -148,6 +148,44 @@ route probe used GET where it meant POST, so it failed against a correct applica
 negative controls over these tests fired, and each mutated file was verified restored individually
 rather than inferred from the controls passing.
 
+### 3.2 Result — B-1, B-2 and B-3 are closed on x86-64
+
+Two CI runs, and the first one failed in the most useful way available.
+
+**Run 1 — `2ca6ca5`, push run `45716117878`, job `139562484012`: FAILED.** The image built and
+loaded, compose pulled TimescaleDB and NATS, and `db` reached healthy. Then:
+`dependency failed to start: container nexus-smoke-nats-1 is unhealthy`. That is defect 36, and it
+is the first time this project has ever observed a container start. The failure was diagnosed
+entirely from the republished annotation, without log access.
+
+**Run 2 — `91393af`, push run `45718271682` and pull_request run `45718281143`: PASSED, 59 checks,
+all five jobs green on both events.** What is now measured from inside a running container rather
+than inferred from a build:
+
+- `compose up` brings up `db`, `nats` and `core` and all three report healthy — **the stack starts**;
+- `docker` itself reports `core` healthy, so **the image's own `HEALTHCHECK` answers** (curl reaches
+  `/healthz` on 127.0.0.1:8000 from inside);
+- all 34 posture checks pass against a real process: phase gate closed, live authority `DENIED` with
+  seven blocking reasons, no venue adapters, unauthenticated read-only market data at zero cost, SMS
+  and WhatsApp blocked, no order/trade/execute/position/withdraw/transfer route, halt and
+  halt/release as the only mutations, instrument master refusing POST with 405;
+- **`setuptools` and `pip` are both absent from the runtime image**, and no manifest in the image
+  declares setuptools. This closes limitation 2: the pip removal is now *observed in the image*, not
+  reasoned from a dev venv whose package set differs (the reasoning error behind `docs/05` defects
+  25 and 30);
+- the IANA tz database is installed, so the import-time `ZoneInfo("America/New_York")` that defect 26
+  flagged is satisfied in the image and not merely in the base;
+- the process is not root and runs as `nexus`, uid 1001; `/app/data` exists, is writable by that
+  user, and holds a writable `nexus.db` on the named volume;
+- **durability, twice**: across a restart (2 → 3 rows) and across a container recreate against the
+  surviving volume (3 → 4 rows). In both cases the new process read the stored chain head and
+  appended to it rather than restarting at seq 0, and `/v1/audit/verify` still reports the chain
+  intact. A recreate is what separates "on the volume" from "in the writable layer"; a restart alone
+  cannot tell those apart, so both were run.
+
+B-4 (ARM64-native execution and the memory budget) is unaffected by this and remains VM-only: CI
+builds arm64 under QEMU and the smoke job runs amd64. Everything above is x86-64 evidence.
+
 **O-009 and O-010 can be closed from CI, not from this sandbox.** GitHub-hosted runners have
 internet egress, which the sandbox does not: a scheduled or on-demand workflow can contact the
 public Bybit and OKX endpoints and fetch a real Dukascopy bi5 file, then compare both against the
@@ -159,19 +197,20 @@ endpoints only).
 
 ## 4. Limitations — what is NOT verified
 
-Per Appendix C. These are open, not finished.
+Per Appendix C. Items 1 and 2 were closed by the first container run (§3.2) and are kept here,
+marked, so the cross-references elsewhere in this document stay valid. Items 3 to 7 are open.
 
-1. **`core` has still never run inside a container.** Containers have now been started — the first
-   real `docker compose up` ran in CI on 2026-11-25 — and it got as far as TimescaleDB reporting
-   healthy before NATS was found permanently unhealthy (defect 36), which stopped `core` from ever
-   starting. So the image builds, its entrypoint imports, and one dependency has been observed
-   running; every claim about the *application* serving a request from inside the runtime image is
-   still inference, and limitation 2 stands with it. This narrows again on the next CI run.
-2. **The pip removal from the runtime image is reasoned, not observed.** It was verified safe by
-   grepping every installed distribution's metadata in the **dev venv**, whose package set differs
-   from the image's — the same mistake as `docs/05` defect 30, which cost a red build. Nothing in
-   `src/nexus` shells out to pip, but if an installed package imports it at runtime, only B-2 will
-   find out.
+1. **CLOSED for x86-64 — `core` now runs in a container and serves.** The numbering is kept so the
+   cross-references above stay valid. As of `91393af` (runs `45718271682` / `45718281143`) the stack
+   comes up, the image's own `HEALTHCHECK` answers, and 59 checks pass against a real process — see
+   §3.2. What remains open is narrower and lives in item 4: all of this is amd64 evidence, and the
+   deployment host (D-021) is ARM64, where the image has only ever been cross-compiled under QEMU.
+2. **CLOSED — the pip removal is now observed in the image, not reasoned about.** The reasoning that
+   closed O-011 came from grepping the **dev venv**, whose package set differs from the image's: the
+   same mistake as `docs/05` defect 30, which cost a red build. B-2 removed the inference. From
+   inside the running container, both interpreters fail to import `pip` and `setuptools`, no
+   manifest in the image declares setuptools, the application serves every route, and the audit
+   store writes. Nothing that was installed imports pip at runtime, which was the open question.
 3. **PostgreSQL/TimescaleDB is still untested at runtime**, and is now known to be *unused* by
    `core` (defect 34). Only SQLite has ever been exercised.
 4. **The ARM64 build is QEMU-emulated in CI.** It proves cross-compilation, not native execution or
@@ -203,6 +242,8 @@ Per Appendix C. These are open, not finished.
 | Checker against a real process | **34/34 checks passed** against the application served by uvicorn on a real socket (posture, phase gate, DENIED authority with reasons, no order route, halt-only mutations, master refuses POST with 405, hash chain intact) | 2026-11-25 | sandbox, no docker |
 | Negative controls | **10 of 10 fired**: 6 over the smoke wiring (image not loaded, job gated behind lint, annotation step disabled, wrong expected phase, checker path renamed, unreachable-process handler removed), 1 reverting the NATS port fix, 3 over the async bridge (synchronous connect, no loop cleanup on failed connect, no loop cleanup on close) | 2026-11-25 | same |
 | Control restoration | Every mutated file verified restored individually against its pre-mutation content, and `git diff --numstat` reviewed before committing — the defect 35 discipline, applied rather than merely recorded | 2026-11-25 | same |
+| CI green after the fixes | **All five jobs green on both events** at `91393af`: `push` run `45718271682`, `pull_request` run `45718281143` — Backend ✓ · Compose ✓ · Secret scanning ✓ · Container image (amd64 + arm64) ✓ · **Runtime smoke test ✓** | 2026-11-25 | GitHub-hosted `ubuntu-latest`, x86-64 |
+| B-1/B-2/B-3 closed | **59 checks passed** from inside a running container: the stack comes up healthy, the image `HEALTHCHECK` answers, all 34 posture checks hold against a real process, `pip` and `setuptools` are absent from the image, tzdata installed, uid 1001, `/app/data` writable with `nexus.db` on the volume, and the audit chain survives both a restart (2→3 rows) and a container recreate (3→4 rows) still verifying intact | 2026-11-25 | same, job `45718271682` |
 | Defect 37 measurement | `asyncio.iscoroutinefunction(nats.connect)` → `True`; calling it synchronously returns a `coroutine` with no `jetstream` attribute. Measured against the installed library, not inferred from documentation | 2026-11-25 | sandbox, nats-py installed |
 
 The 1 skip is a pre-existing `pytest.skip` for an interval outside the modelled set, not a disabled
