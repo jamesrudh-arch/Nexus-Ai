@@ -233,6 +233,51 @@ The run used a temporary directory and removed it afterwards; nothing was writte
 repository. It is reproducible with `pytest tests/test_pipeline.py` plus the archive suite,
 which assert the same properties on fixed inputs.
 
+### 3.5 Fresh-clone verification (defect 12)
+
+Defect 12 meant a clone of the repository could not import the package. Unit tests run
+against the working tree, so they cannot detect that — only a clone can. Verified
+2026-11-25 against commit `c9e0576`:
+
+```
+$ git clone /home/user/Nexus-Ai clone-verify && cd clone-verify
+source modules in the clone ............... 49   (working tree: 49)
+data/__init__.py .......................... PRESENT
+data/freshness.py ......................... PRESENT
+data/records.py ........................... PRESENT
+secrets/__init__.py ....................... PRESENT
+secrets/provider.py ....................... PRESENT
+secrets/redaction.py ...................... PRESENT
+artifacts wrongly committed ............... none (.pyc/__pycache__/.parquet/.sqlite/.env)
+total tracked files ....................... 86
+
+$ PYTHONPATH=clone-verify/backend/src python -c "import nexus, nexus.data.records, \
+      nexus.secrets.provider, nexus.archive.retention, nexus.ingestion.pipeline, \
+      nexus.instruments.sessions, nexus.api.app"
+nexus loaded from : /tmp/clone-verify/backend/src/nexus/__init__.py
+version / phase   : 0.2.0 3-market-data
+phase gate        : {'phase': 3, 'live_trading': False, 'venue_adapters': False,
+                     'real_money_orders_possible': False, 'market_data_sources': True,
+                     'order_capability': False}
+redaction         : [REDACTED]
+CONFIRMED: every import resolved inside the fresh clone
+
+$ cd clone-verify/backend && pytest -q
+FRESH CLONE: tests=824 failures=0 errors=0 skipped=1
+```
+
+Three things this establishes: the clone holds every module (49 = 49), the imports resolve
+*inside the clone* rather than falling back to the development tree, and the whole suite
+passes from a clean checkout. The clone was made in `/tmp` and holds no secrets, no archive
+data and no `.env`.
+
+The `.gitignore` guard was additionally verified by **negative control**: appending the old
+unanchored `data/` and `secrets/` patterns makes `test_repo_hygiene.py` fail and name all six
+modules, and restoring the file makes it pass again. A guard that cannot fail is not a guard —
+the first version of this test was vacuous, because `git check-ignore` consults the index and
+reports an already-tracked path as "not ignored"; it now passes `--no-index`, which asks the
+question that actually matters: what would happen to a fresh clone.
+
 ---
 
 ## 4. Defects found and fixed during Phase 3
@@ -326,6 +371,7 @@ Stated plainly, per Appendix C. These are open items, not finished work.
 | Sessions/calendar | DST-correct FX window, exchange sessions, declared holiday coverage, fail-closed unknowns; 53 tests | **PASS** |
 | Zero cost (D-019) | Free sources only; CI greps for paid vendors; no credential anywhere | **PASS** |
 | No live trading | Phase gate `False`×4; no order route; adapters credential-free and verb-free | **PASS** |
+| Repository is complete and cloneable | Fresh clone holds 49/49 modules, imports resolve inside the clone, 824 tests pass from a clean checkout; no artifact or credential-shaped file tracked (§3.5) | **PASS** |
 
 **Phase 3 exit gate: PASSED for the offline-verifiable scope.** Two items must close before
 Phase 3 can be called complete rather than code-complete:
