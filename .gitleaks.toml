@@ -53,3 +53,23 @@ paths = [
   '''backend/src/nexus/audit/log\.py''',
   '''backend/tests/test_secrets_and_redaction\.py''',
 ]
+
+[[allowlists]]
+description = """
+One commit, by SHA, for one mistake that is now fixed at HEAD.
+
+Commit eb5234f added the first version of this file. That version allowlisted the fixtures by
+regex, which meant copying a fabricated JWT and a fabricated PEM block into `.gitleaks.toml`
+itself — and into `backend/tests/test_repo_hygiene.py`, which asserted those literals were still
+present. Both files are outside the path allowlist above, so gitleaks flags that commit.
+
+The literals were removed one commit later, in 1f7d17b, and `git grep` confirms HEAD carries
+secret-shaped strings only inside the three allowlisted paths. Nothing in this entry is a real
+credential: the JWT's signature is a run of the alphabet and the PEM body is four characters.
+
+A `pull_request` run scans the whole branch history, which is why this is needed at all — a
+`push` run scans only new commits and was already green. Scoping by commit SHA is the narrowest
+available fix: it excuses one historical revision without reducing coverage of any file at HEAD,
+and without rewriting published history.
+"""
+commits = ['eb5234f25a587da6b442785be8754a6954f0bdd4']

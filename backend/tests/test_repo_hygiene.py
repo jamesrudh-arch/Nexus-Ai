@@ -39,6 +39,20 @@ _SECRET_SHAPE_FILES = frozenset(
 #: The same files as plain paths, for the repo-wide sweep that does not use regexes.
 _SECRET_SHAPE_PLAIN = frozenset(p.replace("\\", "") for p in _SECRET_SHAPE_FILES)
 
+#: Exactly one historical revision is excused from secret scanning, by full SHA.
+#:
+#: `eb5234f` added the first version of `.gitleaks.toml`, which allowlisted the redaction
+#: fixtures *by regex* — so it copied a fabricated JWT and a fabricated PEM block into the
+#: config file and into `test_repo_hygiene.py`, neither of which is a detection-code path.
+#: Both literals were removed in the very next commit. A `pull_request` run scans the whole
+#: branch history, so without this the scan fails on a revision that no longer exists at HEAD.
+#:
+#: The values were never credentials: the JWT's signature is a run of the alphabet and the PEM
+#: body is four characters. `test_head_carries_secret_shapes_only_in_allowlisted_paths` is what
+#: makes excusing this safe — it fails the moment any current file outside the allowlist holds
+#: a secret-shaped literal, so the excuse cannot quietly become a hiding place.
+_ALLOWLISTED_COMMITS = ("eb5234f25a587da6b442785be8754a6954f0bdd4",)
+
 #: Resolved to an absolute path once. Running a bare "git" would depend on PATH contents,
 #: which is both a security smell and a portability one.
 GIT = shutil.which("git")
@@ -422,12 +436,76 @@ class TestSecretScanningIsNotWeakened:
         assert allowlists, "expected the detection-code allowlist"
         for entry in allowlists:
             paths = entry.get("paths") or []
-            assert paths, "an allowlist with no path scope applies everywhere"
+            commits = entry.get("commits") or []
+            assert paths or commits, "an allowlist with neither path nor commit scope applies everywhere"
             unexpected = [p for p in paths if p not in _SECRET_SHAPE_FILES]
             assert not unexpected, (
                 f"allowlist covers {unexpected}, which are not the files whose job is to "
                 f"recognise secret shapes. Permitted: {sorted(_SECRET_SHAPE_FILES)}"
             )
+            unexpected_commits = [c for c in commits if c not in _ALLOWLISTED_COMMITS]
+            assert not unexpected_commits, (
+                f"allowlist excuses commit(s) {unexpected_commits}. Only "
+                f"{sorted(_ALLOWLISTED_COMMITS)} may be excused, each with a documented reason."
+            )
+
+    def test_exactly_one_commit_is_excused_and_why(self) -> None:
+        """A commit allowlist excuses history forever, so it must stay a closed, documented set."""
+        config = self._parsed()
+        excused = [c for e in config.get("allowlists", []) for c in (e.get("commits") or [])]
+        assert excused == list(_ALLOWLISTED_COMMITS)
+        for entry in config.get("allowlists", []):
+            if entry.get("commits"):
+                description = entry.get("description", "")
+                # The reason has to be written down, not just referenced by SHA.
+                assert len(description) > 200, "a commit allowlist needs a real explanation"
+                assert "fabricated" in description or "not a real credential" in description
+
+    def test_the_excused_commit_exists_in_this_repository(self) -> None:
+        """A typo'd SHA would silently excuse nothing — or, worse, look like it excuses something."""
+        import subprocess
+
+        for sha in _ALLOWLISTED_COMMITS:
+            assert GIT is not None
+            result = subprocess.run(  # noqa: S603 - fixed arguments, no shell, no user input
+                [GIT, "cat-file", "-e", f"{sha}^{{commit}}"],
+                cwd=REPO_ROOT,
+                capture_output=True,
+                check=False,
+            )
+            assert result.returncode == 0, f"allowlisted commit {sha} does not exist in this repo"
+
+    def test_head_carries_secret_shapes_only_in_allowlisted_paths(self) -> None:
+        """The invariant the commit allowlist depends on: HEAD itself is clean elsewhere.
+
+        Excusing one historical revision is only safe while no *current* file outside the
+        allowlist contains a secret-shaped literal. This checks the working tree directly, so if
+        a future commit reintroduces one the build fails instead of leaning on the old excuse.
+        """
+        header = "-----BEGIN PRIVATE KEY" + "-----"
+        # Assembled from fragments, exactly like the PEM header above. Written contiguously, this
+        # assertion would trip over its own search string — the test that looks for JWT literals
+        # would itself contain one, which is the same self-defeating move that broke the first
+        # version of `.gitleaks.toml`. gitleaks needs three dot-separated segments to fire, but
+        # this sweep is deliberately stricter than the scanner, so it has to hold itself to that.
+        jwt_prefix = "eyJhbGci" + "OiJIUzI1NiJ9"
+        offenders: list[str] = []
+        for path in _tracked_files():
+            if path in _SECRET_SHAPE_PLAIN:
+                continue
+            full = REPO_ROOT / path
+            if not full.is_file():
+                continue
+            try:
+                content = full.read_text()
+            except (UnicodeDecodeError, OSError):
+                continue
+            if header in content or jwt_prefix in content:
+                offenders.append(path)
+        assert not offenders, (
+            f"secret-shaped literals outside the allowlisted detection code: {offenders}. "
+            "Either remove them or justify widening the allowlist."
+        )
 
     def test_only_detection_code_and_its_tests_are_allowlisted(self) -> None:
         """Source, docs, config and every other test remain fully scanned."""
