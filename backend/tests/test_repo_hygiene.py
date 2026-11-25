@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 BACKEND = Path(__file__).resolve().parents[1]
 REPO_ROOT = BACKEND.parent
@@ -161,6 +162,42 @@ class TestSourceTreeIsTracked:
             str(p.relative_to(REPO_ROOT)) for p in migrations if str(p.relative_to(REPO_ROOT)) not in tracked
         ]
         assert not missing, f"untracked migrations: {missing}"
+
+    def test_running_the_suite_leaves_no_database_in_the_repository(self) -> None:
+        """Execute a test that builds the app with defaults, from the repository's own cwd.
+
+        `Settings.database_url` defaults to a *relative* path, so without conftest's autouse cwd
+        isolation the suite writes `backend/data/nexus.db` into the working tree — gitignored and
+        therefore invisible, and shared between tests and between runs. This runs a real pytest
+        subprocess instead of checking that the fixture exists, because a fixture can exist and
+        not be autouse, and only the second case actually protects anything.
+        """
+        data_dir = BACKEND / "data"
+        if data_dir.exists():
+            shutil.rmtree(data_dir)  # start from a known state, whatever the last run left
+        result = subprocess.run(  # noqa: S603 - fixed arguments, no shell, no user input
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "tests/test_api.py",
+                "-q",
+                "-k",
+                "test_app_state_holds_dependencies",
+                "-p",
+                "no:cacheprovider",
+            ],
+            cwd=BACKEND,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, f"the nested run failed: {result.stdout[-600:]}"
+        assert not data_dir.exists(), (
+            "running the suite wrote backend/data into the repository. conftest's autouse cwd "
+            "isolation is missing or no longer autouse, so every app-building test appends to one "
+            "shared, gitignored audit database"
+        )
 
 
 class TestGitignoreCannotSwallowSource:
@@ -1131,4 +1168,138 @@ class TestSecretScanningIsNotWeakened:
         assert (checkout.get("with") or {}).get("fetch-depth") == 0, (
             "the backend job must check out full history (fetch-depth: 0), or "
             "test_the_excused_commit_exists_in_this_repository cannot run"
+        )
+
+
+class TestDocumentedConfigurationIsHonoured:
+    """Every variable the deployment sets or the docs recommend must reach something that reads it.
+
+    `.env.example` advertised `NEXUS_DATABASE_URL=postgresql+psycopg://...` as the compose variant
+    and `docker-compose.yml` ships a TimescaleDB service for it, but no Postgres store existed: an
+    operator who followed the documentation got an in-memory audit log that vanished on every
+    restart, while `/healthz` and `/readyz` both reported success. The variable reached the process
+    and nothing honoured it — a documented capability that did not exist, which is worse than an
+    undocumented one, because it is trusted.
+
+    The code now refuses an unsupported scheme (see `TestAuditStoreSelectionFailsClosed` in
+    `test_api.py`). These tests guard the other half: that the deployment files, the documentation
+    and the code agree about what exists.
+    """
+
+    @staticmethod
+    def _names_something_honours() -> set[str]:
+        """Every `NEXUS_*` name that something actually reads.
+
+        Four places, because a variable can be honoured without appearing in Python source at all:
+        a `Settings` field (six models, each with its own env prefix), an `os.environ` read, a
+        Caddyfile or compose template expansion, and the secrets naming convention.
+        """
+        from pydantic_settings import BaseSettings
+
+        import nexus.core.config as config_module
+        from nexus.core.config import Settings
+        from nexus.secrets.provider import EnvSecretProvider
+
+        names: set[str] = set()
+        for candidate in vars(config_module).values():
+            if (
+                isinstance(candidate, type)
+                and issubclass(candidate, BaseSettings)
+                and candidate is not BaseSettings
+            ):
+                prefix = candidate.model_config.get("env_prefix", "")
+                names |= {f"{prefix}{field}".upper() for field in candidate.model_fields}
+
+        for path in (BACKEND / "src" / "nexus").rglob("*.py"):
+            names |= set(re.findall(r'"(NEXUS_[A-Z0-9_]+)"', path.read_text()))
+
+        # `NEXUS_HOST` is consumed by Caddy, not by Python: `{$NEXUS_HOST::80}` in the Caddyfile.
+        for path in (REPO_ROOT / "infra").rglob("*"):
+            if path.is_file():
+                names |= set(re.findall(r"(NEXUS_[A-Z0-9_]+)", path.read_text(errors="ignore")))
+        names |= set(re.findall(r"(NEXUS_[A-Z0-9_]+)", (REPO_ROOT / "docker-compose.yml").read_text()))
+
+        # The secrets convention: reference `owner/api-token` is read as
+        # NEXUS_SECRET_OWNER_API_TOKEN. Derived through the provider's own function, so this test
+        # cannot drift from the implementation it is checking.
+        secrets = Settings(_env_file=None).secrets
+        names |= {
+            EnvSecretProvider._var_name(getattr(secrets, field))  # noqa: SLF001 - the convention
+            for field in type(secrets).model_fields
+            if field.startswith("ref_")
+        }
+        return names
+
+    @staticmethod
+    def _documented_secret_vars() -> dict[str, str]:
+        from nexus.core.config import Settings
+        from nexus.secrets.provider import EnvSecretProvider
+
+        secrets = Settings(_env_file=None).secrets
+        return {
+            field: EnvSecretProvider._var_name(getattr(secrets, field))  # noqa: SLF001
+            for field in type(secrets).model_fields
+            if field.startswith("ref_")
+        }
+
+    def test_no_deployment_variable_is_silently_ignored(self) -> None:
+        compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+        set_in_compose: set[str] = set()
+        for service in compose["services"].values():
+            set_in_compose |= {key for key in (service.get("environment") or {}) if key.startswith("NEXUS_")}
+        documented = set(
+            re.findall(
+                r"^#?\s*(NEXUS_[A-Z0-9_]+)=",
+                (REPO_ROOT / ".env.example").read_text(),
+                re.MULTILINE,
+            )
+        )
+        assert set_in_compose, "compose sets no NEXUS_* variables — this check has gone vacuous"
+        assert documented, ".env.example documents no NEXUS_* variables — this check has gone vacuous"
+        unknown = sorted((set_in_compose | documented) - self._names_something_honours())
+        assert not unknown, (
+            "these variables are set by the deployment or recommended by .env.example but are read "
+            f"by nothing — not a Settings field, not os.environ, not the Caddyfile or compose file, "
+            f"and not the secrets convention, so they are silently ignored: {unknown}"
+        )
+
+    def test_every_secret_reference_the_code_declares_is_documented(self) -> None:
+        """The other direction: a secret the code requires but the documentation never mentions.
+
+        Found while writing the test above. `owner/totp-secret` — the step-up factor for releasing
+        an emergency halt — was absent from `.env.example`. An operator following the documentation
+        would bring up a system whose halt could be engaged but never released, and nothing would
+        explain why until the first incident needed it.
+        """
+        example = (REPO_ROOT / ".env.example").read_text()
+        undocumented = sorted(
+            f"{var} (from `{field}`)"
+            for field, var in self._documented_secret_vars().items()
+            if var not in example
+        )
+        assert not undocumented, (
+            f"the secrets provider will look these up and .env.example never mentions them: {undocumented}"
+        )
+
+    def test_the_documented_database_url_is_one_the_code_accepts(self) -> None:
+        example = (REPO_ROOT / ".env.example").read_text()
+        active = re.findall(r"^NEXUS_DATABASE_URL=(\S+)$", example, re.MULTILINE)
+        assert active == ["sqlite:///./data/nexus.db"], (
+            f".env.example sets NEXUS_DATABASE_URL to {active}; only sqlite:/// is implemented and "
+            "anything else now refuses startup"
+        )
+        assert "postgresql+psycopg://nexus:CHANGE_ME" not in example, (
+            "the Postgres example is back. Following it used to produce a silently ephemeral audit "
+            "log; it now prevents the container from starting. Either way it must not be presented "
+            "as a working option until a Postgres store exists"
+        )
+
+    def test_the_compose_default_database_url_starts(self) -> None:
+        """A `docker compose up` with no .env must not hit the refusal."""
+        raw = (REPO_ROOT / "docker-compose.yml").read_text()
+        match = re.search(r"NEXUS_DATABASE_URL:\s*\$\{NEXUS_DATABASE_URL:-([^}]+)\}", raw)
+        assert match, "the compose default for NEXUS_DATABASE_URL is gone"
+        assert match.group(1).startswith("sqlite:///"), (
+            f"compose defaults NEXUS_DATABASE_URL to {match.group(1)!r}, which the app refuses; a "
+            "default bring-up would fail to start"
         )

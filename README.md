@@ -11,12 +11,13 @@
 
 | Doc | Purpose |
 |-----|---------|
-| `docs/00-discovery-ledger.md` | Living record of every owner decision (D-001–D-026) + open items (O-001–O-008; O-001/O-006/O-008 CLOSED) |
+| `docs/00-discovery-ledger.md` | Living record of every owner decision (D-001–D-029) + open items (O-001–O-011; O-001/O-006/O-008/O-011 CLOSED) |
 | `docs/01-owner-requirements-baseline.md` | Approved baseline (2026-11-25) — gates implementation |
 | `docs/02-feasibility-report.md` | Appendix B First Development Report v1.1 — architecture, capability matrix, Nigeria eligibility, **$0 hosting/tooling/data plan**, threat model, staged plan |
 | `docs/03-product-ux-bible.md` | Phase 1 — journeys, 15-page architecture, design system, states, mobile, $0 UI stack, accessibility |
 | `docs/04-phase2-core-foundation.md` | Phase 2 — design, acceptance evidence, security/reliability posture, stated limitations |
-| `docs/05-phase3-market-data.md` | Phase 3 — instrument master, sessions, free-feed adapters, Parquet archive, retention, acceptance evidence, **8 defects found & fixed**, stated limitations |
+| `docs/05-phase3-market-data.md` | Phase 3 (**ACCEPTED**, D-027) — instrument master, sessions, free-feed adapters, Parquet archive, retention, acceptance evidence, CI run history, **30 defects found & fixed**, stated limitations |
+| `docs/06-phase4-venue-certification.md` | Phase 4 (in pre-flight) — VM-first bring-up plan, Bybit + OKX demo certification scope (D-028/D-029), **5 pre-flight defects**, what is still unverified |
 | `backend/` | `nexus-core` Python package: config, audit chain, secrets, events, data gates, risk engine, live-authority gate, halt, gateway, API — plus Phase 3 `instruments/`, `ingestion/`, `archive/`, `data/records.py` |
 | `docker-compose.yml`, `infra/`, `.github/workflows/ci.yml` | $0 self-hosted stack (Postgres+Timescale, NATS, Valkey, MinIO, Caddy, Prometheus/Grafana/Loki) + free CI |
 

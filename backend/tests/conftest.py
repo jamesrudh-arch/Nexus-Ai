@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -25,6 +26,24 @@ from nexus.risk.engine import RiskEngine
 from nexus.risk.portfolio import PortfolioSnapshot, PositionSnapshot
 
 D = Decimal
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run every test in its own directory.
+
+    ``Settings.database_url`` defaults to ``sqlite:///./data/nexus.db``, which is relative to the
+    process cwd. Building the app with defaults therefore wrote a real audit database into
+    ``backend/data/`` — shared between tests, shared between *runs*, and invisible to git because
+    the path is ignored. For an append-only, hash-chained log that is not isolation: a test could
+    read records an earlier test, or an earlier invocation of the suite, had written, and a
+    verification that passes on a dirty tree may fail on a clean one.
+
+    Nothing in the suite needs the repository as its cwd. The tests that read repository files
+    resolve them from ``__file__`` (see ``BACKEND``/``REPO_ROOT`` in ``test_repo_hygiene.py``), so
+    they are unaffected.
+    """
+    monkeypatch.chdir(tmp_path)
 
 
 @pytest.fixture

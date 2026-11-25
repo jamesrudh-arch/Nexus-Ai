@@ -212,3 +212,112 @@ class TestAppWiring:
     def test_no_trading_endpoints_exist(self, client: TestClient) -> None:
         paths = set(client.get("/openapi.json").json()["paths"])
         assert not any("order" in p or "trade" in p or "position" in p for p in paths)
+
+
+class TestAuditStoreSelectionFailsClosed:
+    """`_default_store` must refuse a scheme it cannot honour, not quietly substitute memory.
+
+    The audit log is the system's evidence trail. Before this, any `NEXUS_DATABASE_URL` that was
+    not `sqlite:///` returned an `InMemoryAuditStore` with no warning — so an operator who followed
+    `.env.example` and pointed core at the TimescaleDB the compose stack ships got an audit log
+    that vanished on every restart while `/healthz` and `/readyz` both kept reporting success.
+    `NatsEventBus` already states the rule for the same situation: events are never silently
+    discarded. This holds the audit store to it.
+    """
+
+    @staticmethod
+    def _store(url: str) -> Any:
+        from nexus.api.app import _default_store
+
+        return _default_store(Settings(_env_file=None, database_url=url))
+
+    def test_sqlite_url_builds_the_durable_store(self, tmp_path: Any, monkeypatch: Any) -> None:
+        from nexus.audit.log import SqliteAuditStore
+
+        monkeypatch.delenv("NEXUS_AUDIT_BACKEND", raising=False)
+        store = self._store(f"sqlite:///{tmp_path}/audit.db")
+        assert isinstance(store, SqliteAuditStore)
+        assert (tmp_path / "audit.db").exists(), "the durable store must actually create its file"
+
+    def test_memory_is_available_when_explicitly_chosen(self, monkeypatch: Any) -> None:
+        monkeypatch.setenv("NEXUS_AUDIT_BACKEND", "memory")
+        assert isinstance(self._store("sqlite:///./data/nexus.db"), InMemoryAuditStore)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "postgresql+psycopg://nexus:pw@db:5432/nexus",  # what .env.example used to advertise
+            "postgres://nexus@db:5432/nexus",
+            "mysql://nexus@db/nexus",
+            "sqlite://relative-without-slash",
+            "",
+        ],
+    )
+    def test_an_unsupported_scheme_is_refused_not_downgraded(self, monkeypatch: Any, url: str) -> None:
+        from nexus.core.errors import NexusError, RejectReason
+
+        monkeypatch.delenv("NEXUS_AUDIT_BACKEND", raising=False)
+        with pytest.raises(NexusError) as exc:
+            self._store(url)
+        assert exc.value.reason is RejectReason.CONFIG_INVALID
+        assert exc.value.retryable is False, "a config fault is not worth retrying unchanged"
+        assert "sqlite" in exc.value.detail, "the refusal must name the scheme that does work"
+        assert "NEXUS_AUDIT_BACKEND=memory" in exc.value.detail, (
+            "the refusal must say how to choose an ephemeral log deliberately"
+        )
+
+    def test_the_refusal_does_not_leak_the_url_credentials(self, monkeypatch: Any) -> None:
+        """The refusal is persisted and surfaced in the UI, so it travels further than the log."""
+        from nexus.core.errors import NexusError
+
+        monkeypatch.delenv("NEXUS_AUDIT_BACKEND", raising=False)
+        url = "postgresql+psycopg://nexus:Sup3rSecretPassword@db-host:5432/nexus"
+        with pytest.raises(NexusError) as exc:
+            self._store(url)
+        err = exc.value
+        for surface in (err.detail, str(err), repr(err.context), repr(err)):
+            assert "Sup3rSecretPassword" not in surface, f"credential leaked into {surface!r}"
+            assert "db-host" not in surface, f"hostname leaked into {surface!r}"
+        assert err.context == {"scheme": "postgresql+psycopg"}, (
+            "only the scheme is safe to keep from a database URL"
+        )
+
+    def test_create_app_refuses_to_start_rather_than_serve_without_an_audit_trail(
+        self, monkeypatch: Any
+    ) -> None:
+        """The failure must happen at startup, not at the first write or the first restart."""
+        from nexus.core.errors import NexusError, RejectReason
+
+        monkeypatch.delenv("NEXUS_AUDIT_BACKEND", raising=False)
+        with pytest.raises(NexusError) as exc:
+            create_app(
+                settings=Settings(
+                    _env_file=None,
+                    database_url="postgresql+psycopg://nexus:pw@db:5432/nexus",
+                )
+            )
+        assert exc.value.reason is RejectReason.CONFIG_INVALID
+
+    def test_the_production_default_is_the_documented_sqlite_path(self) -> None:
+        """Pinned here so isolating the suite's cwd cannot silently change the shipped default."""
+        assert Settings(_env_file=None).database_url == "sqlite:///./data/nexus.db"
+
+    def test_the_default_audit_path_is_relative_to_the_process_cwd(
+        self, tmp_path: Any, monkeypatch: Any
+    ) -> None:
+        """Which is why the suite runs each test in its own directory.
+
+        `sqlite:///./data/nexus.db` resolves against the *cwd*, so before the isolation fixture in
+        conftest every test that built the app with defaults appended to one shared database in
+        `backend/data/` — shared between tests and between runs, and invisible to git because the
+        path is ignored. For an append-only hash-chained log that is not isolation.
+        """
+        from pathlib import Path
+
+        monkeypatch.delenv("NEXUS_AUDIT_BACKEND", raising=False)
+        monkeypatch.chdir(tmp_path)
+        create_app(settings=Settings(_env_file=None))
+        assert (Path(tmp_path) / "data" / "nexus.db").exists(), (
+            "the default store did not create its database under the cwd — either the default "
+            "changed or the store is no longer durable"
+        )

@@ -36,6 +36,7 @@ from nexus import DATA_SOURCES, PHASE_GATE, __phase__, __version__
 from nexus.audit.log import AuditLog
 from nexus.core.config import Settings, get_settings
 from nexus.core.environment import EnvironmentState
+from nexus.core.errors import NexusError, RejectReason
 from nexus.core.ids import iso_utc, utc_now
 from nexus.execution.halt import HaltManager, HaltScope
 from nexus.instruments.registry import InstrumentRegistry, UnknownInstrument, coverage_report
@@ -305,7 +306,20 @@ def create_app(
 
 
 def _default_store(cfg: Settings) -> Any:
-    """SQLite audit store under ./data by default; in-memory for tests via env override."""
+    """SQLite audit store under ./data by default; in-memory only when explicitly asked for.
+
+    An unrecognised ``database_url`` scheme is **refused**, not downgraded. The audit log is the
+    system's evidence trail: silently substituting an in-memory store discards it on every restart
+    while liveness, readiness and every health check keep reporting success. ``NatsEventBus``
+    states the house rule for exactly this situation — "events are never silently discarded" — and
+    the audit store is held to the same standard.
+
+    This was reachable by following the documented configuration. `.env.example` showed
+    ``postgresql+psycopg://...`` as the compose variant while no Postgres store existed, so an
+    operator bringing up the stack alongside TimescaleDB got an ephemeral audit log and no error —
+    the worst possible outcome for a system whose decisions must be auditable after the fact.
+    Choosing memory is what ``NEXUS_AUDIT_BACKEND=memory`` is for, and it is explicit.
+    """
     import os
 
     from nexus.audit.log import InMemoryAuditStore, SqliteAuditStore
@@ -315,4 +329,14 @@ def _default_store(cfg: Settings) -> Any:
     url = cfg.database_url
     if url.startswith("sqlite:///"):
         return SqliteAuditStore(url.removeprefix("sqlite:///"))
-    return InMemoryAuditStore()
+    # Only the scheme goes into the context. A database URL can carry a password, and the refusal
+    # is persisted and surfaced in the UI, so nothing past the first colon is safe to keep.
+    raise NexusError(
+        RejectReason.CONFIG_INVALID,
+        "NEXUS_DATABASE_URL names a scheme this build does not implement; only sqlite:/// is "
+        "supported. Refusing to start rather than keeping the audit log in memory, where it would "
+        "be lost on every restart while still reporting healthy. Set NEXUS_AUDIT_BACKEND=memory "
+        "to choose an ephemeral audit log explicitly.",
+        retryable=False,
+        context={"scheme": url.split(":", 1)[0]},
+    )

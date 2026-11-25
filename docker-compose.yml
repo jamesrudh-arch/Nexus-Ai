@@ -5,12 +5,21 @@
 # Caps below total ~5.2 GB, leaving headroom for the OS and an optional local model.
 #
 # Usage:
-#   docker compose up -d core db                     # minimal: API + Postgres
+#   docker compose up -d core                        # minimal: the API alone (SQLite audit log)
+#   docker compose up -d core db                     # + TimescaleDB, ready for Phase 4
 #   docker compose --profile observability up -d     # + Prometheus/Grafana/Loki
 #   docker compose --profile full up -d              # everything
 #
 # Nothing here connects to a venue or can place an order. Live trading is disabled in
 # code (Phase 2), not by configuration.
+#
+# KNOWN GAP, recorded rather than papered over: `core` waits for `db` to be healthy but does not
+# connect to it. The only implemented audit store is SQLite (`NEXUS_DATABASE_URL` defaults to
+# sqlite:/// and any other scheme is refused at startup), so TimescaleDB currently costs ~1.5 GB of
+# the 12 GB free-tier budget and adds startup latency for a database nothing reads. Wiring
+# `core` to it is Phase 4 work; until then bring up `core` alone on a memory-constrained host.
+# The migration in backend/migrations/0001_core.sql is complete Postgres DDL and is what that
+# wiring will apply.
 
 name: nexus
 
