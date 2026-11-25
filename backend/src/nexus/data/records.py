@@ -1,0 +1,774 @@
+"""Canonical market-data records and normalisation (Section 4, Section 22.1).
+
+Every free feed is different: Bybit returns ``retCode``/``result``, OKX returns
+``code``/``data``, Dukascopy returns LZMA-compressed binary. What must **not** differ is
+what lands in the archive. This module defines that canonical shape and the rules for
+getting there.
+
+Rules enforced here:
+
+* **Prices and quantities are ``Decimal``.** A venue float is converted via ``str()`` so
+  binary representation error never enters the archive. NaN/Infinity is rejected.
+* **Timestamps are aware UTC.** A naive venue timestamp is a fault, not an assumption.
+* **Nothing is invented.** A missing bid stays missing. A venue that publishes no volume
+  yields ``volume=None``, never ``0`` — zero volume is a claim, absence is not.
+* **Rejections are counted and reasoned**, never dropped silently. The archive reports
+  how many records it refused so a broken feed is visible.
+* **Free-tier politeness.** A token-bucket rate limiter and exponential backoff with
+  jitter are built into the transport: getting throttled or IP-banned from a free endpoint
+  would cost the project its data source.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import random
+import time as time_mod
+from collections.abc import Awaitable, Callable, Iterable, Sequence
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
+from enum import StrEnum
+from typing import Any, Protocol, runtime_checkable
+
+# This module deliberately lives in ``nexus.data`` rather than ``nexus.ingestion``: the
+# archiver, the ingestion pipeline and the venue adapters all depend on these record types,
+# and putting them in ``ingestion`` created an import cycle
+# (archive.bars -> ingestion.base -> ingestion/__init__ -> ingestion.pipeline -> archive.bars).
+# Records are the shared vocabulary; ``ingestion.base`` re-exports them so existing import
+# paths keep working.
+from nexus.core.errors import NexusError, RejectReason
+from nexus.core.ids import iso_utc
+from nexus.core.time import utc_now
+
+
+class IngestFault(NexusError):
+    """A feed could not be read or its payload could not be trusted."""
+
+    def __init__(
+        self, detail: str, *, retryable: bool = True, reason: RejectReason = RejectReason.DATA_UNAVAILABLE
+    ) -> None:
+        super().__init__(reason, detail, retryable=retryable)
+
+
+class RateLimited(IngestFault):
+    """Local rate limiter refused the call to protect the free-tier relationship."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail, retryable=True, reason=RejectReason.MODEL_RATE_LIMITED)
+
+
+class FeedKind(StrEnum):
+    INSTRUMENT_INFO = "INSTRUMENT_INFO"
+    TICKER = "TICKER"
+    TRADE = "TRADE"
+    BOOK = "BOOK"
+    BAR = "BAR"
+    FUNDING = "FUNDING"
+
+
+# --------------------------------------------------------------------------- decimals
+
+
+def to_decimal(value: Any, *, field_name: str, source: str) -> Decimal | None:
+    """Convert a venue value to ``Decimal``. ``None`` stays ``None``; junk raises.
+
+    Conversion goes through ``str()`` so ``0.1`` from a JSON float becomes exactly
+    ``Decimal("0.1")`` rather than ``0.1000000000000000055511151231257827``.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise IngestFault(
+            f"{source}: field {field_name!r} is not a number: {value!r}",
+            retryable=False,
+            reason=RejectReason.CONFIG_INVALID,
+        ) from exc
+    if not result.is_finite():
+        raise IngestFault(
+            f"{source}: field {field_name!r} is not finite: {value!r}",
+            retryable=False,
+            reason=RejectReason.CONFIG_INVALID,
+        )
+    return result
+
+
+def require_decimal(value: Any, *, field_name: str, source: str) -> Decimal:
+    """Like :func:`to_decimal` but the field is mandatory."""
+    result = to_decimal(value, field_name=field_name, source=source)
+    if result is None:
+        raise IngestFault(
+            f"{source}: required field {field_name!r} is missing",
+            retryable=False,
+            reason=RejectReason.DATA_UNAVAILABLE,
+        )
+    return result
+
+
+def to_utc(value: Any, *, field_name: str, source: str, assume_ms: bool = False) -> datetime | None:
+    """Convert a venue timestamp to aware UTC.
+
+    Accepted forms: epoch seconds, epoch milliseconds, ISO-8601 with offset, or an
+    ISO-8601 string ending in ``Z``. A naive datetime is **rejected** — guessing the
+    venue's timezone is how backtests get silently shifted by hours.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            raise IngestFault(
+                f"{source}: naive timestamp in {field_name!r} (timezone is unknown, refusing to guess)",
+                retryable=False,
+                reason=RejectReason.CONFIG_INVALID,
+            )
+        return value.astimezone(UTC)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        seconds = value / 1000.0 if assume_ms or abs(value) > 1e11 else float(value)
+        return datetime.fromtimestamp(seconds, tz=UTC)
+    text = str(value).strip()
+    if text.isdigit():
+        number = int(text)
+        seconds = number / 1000.0 if assume_ms or number > 1e11 else float(number)
+        return datetime.fromtimestamp(seconds, tz=UTC)
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise IngestFault(
+            f"{source}: unparseable timestamp in {field_name!r}: {text!r}",
+            retryable=False,
+            reason=RejectReason.CONFIG_INVALID,
+        ) from exc
+    if parsed.tzinfo is None:
+        raise IngestFault(
+            f"{source}: naive timestamp in {field_name!r}: {text!r} (refusing to guess timezone)",
+            retryable=False,
+            reason=RejectReason.CONFIG_INVALID,
+        )
+    return parsed.astimezone(UTC)
+
+
+# --------------------------------------------------------------------------- records
+
+
+@dataclass(frozen=True, slots=True)
+class TickRecord:
+    """One canonical trade/tick observation."""
+
+    instrument_id: str
+    venue: str
+    venue_symbol: str
+    price: Decimal
+    quantity: Decimal | None
+    observed_at: datetime
+    venue_timestamp: datetime | None = None
+    side: str | None = None  # BUY | SELL | None when the feed does not say
+    trade_id: str | None = None
+    source: str = "UNKNOWN"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "instrument_id": self.instrument_id,
+            "venue": self.venue,
+            "venue_symbol": self.venue_symbol,
+            "price": str(self.price),
+            "quantity": str(self.quantity) if self.quantity is not None else None,
+            "observed_at": iso_utc(self.observed_at),
+            "venue_timestamp": iso_utc(self.venue_timestamp) if self.venue_timestamp else None,
+            "side": self.side,
+            "trade_id": self.trade_id,
+            "source": self.source,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class QuoteRecord:
+    """Top-of-book observation."""
+
+    instrument_id: str
+    venue: str
+    venue_symbol: str
+    bid: Decimal | None
+    ask: Decimal | None
+    bid_size: Decimal | None = None
+    ask_size: Decimal | None = None
+    last: Decimal | None = None
+    observed_at: datetime | None = None
+    venue_timestamp: datetime | None = None
+    delayed: bool = False
+    source: str = "UNKNOWN"
+
+    @property
+    def is_crossed_or_locked(self) -> bool:
+        if self.bid is None or self.ask is None:
+            return False
+        return self.bid >= self.ask
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "instrument_id": self.instrument_id,
+            "venue": self.venue,
+            "venue_symbol": self.venue_symbol,
+            "bid": str(self.bid) if self.bid is not None else None,
+            "ask": str(self.ask) if self.ask is not None else None,
+            "bid_size": str(self.bid_size) if self.bid_size is not None else None,
+            "ask_size": str(self.ask_size) if self.ask_size is not None else None,
+            "last": str(self.last) if self.last is not None else None,
+            "observed_at": iso_utc(self.observed_at) if self.observed_at else None,
+            "venue_timestamp": iso_utc(self.venue_timestamp) if self.venue_timestamp else None,
+            "delayed": self.delayed,
+            "source": self.source,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BarRecord:
+    """One OHLCV bar. ``volume=None`` means the feed published no volume."""
+
+    instrument_id: str
+    venue: str
+    venue_symbol: str
+    interval: str  # canonical form: "1m", "5m", "1h", "1d"
+    open_time: datetime
+    close_time: datetime | None
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: Decimal | None = None
+    quote_volume: Decimal | None = None
+    trades: int | None = None
+    confirmed: bool = False
+    source: str = "UNKNOWN"
+
+    def is_consistent(self) -> bool:
+        """OHLC must satisfy low <= open,close <= high. A violation is a feed fault."""
+        extremes = (self.open, self.close)
+        return self.low <= min(extremes) and self.high >= max(extremes) and self.low <= self.high
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "instrument_id": self.instrument_id,
+            "venue": self.venue,
+            "venue_symbol": self.venue_symbol,
+            "interval": self.interval,
+            "open_time": iso_utc(self.open_time),
+            "close_time": iso_utc(self.close_time) if self.close_time else None,
+            "open": str(self.open),
+            "high": str(self.high),
+            "low": str(self.low),
+            "close": str(self.close),
+            "volume": str(self.volume) if self.volume is not None else None,
+            "quote_volume": str(self.quote_volume) if self.quote_volume is not None else None,
+            "trades": self.trades,
+            "confirmed": self.confirmed,
+            "source": self.source,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class BookLevel:
+    price: Decimal
+    quantity: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class BookRecord:
+    """Order-book snapshot, plus the entitlement we actually hold."""
+
+    instrument_id: str
+    venue: str
+    venue_symbol: str
+    bids: tuple[BookLevel, ...]
+    asks: tuple[BookLevel, ...]
+    observed_at: datetime
+    venue_timestamp: datetime | None = None
+    entitlement: str = "NONE"  # NONE | DELAYED | LIVE
+    source: str = "UNKNOWN"
+
+    @property
+    def best_bid(self) -> Decimal | None:
+        return self.bids[0].price if self.bids else None
+
+    @property
+    def best_ask(self) -> Decimal | None:
+        return self.asks[0].price if self.asks else None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "instrument_id": self.instrument_id,
+            "venue": self.venue,
+            "venue_symbol": self.venue_symbol,
+            "levels": len(self.bids) + len(self.asks),
+            "best_bid": str(self.best_bid) if self.best_bid is not None else None,
+            "best_ask": str(self.best_ask) if self.best_ask is not None else None,
+            "observed_at": iso_utc(self.observed_at),
+            "entitlement": self.entitlement,
+            "source": self.source,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentInfoRecord:
+    """Trading rules as published by the venue — the source for registry mappings."""
+
+    venue: str
+    venue_symbol: str
+    base_currency: str | None = None
+    quote_currency: str | None = None
+    contract_size: Decimal | None = None
+    tick_size: Decimal | None = None
+    min_order_qty: Decimal | None = None
+    max_order_qty: Decimal | None = None
+    qty_step: Decimal | None = None
+    status: str | None = None  # venue's own listing status string
+    observed_at: datetime | None = None
+    raw: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "venue": self.venue,
+            "venue_symbol": self.venue_symbol,
+            "base_currency": self.base_currency,
+            "quote_currency": self.quote_currency,
+            "contract_size": str(self.contract_size) if self.contract_size is not None else None,
+            "tick_size": str(self.tick_size) if self.tick_size is not None else None,
+            "min_order_qty": str(self.min_order_qty) if self.min_order_qty is not None else None,
+            "max_order_qty": str(self.max_order_qty) if self.max_order_qty is not None else None,
+            "qty_step": str(self.qty_step) if self.qty_step is not None else None,
+            "status": self.status,
+            "observed_at": iso_utc(self.observed_at) if self.observed_at else None,
+        }
+
+
+# --------------------------------------------------------------------------- rate limit
+
+
+class TokenBucket:
+    """Async token-bucket limiter.
+
+    Free endpoints are a privilege, not a right. The limiter is intentionally local and
+    conservative: it is better to ingest slightly slower than to be throttled or banned.
+    """
+
+    def __init__(
+        self, *, rate_per_second: float, burst: int, clock: Callable[[], float] = time_mod.monotonic
+    ) -> None:
+        if rate_per_second <= 0:
+            raise ValueError("rate_per_second must be positive")
+        if burst < 1:
+            raise ValueError("burst must be >= 1")
+        self._rate = float(rate_per_second)
+        self._burst = float(burst)
+        self._tokens = float(burst)
+        self._clock = clock
+        self._last = clock()
+        self._lock = asyncio.Lock()
+        self._waits = 0
+
+    @property
+    def waits(self) -> int:
+        """How many calls had to wait. A rising count means the plan is too aggressive."""
+        return self._waits
+
+    def _refill(self) -> None:
+        now = self._clock()
+        elapsed = max(0.0, now - self._last)
+        self._last = now
+        self._tokens = min(self._burst, self._tokens + elapsed * self._rate)
+
+    async def acquire(self, tokens: float = 1.0) -> None:
+        async with self._lock:
+            self._refill()
+            if self._tokens >= tokens:
+                self._tokens -= tokens
+                return
+            deficit = tokens - self._tokens
+            wait = deficit / self._rate
+            self._waits += 1
+        await asyncio.sleep(wait)
+        async with self._lock:
+            self._refill()
+            self._tokens = max(0.0, self._tokens - tokens)
+
+
+@dataclass(frozen=True, slots=True)
+class BackoffPolicy:
+    """Exponential backoff with full jitter (the AWS-recommended shape, no cost)."""
+
+    base_seconds: float = 1.0
+    max_seconds: float = 60.0
+    multiplier: float = 2.0
+    max_attempts: int = 5
+
+    def delay(self, attempt: int, *, rng: random.Random | None = None) -> float:
+        if attempt < 0:
+            raise ValueError("attempt must be >= 0")
+        ceiling = min(self.max_seconds, self.base_seconds * (self.multiplier**attempt))
+        draw = rng.random() if rng is not None else random.random()  # noqa: S311 - jitter, not crypto
+        return ceiling * draw
+
+    def allows(self, attempt: int) -> bool:
+        return attempt < self.max_attempts
+
+
+# --------------------------------------------------------------------------- transport
+
+
+@runtime_checkable
+class Transport(Protocol):
+    """Minimal HTTP surface adapters need. Injected so tests need no network."""
+
+    async def get_json(self, url: str, *, params: dict[str, Any] | None = None) -> Any: ...
+
+    async def get_bytes(self, url: str, *, params: dict[str, Any] | None = None) -> bytes: ...
+
+    async def aclose(self) -> None: ...
+
+
+class HttpTransport:
+    """httpx-backed transport with timeout, rate limiting and bounded retries."""
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 10.0,
+        limiter: TokenBucket | None = None,
+        backoff: BackoffPolicy | None = None,
+        headers: dict[str, str] | None = None,
+        client: Any = None,
+    ) -> None:
+        self._timeout = timeout_seconds
+        self._limiter = limiter or TokenBucket(rate_per_second=5.0, burst=10)
+        self._backoff = backoff or BackoffPolicy()
+        self._headers = headers or {"User-Agent": "NEXUS/0.1 (personal research; free public data)"}
+        self._client = client
+        self._calls = 0
+
+    @property
+    def calls(self) -> int:
+        return self._calls
+
+    def _ensure_client(self) -> Any:
+        if self._client is None:
+            import httpx  # local import: keeps the package importable without httpx installed
+
+            self._client = httpx.AsyncClient(
+                timeout=self._timeout, headers=self._headers, follow_redirects=True
+            )
+        return self._client
+
+    async def _request(self, url: str, params: dict[str, Any] | None, *, want_bytes: bool) -> Any:
+        client = self._ensure_client()
+        attempt = 0
+        while True:
+            await self._limiter.acquire()
+            self._calls += 1
+            try:
+                response = await client.get(url, params=params)
+                status = int(getattr(response, "status_code", 0))
+                if status == 429 or status >= 500:
+                    raise IngestFault(f"{url} returned HTTP {status}", retryable=True)
+                if status >= 400:
+                    raise IngestFault(f"{url} returned HTTP {status}", retryable=False)
+                return response.content if want_bytes else response.json()
+            except IngestFault:
+                if not self._backoff.allows(attempt):
+                    raise
+                await asyncio.sleep(self._backoff.delay(attempt))
+                attempt += 1
+            except Exception as exc:  # network-level faults are retryable
+                if not self._backoff.allows(attempt):
+                    raise IngestFault(f"{url} failed: {exc!r}", retryable=False) from exc
+                await asyncio.sleep(self._backoff.delay(attempt))
+                attempt += 1
+
+    async def get_json(self, url: str, *, params: dict[str, Any] | None = None) -> Any:
+        return await self._request(url, params, want_bytes=False)
+
+    async def get_bytes(self, url: str, *, params: dict[str, Any] | None = None) -> bytes:
+        result = await self._request(url, params, want_bytes=True)
+        if not isinstance(result, bytes):
+            raise IngestFault(f"{url} did not return bytes", retryable=False)
+        return result
+
+    async def aclose(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+
+class RecordingTransport:
+    """In-memory transport for tests and for replay. No network is ever touched.
+
+    Responses may be registered either by URL alone (matching any query params) or by
+    ``(url, params)`` when a test needs to distinguish calls to the same endpoint with
+    different arguments — e.g. Bybit ``instruments-info`` per category. Param-keyed entries
+    take precedence over URL-keyed ones.
+    """
+
+    def __init__(self, responses: dict[str, Any] | None = None) -> None:
+        self._responses: dict[str, Any] = dict(responses or {})
+        self._by_params: dict[tuple[str, tuple[tuple[str, Any], ...]], Any] = {}
+        self.requests: list[tuple[str, dict[str, Any] | None]] = []
+
+    @staticmethod
+    def _key(url: str, params: dict[str, Any] | None) -> tuple[str, tuple[tuple[str, Any], ...]]:
+        return (url, tuple(sorted((params or {}).items())))
+
+    def set_json(self, url: str, payload: Any, *, params: dict[str, Any] | None = None) -> None:
+        if params is None:
+            self._responses[url] = payload
+        else:
+            self._by_params[self._key(url, params)] = payload
+
+    def set_bytes(self, url: str, payload: bytes, *, params: dict[str, Any] | None = None) -> None:
+        if params is None:
+            self._responses[url] = payload
+        else:
+            self._by_params[self._key(url, params)] = payload
+
+    def _lookup(self, url: str, params: dict[str, Any] | None) -> Any:
+        self.requests.append((url, params))
+        keyed = self._by_params.get(self._key(url, params))
+        if keyed is not None:
+            return keyed
+        if url in self._responses:
+            return self._responses[url]
+        raise IngestFault(f"no recorded response for {url} params={params}", retryable=False)
+
+    async def get_json(self, url: str, *, params: dict[str, Any] | None = None) -> Any:
+        payload = self._lookup(url, params)
+        if isinstance(payload, BaseException):
+            raise payload
+        return payload
+
+    async def get_bytes(self, url: str, *, params: dict[str, Any] | None = None) -> bytes:
+        payload = self._lookup(url, params)
+        if isinstance(payload, BaseException):
+            raise payload
+        if not isinstance(payload, bytes):
+            raise IngestFault(f"recorded response for {url} is not bytes", retryable=False)
+        return payload
+
+    async def aclose(self) -> None:
+        return None
+
+
+# --------------------------------------------------------------------------- results
+
+
+@dataclass(slots=True)
+class IngestReport:
+    """What happened during one ingestion pass. Refusals are counted, not swallowed."""
+
+    source: str
+    venue: str
+    started_at: datetime
+    finished_at: datetime | None = None
+    fetched: int = 0
+    accepted: int = 0
+    rejected: int = 0
+    rejections: dict[str, int] = field(default_factory=dict)
+    errors: list[str] = field(default_factory=list)
+
+    def reject(self, reason: str) -> None:
+        self.rejected += 1
+        self.rejections[reason] = self.rejections.get(reason, 0) + 1
+
+    def finish(self, at: datetime | None = None) -> None:
+        self.finished_at = at or utc_now()
+
+    @property
+    def rejection_rate(self) -> float:
+        total = self.accepted + self.rejected
+        return (self.rejected / total) if total else 0.0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source": self.source,
+            "venue": self.venue,
+            "started_at": iso_utc(self.started_at),
+            "finished_at": iso_utc(self.finished_at) if self.finished_at else None,
+            "fetched": self.fetched,
+            "accepted": self.accepted,
+            "rejected": self.rejected,
+            "rejection_rate": round(self.rejection_rate, 4),
+            "rejections": dict(self.rejections),
+            "errors": list(self.errors)[:20],  # bounded: an error storm must not blow up audit
+        }
+
+
+@runtime_checkable
+class MarketDataAdapter(Protocol):
+    """The contract every venue feed implements.
+
+    Adapters are **public-data only** in Phase 3: no method takes credentials, and none
+    may place an order. That is a structural guarantee, not a comment.
+    """
+
+    name: str
+    venue: str
+    requires_credentials: bool
+
+    async def instrument_info(
+        self, symbols: Sequence[str] | None = None
+    ) -> tuple[InstrumentInfoRecord, ...]: ...
+
+    async def quotes(self, symbols: Sequence[str]) -> tuple[QuoteRecord, ...]: ...
+
+    async def trades(self, symbol: str, *, limit: int = 100) -> tuple[TickRecord, ...]: ...
+
+    async def bars(
+        self,
+        symbol: str,
+        *,
+        interval: str,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 200,
+    ) -> tuple[BarRecord, ...]: ...
+
+    async def book(self, symbol: str, *, depth: int = 20) -> BookRecord | None: ...
+
+    async def aclose(self) -> None: ...
+
+
+@runtime_checkable
+class HistoricalSource(Protocol):
+    """Bulk historical download (e.g. exchange data dumps, Dukascopy bi5)."""
+
+    name: str
+
+    async def fetch_range(
+        self,
+        symbol: str,
+        *,
+        start: datetime,
+        end: datetime,
+        on_record: Callable[[Any], Awaitable[None]] | None = None,
+    ) -> tuple[Any, ...]: ...
+
+
+# --------------------------------------------------------------------------- validation
+
+
+def validate_bar(bar: BarRecord, *, report: IngestReport | None = None) -> str | None:
+    """Return a rejection reason for a bad bar, or ``None`` when it is acceptable."""
+    reason: str | None = None
+    if not bar.is_consistent():
+        reason = "OHLC_INCONSISTENT:low>open/close or high<open/close"
+    elif bar.open_time.tzinfo is None:
+        reason = "NAIVE_TIMESTAMP:bar open_time has no timezone"
+    elif bar.high < bar.low:
+        reason = "HIGH_BELOW_LOW"
+    elif bar.volume is not None and bar.volume < 0:
+        reason = "NEGATIVE_VOLUME"
+    elif bar.close_time is not None and bar.close_time < bar.open_time:
+        reason = "CLOSE_BEFORE_OPEN"
+    if reason is not None and report is not None:
+        report.reject(reason)
+    return reason
+
+
+def validate_tick(tick: TickRecord, *, report: IngestReport | None = None) -> str | None:
+    reason: str | None = None
+    if tick.price <= 0:
+        reason = "NON_POSITIVE_PRICE"
+    elif tick.quantity is not None and tick.quantity < 0:
+        reason = "NEGATIVE_QUANTITY"
+    elif tick.observed_at.tzinfo is None:
+        reason = "NAIVE_TIMESTAMP:tick observed_at has no timezone"
+    elif tick.side is not None and tick.side not in {"BUY", "SELL"}:
+        reason = f"UNKNOWN_SIDE:{tick.side}"
+    if reason is not None and report is not None:
+        report.reject(reason)
+    return reason
+
+
+def validate_quote(quote: QuoteRecord, *, report: IngestReport | None = None) -> str | None:
+    """Crossed and locked books are recorded as faults, never silently stored as truth."""
+    reason: str | None = None
+    if quote.bid is None and quote.ask is None and quote.last is None:
+        reason = "EMPTY_QUOTE:no bid, ask or last"
+    elif quote.is_crossed_or_locked:
+        reason = "CROSSED_OR_LOCKED:bid>=ask"
+    elif quote.observed_at is None:
+        reason = "MISSING_OBSERVATION_TIME"
+    elif quote.observed_at.tzinfo is None:
+        reason = "NAIVE_TIMESTAMP"
+    if reason is not None and report is not None:
+        report.reject(reason)
+    return reason
+
+
+def sort_bars(bars: Iterable[BarRecord]) -> list[BarRecord]:
+    """Chronological order, required before archiving and before bar rollups."""
+    return sorted(bars, key=lambda b: b.open_time)
+
+
+def dedupe_bars(bars: Iterable[BarRecord]) -> list[BarRecord]:
+    """Drop duplicate bars, keeping a confirmed one over a partial one.
+
+    Free feeds overlap page boundaries; without dedupe the archive double-counts volume and
+    backtests become fiction. The identity key includes instrument, venue and venue symbol:
+    keying on ``(interval, open_time)`` alone would collapse distinct instruments that all
+    have a bar at the same instant, which is silent data loss rather than deduplication.
+    """
+    seen: dict[tuple[str, str, str, str, datetime], BarRecord] = {}
+    for bar in bars:
+        key = (bar.instrument_id, bar.venue, bar.venue_symbol, bar.interval, bar.open_time)
+        existing = seen.get(key)
+        # Keep the first sighting, but let a confirmed bar upgrade a partial one — never the
+        # reverse. Parentheses are explicit: `and` binds tighter than `or`, and a precedence
+        # subtlety in the dedupe key path is not worth the four saved characters.
+        if existing is None or (bar.confirmed and not existing.confirmed):
+            seen[key] = bar
+    return sort_bars(seen.values())
+
+
+def dedupe_ticks(ticks: Iterable[TickRecord]) -> list[TickRecord]:
+    """Drop duplicate trades by ``(venue_symbol, trade_id)`` when the feed supplies an id."""
+    seen: set[tuple[str, str]] = set()
+    out: list[TickRecord] = []
+    for tick in ticks:
+        if tick.trade_id is None:
+            out.append(tick)
+            continue
+        key = (tick.venue_symbol, tick.trade_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(tick)
+    return sorted(out, key=lambda t: t.observed_at)
+
+
+__all__ = [
+    "BackoffPolicy",
+    "BarRecord",
+    "BookLevel",
+    "BookRecord",
+    "FeedKind",
+    "HistoricalSource",
+    "HttpTransport",
+    "IngestFault",
+    "IngestReport",
+    "InstrumentInfoRecord",
+    "MarketDataAdapter",
+    "QuoteRecord",
+    "RateLimited",
+    "RecordingTransport",
+    "TickRecord",
+    "TokenBucket",
+    "Transport",
+    "dedupe_bars",
+    "dedupe_ticks",
+    "require_decimal",
+    "sort_bars",
+    "to_decimal",
+    "to_utc",
+    "validate_bar",
+    "validate_quote",
+    "validate_tick",
+]

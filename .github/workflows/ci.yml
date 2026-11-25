@@ -89,7 +89,56 @@ jobs:
         run: pytest -q --maxfail=1
 
       - name: Assert live trading is impossible in this phase
-        run: python -c "import nexus; g=nexus.PHASE_GATE; assert g['live_trading'] is False and g['venue_adapters'] is False and g['real_money_orders_possible'] is False, g; print('phase gate verified:', g)"
+        run: python -c "import nexus; g=nexus.PHASE_GATE; assert g['live_trading'] is False and g['venue_adapters'] is False and g['real_money_orders_possible'] is False and g['order_capability'] is False, g; print('phase gate verified:', g)"
+
+      # Phase 3 added market-data adapters. They must stay public/read-only: no credential
+      # parameter, no order verb. This is a structural check on the shipped code, so a future
+      # edit that adds a trading capability to a data adapter fails the build.
+      - name: Assert data adapters are credential-free and order-free
+        run: |
+          python - <<'EOF'
+          import inspect
+          from nexus.ingestion.bybit import BybitPublicAdapter
+          from nexus.ingestion.okx import OkxPublicAdapter
+          from nexus.ingestion.binance_vision import BinanceVisionHistorical
+          from nexus.ingestion.dukascopy import DukascopyHistorical
+
+          forbidden_params = {"api_key", "api_secret", "secret", "passphrase", "token", "password"}
+          forbidden_verbs = ("place", "submit", "cancel", "withdraw", "transfer", "amend")
+
+          for cls in (BybitPublicAdapter, OkxPublicAdapter, BinanceVisionHistorical, DukascopyHistorical):
+              assert cls.requires_credentials is False, f"{cls.__name__} claims to need credentials"
+              params = set(inspect.signature(cls.__init__).parameters)
+              assert not (params & forbidden_params), f"{cls.__name__} takes a credential parameter"
+              for name in dir(cls):
+                  if name.startswith("_"):
+                      continue
+                  for verb in forbidden_verbs:
+                      assert verb not in name.lower(), f"{cls.__name__}.{name} looks like a trading method"
+              print(f"{cls.__name__}: read-only, credential-free")
+          EOF
+
+      - name: Assert no paid data vendor is referenced anywhere
+        run: |
+          ! grep -rEiq 'bloomberg|refinitiv|polygon\.io|databento|iqfeed|lseg|tiingo' backend/src \
+            && echo "no paid data vendors in source"
+
+      - name: Assert the API exposes no order endpoint
+        run: |
+          python - <<'EOF'
+          from nexus.api.app import create_app
+          from nexus.core.config import Settings
+          import os
+          os.environ["NEXUS_AUDIT_BACKEND"] = "memory"
+
+          app = create_app(settings=Settings())
+          paths = {r.path for r in app.routes}
+          forbidden = ("order", "trade", "execute", "position", "withdraw")
+          for path in paths:
+              for verb in forbidden:
+                  assert verb not in path.lower(), f"API exposes a trading route: {path}"
+          print(f"{len(paths)} routes, none trading-capable:", sorted(paths))
+          EOF
 
   # ---------------------------------------------------------------- ARM64 build check
   # The production host is Ampere A1 (ARM64). Verifying the image builds for arm64

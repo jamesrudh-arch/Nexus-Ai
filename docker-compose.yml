@@ -106,12 +106,12 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    image: nexus-core:0.1.0
+    image: nexus-core:0.2.0
     <<: *restart-policy
     logging: *default-logging
     environment:
       NEXUS_ENVIRONMENT: ${NEXUS_ENVIRONMENT:-DISABLED}
-      NEXUS_LIVE_TRADING_ENABLED: "false"          # hard-off in Phase 2
+      NEXUS_LIVE_TRADING_ENABLED: "false"          # hard-off in Phase 3 (read-only data)
       NEXUS_LEGAL_REVIEW_COMPLETE: "false"         # O-004 pending
       NEXUS_OWNER_LIVE_AUTHORITY_GRANTED: "false"
       NEXUS_DATABASE_URL: ${NEXUS_DATABASE_URL:-sqlite:///./data/nexus.db}
@@ -121,8 +121,17 @@ services:
       NEXUS_ALERTS_WEBPUSH_ENABLED: "true"
       NEXUS_ALERTS_EMAIL_ENABLED: "true"
       NEXUS_MODEL_ALLOW_PAID_APIS: "false"         # D-019
+      # ---- Phase 3: first-party market-data archive (D-024 tiered retention) ----
+      NEXUS_ARCHIVE_ROOT: /app/data/archive
+      NEXUS_BASE_CURRENCY: "USD"                   # D-025: all risk math in USD
+      NEXUS_REPORTING_CURRENCY: "NGN"              # D-025: NGN shown alongside for tax/ISA
+      # Public, unauthenticated market-data sources only. No venue credential is mounted.
+      NEXUS_DATA_SOURCES_ENABLED: "bybit-public,okx-public,binance-vision,dukascopy"
     volumes:
       - core-data:/app/data
+      # The tick/bar archive is the system's memory and the only series it can prove is
+      # complete. Separate volume so it can be backed up and sized on its own.
+      - archive-data:/app/data/archive
     depends_on:
       db:
         condition: service_healthy
@@ -234,6 +243,10 @@ volumes:
   nats-data:
   minio-data:
   core-data:
+  # Capped in practice by the D-024 retention ladder, not by the volume driver: ticks 30d,
+  # 1m bars 12mo, 5m/daily bars indefinite. On the 200 GB free-tier disk this is the largest
+  # consumer, so retention runs before the disk-watermark fail-safe, not after.
+  archive-data:
   caddy-data:
   caddy-config:
   prometheus-data:

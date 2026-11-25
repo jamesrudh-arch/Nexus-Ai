@@ -351,3 +351,93 @@ class TestDecisionRecord:
         assert "rationale" not in payload
         assert payload["confidence"] == 0.42
         assert payload["decision_id"].startswith("DEC-")
+
+
+class TestPhase3Settings:
+    """Phase 3 configuration: currency policy (D-025), archive location, free data sources."""
+
+    def test_base_currency_is_usd_for_all_risk_math(self) -> None:
+        """D-025: every limit is evaluated in USD, never in a converted figure."""
+        cfg = Settings()
+        assert cfg.base_currency == "USD"
+
+    def test_reporting_currency_is_ngn_and_is_separate_from_base(self) -> None:
+        """D-025: NGN is display/reporting only. It must not be the sizing base."""
+        cfg = Settings()
+        assert cfg.reporting_currency == "NGN"
+        assert cfg.reporting_currency != cfg.base_currency
+
+    def test_currency_codes_are_upper_cased(self) -> None:
+        cfg = Settings(base_currency="usd", reporting_currency="ngn", timezone_display="utc")
+        assert cfg.base_currency == "USD"
+        assert cfg.reporting_currency == "NGN"
+        assert cfg.timezone_display == "UTC"
+
+    def test_archive_root_defaults_under_data(self) -> None:
+        assert Settings().archive_root == "./data/archive"
+
+    def test_data_sources_default_to_the_free_public_set(self) -> None:
+        """D-026: free public sources only — no authenticated or paid feed is configured."""
+        assert Settings().enabled_data_sources == (
+            "bybit-public",
+            "okx-public",
+            "binance-vision",
+            "dukascopy",
+        )
+
+    def test_empty_data_sources_disables_ingestion(self) -> None:
+        cfg = Settings(data_sources_enabled="")
+        assert cfg.enabled_data_sources == ()
+        assert cfg.is_data_source_enabled("bybit-public") is False
+
+    def test_source_lookup_is_case_insensitive_and_strips_whitespace(self) -> None:
+        cfg = Settings(data_sources_enabled=" Bybit-Public , okx-public ")
+        assert cfg.enabled_data_sources == ("Bybit-Public", "okx-public")
+        assert cfg.is_data_source_enabled("bybit-public") is True
+        assert cfg.is_data_source_enabled("dukascopy") is False
+
+    def test_no_paid_data_source_is_configurable(self) -> None:
+        """D-019: a paid vendor must not appear as a default or a documented option."""
+        paid_markers = ("bloomberg", "refinitiv", "polygon", "tiingo", "databento", "iqfeed", "lseg")
+        defaults = " ".join(Settings().enabled_data_sources).lower()
+        for marker in paid_markers:
+            assert marker not in defaults
+
+    def test_live_trading_remains_disabled_with_phase3_defaults(self) -> None:
+        """Adding data ingestion must not have loosened any trading gate."""
+        cfg = Settings()
+        assert cfg.live_trading_enabled is False
+        assert cfg.legal_review_complete is False
+        assert cfg.owner_live_authority_granted is False
+        assert cfg.environment is EnvironmentState.DISABLED
+        assert cfg.withdrawal_permission_forbidden is True
+
+    def test_retention_defaults_match_the_d024_ladder(self) -> None:
+        """D-024: 1m bars kept 12 months; the ladder itself lives in nexus.archive.retention."""
+        cfg = Settings()
+        assert cfg.market_data_retention_days >= 365
+        from nexus.archive.retention import default_tiers
+
+        tiers = {t.interval: t for t in default_tiers()}
+        assert tiers["tick"].max_age_days == 30
+        assert tiers["1m"].max_age_days == 365
+        assert tiers["5m"].keeps_forever is True
+        assert tiers["1d"].keeps_forever is True
+
+    def test_config_version_is_bound_to_the_package_version(self) -> None:
+        """The API, the docs and the config must never disagree about the running build."""
+        from nexus import __version__
+
+        assert Settings().version == __version__
+        assert __version__ == "0.2.0"
+
+    def test_phase3_phase_gate_reports_market_data_but_no_orders(self) -> None:
+        """Phase 3 added data reading. That must not read as trading capability."""
+        from nexus import PHASE_GATE, __phase__
+
+        assert __phase__ == "3-market-data"
+        assert PHASE_GATE["phase"] == 3
+        assert PHASE_GATE["market_data_sources"] is True
+        assert PHASE_GATE["order_capability"] is False
+        assert PHASE_GATE["venue_adapters"] is False
+        assert PHASE_GATE["real_money_orders_possible"] is False

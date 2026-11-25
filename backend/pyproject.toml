@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nexus-core"
-version = "0.1.0"
-description = "NEXUS Autonomous Financial Intelligence System — core foundation (Phase 2)"
+version = "0.2.0"
+description = "NEXUS Autonomous Financial Intelligence System — core foundation + market data (Phase 3)"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "LicenseRef-Proprietary"
@@ -29,11 +29,19 @@ dependencies = [
 # Optional production extras — still $0 / OSS. Absent in dev: code degrades to local fallbacks.
 postgres = ["psycopg[binary]>=3.1"]
 nats = ["nats-py>=2.7"]
+# Phase 3 archive: Parquet (Apache-2.0) + in-place analytical reads (MIT). No server
+# process, which is what a single 12 GB free-tier VM can actually afford.
+archive = ["pyarrow>=16.0", "duckdb>=1.0"]
+# Real-time public streams. Optional: REST polling works without it.
+streams = ["websockets>=12.0"]
 dev = [
   "pytest>=8.2",
   "pytest-asyncio>=0.23",
   "ruff>=0.5",
   "mypy>=1.10",
+  "pyarrow>=16.0",
+  "duckdb>=1.0",
+  "websockets>=12.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -71,5 +79,12 @@ files = ["src/nexus"]
 # not installed in dev, where the in-memory bus is used instead.
 [[tool.mypy.overrides]]
 module = ["nats", "nats.*"]
+ignore_missing_imports = true
+follow_untyped_imports = true
+
+# pyarrow ships .pyi stubs but no py.typed marker, so mypy refuses to see them. Both it and
+# duckdb are optional archive extras; the store fails closed if either is missing at runtime.
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*", "duckdb", "duckdb.*", "websockets", "websockets.*"]
 ignore_missing_imports = true
 follow_untyped_imports = true

@@ -1,6 +1,11 @@
-# NEXUS core — Phase 2
+# NEXUS core — Phase 3 (core foundation + market data / instrument master)
 # Multi-stage, non-root, no paid base image. python:3.12-slim is multi-arch, so this
 # builds natively on the Oracle Always Free Ampere A1 (ARM64) host and on x86 dev machines.
+#
+# Extras installed: `archive` (pyarrow + duckdb — the first-party Parquet tick/bar store)
+# and `streams` (websockets — real-time public venue feeds). Both are free/OSS (D-019).
+# `postgres` and `nats` are installed for the compose stack. Still no venue trading
+# dependency and no credential of any kind is baked into the image.
 
 # ---------------------------------------------------------------- build stage
 FROM python:3.12-slim-bookworm AS builder
@@ -21,7 +26,7 @@ COPY src ./src
 
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install --upgrade pip wheel \
-    && /opt/venv/bin/pip install .
+    && /opt/venv/bin/pip install ".[archive,streams,postgres,nats]"
 
 # ---------------------------------------------------------------- runtime stage
 FROM python:3.12-slim-bookworm AS runtime

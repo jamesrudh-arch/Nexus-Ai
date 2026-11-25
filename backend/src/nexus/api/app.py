@@ -9,8 +9,17 @@ Endpoints (Phase 2):
   POST /v1/halt          engage emergency halt (owner-authenticated)
   POST /v1/halt/release  release halt (owner-authenticated, step-up)
 
-Owner authentication in Phase 2 is a bearer token resolved through the secrets provider;
-no secret is ever accepted as a query parameter or logged.
+Endpoints added in Phase 3 (market data + instrument master):
+  GET  /v1/instruments              the canonical master with per-venue certification states
+  GET  /v1/instruments/coverage     what is proven ready, and what is missing
+  GET  /v1/instruments/{id}/session whether that instrument should be trading right now
+  GET  /v1/data/coverage            what the archive actually holds, per resolution tier
+
+The Phase 3 routes are **read-only**. There is still no endpoint that can place, amend or
+cancel an order, and none that accepts a venue credential.
+
+Owner authentication is a bearer token resolved through the secrets provider; no secret is
+ever accepted as a query parameter or logged.
 """
 
 from __future__ import annotations
@@ -23,12 +32,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from nexus import PHASE_GATE, __phase__, __version__
+from nexus import DATA_SOURCES, PHASE_GATE, __phase__, __version__
 from nexus.audit.log import AuditLog
 from nexus.core.config import Settings, get_settings
 from nexus.core.environment import EnvironmentState
 from nexus.core.ids import iso_utc, utc_now
 from nexus.execution.halt import HaltManager, HaltScope
+from nexus.instruments.registry import InstrumentRegistry, UnknownInstrument, coverage_report
+from nexus.instruments.sessions import MarketCalendar
 from nexus.observability.metrics import (
     observe_api_request,
     render_metrics,
@@ -79,22 +90,35 @@ def create_app(
     settings: Settings | None = None,
     audit: AuditLog | None = None,
     halt: HaltManager | None = None,
+    registry: InstrumentRegistry | None = None,
+    calendar: MarketCalendar | None = None,
+    archive: Any = None,
 ) -> FastAPI:
-    """Build the API with explicit dependencies (testable, no global state required)."""
+    """Build the API with explicit dependencies (testable, no global state required).
+
+    ``registry`` and ``archive`` are optional: with no registry the Phase 3 routes report an
+    empty master rather than failing, and with no archive they report that nothing has been
+    stored yet. Both answers are honest; neither invents data.
+    """
     cfg = settings or get_settings()
     audit_log = audit or AuditLog(store=_default_store(cfg))
     halt_manager = halt or HaltManager(audit=audit_log)
+    instrument_registry = registry or InstrumentRegistry()
+    market_calendar = calendar or MarketCalendar()
 
     app = FastAPI(
         title="NEXUS Core API",
         version=__version__,
-        summary="Phase 2 core foundation. Live trading disabled; no venue adapters.",
+        summary="Phase 3 core + market data. Live trading disabled; no venue adapters.",
         docs_url="/docs",
         openapi_url="/openapi.json",
     )
     app.state.settings = cfg
     app.state.audit = audit_log
     app.state.halt = halt_manager
+    app.state.registry = instrument_registry
+    app.state.calendar = market_calendar
+    app.state.archive = archive
 
     @app.middleware("http")
     async def _count_requests(request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -150,7 +174,20 @@ def create_app(
                 "sms": False,  # BLOCKED by D-019 (O-006)
                 "whatsapp": False,  # BLOCKED by D-019 (O-006)
             },
-            "venue_adapters": [],
+            "venue_adapters": [],  # trading adapters: none exist in Phase 3
+            "market_data_sources": {
+                "enabled": bool(DATA_SOURCES),
+                "sources": list(DATA_SOURCES),
+                "authenticated": False,
+                "read_only": True,
+                "order_capable": False,
+                "cost_usd": 0,
+            },
+            "instrument_master": {
+                "count": len(instrument_registry),
+                "active": len(instrument_registry.active()),
+            },
+            "archive": {"configured": archive is not None},
         }
 
     @app.get("/v1/audit/verify", tags=["audit"])
@@ -184,6 +221,72 @@ def create_app(
     ) -> dict[str, Any]:
         state = halt_manager.release(reason=payload.reason, released_by=owner)
         return {"released": True, "halt": state.to_dict()}
+
+    @app.get("/v1/instruments", tags=["instruments"])
+    def list_instruments() -> dict[str, Any]:
+        """The canonical master: one economic instrument, many venue representations."""
+        return instrument_registry.snapshot().to_dict()
+
+    @app.get("/v1/instruments/coverage", tags=["instruments"])
+    def instrument_coverage() -> dict[str, Any]:
+        """What is proven ready for research / paper / live, and what is still missing.
+
+        Readiness follows certification, never enthusiasm: an instrument appears under
+        ``ready_for_live`` only when a venue mapping has reached LIVE_VERIFIED.
+        """
+        report = coverage_report(instrument_registry)
+        return {
+            **report.to_dict(),
+            "live_trading_enabled": False,  # Phase 3: structurally impossible
+            "note": "readiness_for_live describes certification only; live authority is DENIED",
+        }
+
+    @app.get("/v1/instruments/{instrument_id}/session", tags=["instruments"])
+    def instrument_session(instrument_id: str, exchange: str | None = None) -> dict[str, Any]:
+        """Whether this instrument should be trading right now, and how sure we are.
+
+        ``confidence`` matters as much as ``is_open``: a PARTIAL answer means the weekday rule
+        is known but the holiday list is not, so weekend/holiday silence is expected while a
+        midweek gap is not.
+        """
+        try:
+            instrument = instrument_registry.require(instrument_id)
+        except UnknownInstrument:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown instrument: {instrument_id}",
+            ) from None
+        resolved_exchange = exchange or (instrument.mappings[0].venue.value if instrument.mappings else None)
+        session = market_calendar.status(
+            instrument_id=instrument.instrument_id,
+            asset_class=instrument.asset_class,
+            exchange=resolved_exchange,
+            now=utc_now(),
+        )
+        return session.to_dict()
+
+    @app.get("/v1/data/coverage", tags=["data"])
+    def data_coverage() -> dict[str, Any]:
+        """What the first-party archive actually holds — never what was requested.
+
+        Without an archive configured this reports ``configured: false`` rather than an empty
+        dataset, because "no archive" and "archive holds nothing" are different facts.
+        """
+        if archive is None:
+            return {
+                "configured": False,
+                "files": 0,
+                "bytes": 0,
+                "partitions": {},
+                "note": "no archive configured; nothing has been persisted",
+            }
+        manifest = archive.manifest()
+        return {
+            "configured": True,
+            **manifest,
+            "retention_policy": "D-024 tiered: ticks 30d, 1m bars 12mo, 5m/daily indefinite",
+            "coverage_is_honest": "partitions list what exists; absence means no data, not a query failure",
+        }
 
     @app.get("/metrics", tags=["ops"], include_in_schema=False)
     def metrics() -> Response:

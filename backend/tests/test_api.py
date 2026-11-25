@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from nexus import __phase__
 from nexus.api.app import create_app
 from nexus.audit.log import AuditLog, InMemoryAuditStore
 from nexus.core.config import Settings
@@ -26,7 +27,10 @@ class TestOpsEndpoints:
         assert response.status_code == 200
         body = response.json()
         assert body["status"] == "ok"
-        assert body["phase"] == "2-core-foundation"
+        # Bound to the module constant so the assertion tracks the phase instead of drifting
+        # every time the phase advances (it silently broke at the Phase 2 -> 3 transition).
+        assert body["phase"] == __phase__
+        assert body["phase"].startswith("3-")
 
     def test_readyz_reports_environment(self, client: TestClient) -> None:
         response = client.get("/readyz")

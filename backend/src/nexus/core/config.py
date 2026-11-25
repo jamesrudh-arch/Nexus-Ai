@@ -15,6 +15,7 @@ from typing import Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from nexus import __version__
 from nexus.core.environment import EnvironmentState
 
 SecretRef = str  # a *name* to resolve via the secrets provider, never a raw value
@@ -116,7 +117,9 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="NEXUS_", extra="ignore")
 
     app_name: str = "NEXUS"
-    version: str = "0.1.0"
+    # Bound to the package version so the API, the docs and the config can never disagree
+    # about which build is running (they drifted at the Phase 2 -> 3 transition).
+    version: str = __version__
     environment: EnvironmentState = EnvironmentState.DISABLED
 
     # Live-authority gates. All must be true, plus environment >= PILOT, plus the
@@ -132,7 +135,18 @@ class Settings(BaseSettings):
     market_data_retention_days: int = Field(default=1095, ge=7)  # 3 years, tiered rollups
 
     timezone_display: str = "UTC"
-    base_currency: str = "USD"  # O-001 per-account currency remains OPEN
+    # D-025 (closes O-001 for the system base): all equity, sizing and risk math is in USD.
+    base_currency: str = "USD"
+    # NGN is shown alongside for tax/ISA reporting only. It is never used for limit math, so
+    # a missing or stale NGN rate cannot loosen a risk limit. When no free rate is available
+    # the NGN column must read UNAVAILABLE, never an estimate.
+    reporting_currency: str = "NGN"
+
+    # ---- Phase 3: first-party market-data archive (D-024 tiered retention) ----
+    archive_root: str = "./data/archive"
+    #: Free, public, unauthenticated data sources. Comma-separated; empty disables ingestion.
+    #: None of these can place an order, and none is given a credential (D-026).
+    data_sources_enabled: str = "bybit-public,okx-public,binance-vision,dukascopy"
 
     risk: RiskLimits = Field(default_factory=RiskLimits)
     data_quality: DataQualityLimits = Field(default_factory=DataQualityLimits)
@@ -158,10 +172,18 @@ class Settings(BaseSettings):
                 return EnvironmentState.DISABLED
         return EnvironmentState.DISABLED
 
-    @field_validator("base_currency", "timezone_display")
+    @field_validator("base_currency", "timezone_display", "reporting_currency")
     @classmethod
     def _upper(cls, value: str) -> str:
         return value.strip().upper()
+
+    @property
+    def enabled_data_sources(self) -> tuple[str, ...]:
+        """Parsed list of free public data sources. Empty means ingestion is off."""
+        return tuple(part.strip() for part in self.data_sources_enabled.split(",") if part.strip())
+
+    def is_data_source_enabled(self, name: str) -> bool:
+        return name.strip().lower() in {s.lower() for s in self.enabled_data_sources}
 
 
 @lru_cache(maxsize=1)
