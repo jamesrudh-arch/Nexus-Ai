@@ -608,7 +608,7 @@ class TestTrivyFindingsAreReadable:
             "nothing verifies pip is actually gone from the venv"
         )
         # The declaration the scanner reads, asserted absent by file content not package name.
-        assert "'*.cdx.json'" in runtime, "the vendored SBOM is no longer asserted absent"
+        assert "--include='*.cdx.json'" in runtime, "the vendored SBOM is no longer asserted absent"
         # Removal must happen after the venv is copied in and before privileges are dropped.
         assert (
             runtime.index("COPY --from=builder /opt/venv")
@@ -632,12 +632,34 @@ class TestTrivyFindingsAreReadable:
             "matching a bare `pkg_resources` deletes pip's vendored copy and fails the build on "
             "a file that is not the finding"
         )
-        allowed = {"pip", "pip-*.dist-info", "setuptools*", "*.cdx.json"}
+        allowed = {"pip", "pip-*.dist-info", "setuptools*"}
         for pattern in names:
             assert pattern in allowed, (
                 f"unexpected removal pattern {pattern!r}; this deletes files recursively, so "
                 "every pattern must be reviewed before it is added"
             )
+
+    def test_the_sbom_check_targets_setuptools_not_every_manifest(self) -> None:
+        """A blanket "no SBOM survives" check fails the build on a package that is not the finding.
+
+        Measured in CI rather than assumed: the image carries two CycloneDX manifests and only
+        pip's mentions setuptools. The other is
+        `psycopg_binary-3.3.9.dist-info/sboms/auditwheel.cdx.json`, from the `postgres` extra — an
+        extra the local dev venv does not install, which is exactly how the blanket version of this
+        check came to be written and shipped. It cost a red build on a file that has nothing to do
+        with the finding.
+
+        The general lesson is the one worth keeping: a conclusion drawn from the dev environment
+        about the contents of the image is not a conclusion about the image.
+        """
+        runtime = (BACKEND / "Dockerfile").read_text().split("AS runtime", 1)[1]
+        assert "grep -rl setuptools --include='*.cdx.json'" in runtime, (
+            "the SBOM check no longer searches manifest contents for the package that matters"
+        )
+        assert "-name '*.cdx.json'" not in runtime, (
+            "a blanket SBOM check has returned; it fails the build on psycopg-binary's auditwheel "
+            "manifest, which does not mention setuptools"
+        )
 
     def test_the_dockerfile_survivor_check_is_not_vacuous(self) -> None:
         """`find a -o b -print -quit` binds the action to `b` only.

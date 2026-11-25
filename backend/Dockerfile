@@ -76,6 +76,12 @@ COPY migrations ./migrations
 #     pip's vendored `pkg_resources` directory — a real, necessary part of pip that has nothing to
 #     do with the finding.
 #
+# The check below is deliberately narrower than "no SBOM survives". Asserting that was tried, and
+# the build failed on `psycopg_binary-3.3.9.dist-info/sboms/auditwheel.cdx.json` — a second SBOM
+# carrier that says nothing about setuptools. That conclusion had been drawn from a local venv,
+# which does not install the `postgres` extra; the builder stage does, and so does the image. What
+# matters is not the presence of manifests but whether any of them declares the package.
+#
 # So pip itself goes, from both interpreters. This is not suppression: there is no ignore file, no
 # manifest deleted to hide a finding, and the scan stays fully blocking on HIGH and CRITICAL. The
 # runtime installs no packages — nothing under src/nexus shells out to pip — so a package installer
@@ -92,7 +98,7 @@ COPY migrations ./migrations
 # Each check exits with its own code, because CI publishes the failing command line but not the
 # build log: a single RUN with six assertions can only say "one of these failed".
 #   21 pip or setuptools distribution metadata survived the removal
-#   22 a CycloneDX SBOM survived — the file the scanner actually reads
+#   22 an SBOM in the image still declares setuptools — the artifact the scanner reads
 #   23 the system interpreter can still import setuptools
 #   24 the venv interpreter can still import setuptools
 #   25 the venv can still import pip
@@ -107,7 +113,8 @@ RUN set -eux; \
     test -z "$(find /usr/local/lib /opt/venv/lib -maxdepth 3 \
                \( -name 'pip' -o -name 'pip-*.dist-info' -o -name 'setuptools*' \) \
                -print -quit)" || exit 21; \
-    test -z "$(find /usr/local/lib /opt/venv/lib -name '*.cdx.json' -print -quit)" || exit 22; \
+    test -z "$(grep -rl setuptools --include='*.cdx.json' --include='*.spdx.json' \
+               /usr/local/lib /opt/venv/lib 2>/dev/null)" || exit 22; \
     ! /usr/local/bin/python -c 'import setuptools' || exit 23; \
     ! /opt/venv/bin/python -c 'import setuptools' || exit 24; \
     ! /opt/venv/bin/python -c 'import pip' || exit 25; \

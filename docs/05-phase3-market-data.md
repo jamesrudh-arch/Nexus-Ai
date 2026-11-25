@@ -357,9 +357,12 @@ would have corrupted research data silently.
 | 11 | `rollup_bars` emitted `instrument_id or ""` when identity was not passed, and the archive partitioned blank venue/symbol into `venue=/symbol=` | **Anonymous bars on the D-024 retention ladder.** Every instrument's 5m/daily bars would share one partition — indistinguishable, unfindable by any `read_bars(venue=…)` filter, and it breaks the per-instrument coverage check that decides whether old ticks may be deleted | `_resolve_rollup_identity()`: inherit from the sources, refuse when they disagree or are anonymous, explicit override still wins. Plus a fail-closed archive guard refusing any record with a blank venue or symbol, for the whole batch (9 + 8 regression tests) |
 | 12 | **`.gitignore` had unanchored `data/` and `secrets/` patterns**, which match at *any* depth | **The pushed Phase 2 commit `72fcbcc` was missing 6 source modules it imports** (`nexus/data/{__init__,freshness,records}.py`, `nexus/secrets/{__init__,provider,redaction}.py`). A fresh clone could not import `nexus` at all. It also meant **ruff never linted those two packages** — ruff honours `.gitignore`, so every "ruff clean" result reported for Phase 2 silently excluded them | Anchored both patterns (`/data/`, `/secrets/`, `/backend/data/`, `/backups/`) and added end-of-file negations for `backend/src/**` and `backend/migrations/**`, with `__pycache__` re-excluded *after* them (a negation that re-includes the directory lets git descend and re-include every `.pyc`). New `backend/tests/test_repo_hygiene.py` compares the working tree against the repository (10 tests) |
 
-Defects 13–23 were found only by executing CI on GitHub. None is a defect in the trading system;
-all are defects in the machinery that is supposed to prove the trading system works, which is
-why they are recorded with the same rigour as the rest.
+Defects 13–29 were found only by executing CI on GitHub. Almost none is a defect in the trading
+logic; they are defects in the machinery that is supposed to prove the trading logic works, which
+is why they are recorded with the same rigour as the rest. **Defect 26 is the exception and the
+most serious of the group**: it is a defect in the deliverable itself — an image that would not
+start — and CI surfaced it only because a build-time assertion was added that nobody had thought
+to add before.
 
 | # | Defect | Impact if unfixed | Fix |
 |---|--------|-------------------|-----|
@@ -372,25 +375,37 @@ why they are recorded with the same rigour as the rest.
 | 19 | `permissions: contents: read` alone | gitleaks could not post its findings to the PR: `HttpError: Resource not accessible by integration` | Added `pull-requests: write`, and a test pins the permission set so it cannot widen |
 | 20 | **`.gitleaks.toml` used plural `[[allowlists]]`, which gitleaks 8.24.3 does not define** | Viper ignored the unknown key with no error and no warning. Five consecutive runs failed on the same two findings while the config looked correct, my guard tests read the same key back and passed, and nothing anywhere said why | Singular `[allowlist]` (verified against 8.24.3's `ViperConfig` source: only a singular `Allowlist` struct exists; `extend()` appends the default's entries and matching is OR). `GITLEAKS_VERSION` pinned in the workflow, and a test validates every key in the config against that version's schema |
 | 21 | `actions/checkout` defaults to `fetch-depth: 1` | A test verifying that an excused commit exists passed locally and failed **only in CI** — a test that passes only on the machine that wrote it is not a test | `fetch-depth: 0` on the backend job, asserted by a test; the verification itself skips only when the object is genuinely absent, not merely when the clone is shallow |
-| 22 | The image scan's findings were unreadable, so HIGH was made report-only | A gate whose output cannot be read stays open: the build went green while an untriaged HIGH finding shipped. That was O-011, and splitting the severity was a quieter problem, not a solution | Findings republished as **check annotations**, which the REST API serves from any host (logs are served from a different one). Exactly one finding existed: CVE-2025-47273, setuptools 70.3.0 in the base image. Removed from both interpreters with a build-time assertion, and HIGH blocks again |
-| 23 | An upgrade was committed as the fix for defect 22 and the scan still reported 70.3.0 | The copy the scanner read was not the copy the upgrade touched. Shipping "fixed" on the strength of a command that ran successfully would have left the finding in place | Remove from both interpreters, delete surviving `dist-info`, and fail the build unless neither can `import setuptools`. The survivor check itself had a `find` precedence bug — `-name a -o -name b -print -quit` binds the action to `b` alone and matched **zero** items with setuptools present; caught on a mock tree, parentheses added, and now asserted by a test |
+| 22 | The image scan's findings were unreadable, so HIGH was made report-only | A gate whose output cannot be read stays open: the build went green while an untriaged HIGH finding shipped. That was O-011, and splitting the severity was a quieter problem, not a solution | Findings republished as **check annotations**, which the REST API serves from any host (logs are served from a different one). That is what named the finding: CVE-2025-47273, setuptools 70.3.0. HIGH blocks again |
+| 23 | The fix committed for defect 22 — `pip install --upgrade "setuptools>=78.1.1"` — did not clear it; the next scan still reported 70.3.0 | A fix argued for instead of measured. The reasoning ("the base image ships 70.3.0, therefore upgrade it") was plausible, and wrong in a way no local check could reveal | Superseded by defect 25. Left in the record because the reasoning is the instructive part |
+| 24 | The removal that replaced it deleted nothing, and the assertion written to prove the removal worked then **failed the build on `pip/_vendor/pkg_resources`** | Five consecutive red image jobs. The check meant to prevent a wrong fix was itself wrong: it matched by filename rather than by distribution metadata, so it treated a necessary part of pip as the vulnerability | Match distributions only (`pip`, `pip-*.dist-info`, `setuptools*`) at the only depth a distribution can live. A test enumerates every removal pattern and refuses a bare `pkg_resources` |
+| 25 | **The finding is a false positive.** setuptools is not installed anywhere in the image; the scanner reads `pip/_vendor/bom.cdx.json` — pip's own CycloneDX SBOM listing its vendored dependencies — which declares `pkg:pypi/setuptools@70.3.0` | Three fixes could not have worked. Upgrading cannot rewrite a version string inside pip's own SBOM, removal has nothing to remove, and the reading "this image contains vulnerable code" was simply untrue | Remove pip from both interpreters. No ignore file, no deleted manifest, the scan still blocking on HIGH and CRITICAL: the runtime installs no packages, so a package installer in the image is attack surface with no benefit, and pip is the only SBOM carrier in the tree |
+| 26 | The runtime image never installed the IANA tz database, and the module the `CMD` runs builds `ZoneInfo("America/New_York")` at import time | **The container would not have started.** ZoneInfoNotFoundError before a port is bound — on the deployment host, unreproducible locally, present since the Phase 2 Dockerfile. No existing check could have found it, because nothing ever imported the image's own entrypoint | Install `tzdata` explicitly rather than inherit whatever the base image happens to ship, and assert at build time that `nexus.api.app` imports and `create_app` is callable |
+| 27 | GitHub Actions allows **10 annotations per level per step** | A diagnostic built to fetch one answer spent its entire budget on docker's image-pull progress and published nothing. The Trivy publisher had the same defect waiting in it: one annotation per finding, capped at 40, would silently have lost everything past the tenth — and a cap that truncates looks exactly like a result | Each report packed into a single annotation with encoded newlines; a test asserts the count stays within budget *and* that packing does not lose findings |
+| 28 | Six assertions in one `RUN`, and build logs are not readable from every environment | Eight and a half minutes of build, then an annotation printing all six checks without saying which had tripped. The failure was undiagnosable through the only channel available | Distinct exit codes 21–26 with a legend above the `RUN`; a test asserts the codes and the legend agree, because a legend that has drifted from the checks gets believed |
+| 29 | The local gate chained lint, types and tests with newlines instead of `&&` | A non-zero `ruff` exit did not stop the commit and push behind it. Five F811 redefinitions shipped and were caught by CI rather than locally (`9f07537`) | Chained with `&&`. A gate whose failure cannot stop the commit is not a gate |
 
 Defects 1–3 and 9–12 are the important ones: all seven produce *plausible-looking wrong
 results* rather than an error, which is the failure mode that destroys confidence in a
 backtest — or, in defect 12's case, in the repository itself.
 
-Defects 20 and 23 are the same failure mode one level up: a configuration key and a shell
-expression that were silently inert while looking correct. Both were found by reading source
-rather than by testing, and both are now guarded by tests that fail when the inert form returns.
+Defects 20, 24 and 27 are one failure mode appearing three times: something silently inert, or
+silently truncated, while looking exactly like the real thing. A configuration key the pinned
+version does not define. A `find` action bound to the wrong branch, so a survivor check matched
+nothing and passed. An annotation budget spent before the answer arrived, and a finding list
+capped below the number of findings. None of the three produced an error, and none was found by
+the check that was supposed to catch it — each was found by reading source or by measurement, and
+each now has a test that fails when the inert form returns.
+
+Defects 23, 24 and 25 are a single investigation recorded in full, including the two wrong
+answers. The sequence matters more than the outcome: a plausible fix was committed on reasoning
+(defect 23), the reasoning was replaced by a measurement that contradicted it (defect 24), and the
+measurement eventually showed the finding itself was untrue (defect 25). Had the first fix been
+accepted because the command exited zero, the image would carry a scanner exception for a
+vulnerability it does not have — and the tzdata defect behind it would still be undiscovered.
 
 One correction to the record, in the same spirit: the commit message for `edcefb6` claimed 860
 tests when the gate had reported 859. The number was written before it was measured. The commit
 was left unrewritten, consistent with how `72fcbcc` is handled in limitation 8.
-
-The gate command that let defect 23's predecessor through is also worth naming: it chained the
-lint, type and test steps with newlines rather than `&&`, so a non-zero `ruff` exit did not stop
-the commit and push that followed it. Five F811 redefinitions shipped and were caught by CI
-rather than locally (`9f07537`). A gate whose failure cannot stop the commit is not a gate.
 
 Defects 9 and 10 were found only by running the whole pipeline end-to-end on realistic
 volumes; no single-unit test would have exposed either. Defect 12 was found only by asking
