@@ -15,10 +15,16 @@ only way to detect that class of failure.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -1303,3 +1309,216 @@ class TestDocumentedConfigurationIsHonoured:
             f"compose defaults NEXUS_DATABASE_URL to {match.group(1)!r}, which the app refuses; a "
             "default bring-up would fail to start"
         )
+
+
+# --------------------------------------------------------------------- runtime smoke test
+@contextmanager
+def _serving_real_app() -> Iterator[str]:
+    """Serve the real application over a real socket and yield its base URL.
+
+    ``TestClient`` calls the ASGI app in-process, which is the right tool for asserting route
+    behaviour and the wrong tool for asserting that a *process* serves: it never binds a port, so
+    it cannot notice a startup failure, a bad bind address, or a body that only serialises over a
+    real connection. These tests run the checker against something that is actually listening.
+
+    The port is ephemeral (0) and read back from the bound socket, so the tests neither need a
+    free port nor can collide with one.
+    """
+    import uvicorn
+
+    from nexus.api.app import create_app
+    from nexus.core.config import Settings
+
+    config = uvicorn.Config(
+        create_app(settings=Settings(_env_file=None)),
+        host="127.0.0.1",
+        port=0,
+        log_level="critical",
+    )
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 60
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert server.started, "the application never started serving; the smoke tests cannot run"
+    try:
+        port = server.servers[0].sockets[0].getsockname()[1]
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        thread.join(timeout=30)
+
+
+def _closed_port() -> int:
+    """A port nothing is listening on, obtained by binding one and letting it go."""
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def _run_checker(base_url: str, *, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    env = dict(os.environ, NEXUS_SMOKE_BASE_URL=base_url, **(extra_env or {}))
+    return subprocess.run(  # noqa: S603 - fixed arguments, no shell, no user input
+        [sys.executable, str(REPO_ROOT / "infra" / "smoke_check.py")],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+
+
+class TestTheRuntimeSmokeTestIsWiredUp:
+    """A bring-up check that nothing runs is worse than none, because it is trusted.
+
+    Phase 3 shipped with every runtime claim inferred from a build: the image compiled and its
+    entrypoint imported, which says nothing about whether a process serves a request, whether the
+    non-root user can write its audit database, or whether the image HEALTHCHECK ever answers.
+    Defects 31, 32 and 34 were all found by reading files, and all three would have been found
+    immediately by starting the stack once. `infra/smoke-test.sh` is that start, and the CI job
+    below is what keeps it from rotting into a script nobody runs.
+    """
+
+    WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+    SCRIPT = REPO_ROOT / "infra" / "smoke-test.sh"
+    CHECKER = REPO_ROOT / "infra" / "smoke_check.py"
+
+    def _smoke_job(self) -> dict:
+        workflow = yaml.safe_load(self.WORKFLOW.read_text())
+        assert "smoke" in workflow["jobs"], "the CI workflow no longer has a `smoke` job"
+        return dict(workflow["jobs"]["smoke"])
+
+    def test_both_scripts_exist(self) -> None:
+        assert self.SCRIPT.is_file(), "infra/smoke-test.sh is missing"
+        assert self.CHECKER.is_file(), "infra/smoke_check.py is missing"
+
+    def test_ci_runs_the_smoke_script(self) -> None:
+        runs = " ".join(str(step.get("run", "")) for step in self._smoke_job()["steps"])
+        assert "infra/smoke-test.sh" in runs, "no CI step executes the smoke script"
+
+    def test_the_smoke_script_runs_the_checker(self) -> None:
+        assert "smoke_check.py" in self.SCRIPT.read_text(), (
+            "the bring-up script never runs the in-container checker, so nothing is asserted "
+            "from inside the running process"
+        )
+
+    def test_the_smoke_script_parses(self) -> None:
+        """Executed rather than eyeballed: a malformed `sed`/`[` expression aborts silently."""
+        shell = shutil.which("sh")
+        if shell is None:
+            pytest.skip("no POSIX shell available")
+        result = subprocess.run(  # noqa: S603 - fixed arguments, no shell, no user input
+            [shell, "-n", str(self.SCRIPT)], capture_output=True, text=True, check=False
+        )
+        assert result.returncode == 0, f"infra/smoke-test.sh does not parse: {result.stderr}"
+
+    def test_the_smoke_job_loads_the_image_compose_names(self) -> None:
+        """`load: true` under compose's own tag, or `compose up` has no image to start.
+
+        The same mistake already cost a CI cycle in the `image` job: a multi-platform build with
+        `push: false` and `load: false` leaves no image in the daemon at all, because one tag
+        holds one architecture. The tag is read from docker-compose.yml rather than written here,
+        so renaming the image cannot silently desynchronise the two.
+        """
+        compose = yaml.safe_load((REPO_ROOT / "docker-compose.yml").read_text())
+        wanted = str(compose["services"]["core"]["image"])
+
+        loaded: set[str] = set()
+        for step in self._smoke_job()["steps"]:
+            block = step.get("with") or {}
+            if "build-push-action" in str(step.get("uses", "")) and block.get("load") is True:
+                loaded.update(tag.strip() for tag in str(block.get("tags", "")).split())
+
+        assert wanted in loaded, (
+            f"the smoke job does not load {wanted} into the daemon; loaded: {sorted(loaded) or 'nothing'}"
+        )
+
+    def test_the_smoke_job_publishes_a_readable_report(self) -> None:
+        """Job logs are served from a host outside this environment's egress allowlist.
+
+        That is what made O-011 untriageable: a red build whose findings could not be opened. The
+        smoke report is republished as a check annotation for the same reason, and it matters most
+        on the runs that fail — which is exactly when the log is unreachable.
+        """
+        steps = self._smoke_job()["steps"]
+        publishing = [
+            step
+            for step in steps
+            if "always()" in str(step.get("if", "")) and "::" in str(step.get("run", ""))
+        ]
+        assert publishing, "no `if: always()` step publishes annotations, so a failure is unreadable"
+        body = " ".join(str(step.get("run", "")) for step in publishing)
+        assert "smoke-report.txt" in body, "the annotation step does not read the smoke report"
+
+    def test_the_smoke_job_is_not_gated_behind_the_lint_and_build_jobs(self) -> None:
+        """A lint failure must not hide a runtime failure.
+
+        These are independent signals about different things. Chaining them means the runtime
+        verdict arrives only on pushes that are already lint-clean, which is precisely when it is
+        least interesting.
+        """
+        needs = self._smoke_job().get("needs") or []
+        if isinstance(needs, str):
+            needs = [needs]
+        assert not set(needs) & {"backend", "image"}, f"the smoke job is gated behind {sorted(needs)}"
+
+
+class TestTheSmokeCheckerIsExecutedNotJustPresent:
+    """The checker is run here, against the real app, on every push.
+
+    Asserting that a check script exists proves nothing about whether it passes, and a checker
+    that has never been executed against a live process is a hypothesis. Running it here also
+    means a bug in the *checker* is caught offline instead of surfacing as a confusing red
+    container job. Two defects found while writing it are now regression-tested below: it
+    crashed with a traceback when nothing was listening, and one of its route probes used the
+    wrong HTTP method and so failed against a correct application.
+    """
+
+    def test_the_checker_passes_against_the_real_running_app(self) -> None:
+        with _serving_real_app() as base_url:
+            result = _run_checker(base_url)
+        assert result.returncode == 0, (
+            f"the smoke checker failed against a real, serving application:\n"
+            f"{result.stdout[-3000:]}\n{result.stderr[-1000:]}"
+        )
+        assert "checks passed" in result.stdout
+
+    def test_the_checker_reports_an_unreachable_process_rather_than_crashing(self) -> None:
+        """A dead container must produce a report, not a Python traceback.
+
+        The first version caught only HTTPError, so a connection refusal escaped as an unhandled
+        URLError. The least useful possible output from a bring-up check is a stack trace saying
+        the process was not there — that is the one thing the operator already suspects.
+        """
+        result = _run_checker(f"http://127.0.0.1:{_closed_port()}")
+        assert result.returncode != 0, "an unreachable process must fail the check"
+        assert "Traceback" not in result.stderr, f"the checker crashed instead of reporting:\n{result.stderr}"
+        assert "FAIL" in result.stdout, "the failure was not reported as a check result"
+
+    def test_the_checker_refuses_a_non_http_base_url(self) -> None:
+        """The URL comes from the environment, so it is constrained rather than trusted."""
+        result = _run_checker("file:///etc/passwd")
+        assert result.returncode != 0
+        assert "must be http(s)" in (result.stdout + result.stderr)
+
+    def test_the_runtime_image_checks_are_not_vacuous(self) -> None:
+        """The image-only checks must be capable of failing, or they assert nothing.
+
+        This is the negative control for the checks that distinguish the container from a dev
+        interpreter: pip and setuptools are removed from the image, and a development virtualenv
+        has both. If this stops failing outside the image, the checks have gone quiet rather than
+        correct. It skips when the interpreter has neither module, because then the control
+        genuinely cannot fire and saying so is better than passing.
+        """
+        import importlib.util
+
+        if importlib.util.find_spec("setuptools") is None and importlib.util.find_spec("pip") is None:
+            pytest.skip("this interpreter has neither setuptools nor pip, so the control cannot fire")
+
+        with _serving_real_app() as base_url:
+            result = _run_checker(base_url, extra_env={"NEXUS_SMOKE_RUNTIME_CHECKS": "1"})
+        assert result.returncode != 0, (
+            "the runtime-image checks passed outside the runtime image, so they cannot be "
+            "distinguishing anything"
+        )
+        assert "is absent from the runtime image" in result.stdout

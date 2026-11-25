@@ -59,14 +59,78 @@ venue.
 |------|------------------|-------|-------------------|
 | **B-1** | The stack starts and serves. `core` builds, starts, answers `/healthz` and `/readyz`, and reports the phase gate honestly from a *running* process | GitHub Actions (x86-64), then the Oracle VM (ARM64) | Container logs, endpoint responses, `docker compose ps` health states |
 | **B-2** | The runtime image's assumptions hold under execution: the pip removal did not break a runtime import, `tzdata` is present, the non-root user can write its audit database, the healthcheck actually answers | same | The same assertions the Dockerfile makes at build time, re-checked in a running container |
-| **B-3** | SQLite audit store durability across a restart: records survive, the hash chain verifies, and the append-only property holds | Oracle VM | `/v1/audit/verify` before and after `docker compose restart core` |
+| **B-3** | SQLite audit store durability across a restart **and across a container recreate**: records survive, the hash chain resumes from the stored head and still verifies | GitHub Actions, then the Oracle VM | `/v1/audit/verify` plus a direct row count from the volume, before and after each |
 | **B-4** | ARM64-native execution (not QEMU-emulated), and the memory budget on 2 OCPU / 12 GB | Oracle VM only — CI cannot do this | `docker stats` under load, `uname -m` from inside the container |
 | **B-5** | Postgres/TimescaleDB actually used by `core`, closing defect 34 and Phase 3 limitation 5 | Oracle VM | Migration applied, records written to and read from Postgres, `db` no longer idle |
 | **B-6** | Only then: Bybit and OKX **demo/paper** connectivity, per D-029 | Oracle VM (has egress) | Per-venue certification records |
 
 B-1 and B-2 can run in CI, on GitHub-hosted runners, for $0 — which is worth doing before the VM,
 because a failure found there costs minutes and a failure found on the VM costs a rebuild. B-4 and
-B-5 cannot be done anywhere but the VM.
+B-5 cannot be done anywhere but the VM. B-3 turned out to belong in the first group as well: a
+`docker compose rm -sf core` followed by `up -d core` destroys the container and keeps the
+`core-data` named volume, which is available on a hosted runner and is a *stronger* test than the
+restart alone.
+
+### 3.1 How B-1/B-2/B-3 are wired
+
+Three pieces, all offline-verifiable except the container run itself.
+
+**`infra/smoke_check.py`** — 34 assertions, standard library only, because it has to run inside the
+runtime image where the only guaranteed interpreter is the application's own. It is piped in with
+`docker compose exec -T core python - < infra/smoke_check.py` rather than copied, so it cannot be
+stale relative to the checkout. It reads the API from inside the container (`/healthz`, `/readyz`,
+`/v1/status`, `/openapi.json`, `/v1/instruments`, `/v1/audit/verify`) and asserts the *posture*: the
+phase gate is closed, live authority is `DENIED` with reasons, `venue_adapters` is empty, the market
+data sources are unauthenticated and read-only at zero cost, SMS and WhatsApp stay blocked (D-020),
+no route can place or cancel an order, the only mutations are halt and halt/release, and the
+instrument master refuses a POST with 405.
+
+The route assertions read `/openapi.json` rather than the router object, so they describe what a
+client can actually reach. Forbidden routes are matched as substrings — `order`, `trade`, `execute`,
+`position`, `withdraw`, `transfer` — so a capability added later under a new prefix is still caught.
+
+Image-only properties (pip and setuptools absent, the IANA tz database installed, uid 1001, `/app/data`
+writable, no SBOM in the image declaring setuptools) run only when `NEXUS_SMOKE_RUNTIME_CHECKS=1`.
+That gate exists so the checks have a **negative control**: in a development virtualenv they must
+fail, because pip and setuptools are both present there. A check that passes in every environment
+is not checking anything.
+
+**`infra/smoke-test.sh`** — the orchestration. It brings up `db nats core` under a *separate compose
+project name* (`nexus-smoke`) so it cannot touch a real deployment's containers or volumes, which
+matters on the VM where a live stack may already be running; tears down what it created; and runs
+every check rather than stopping at the first failure, because one complete report is worth more
+than six CI runs that each die on the first problem. Exit status is non-zero if any check failed.
+
+It asserts the image's own `HEALTHCHECK` answers (docker reports `core` healthy — nothing had ever
+exercised that), runs the checker inside the container with the runtime checks on, then proves
+durability twice over: a restart, and a container recreate against the surviving volume. It also
+confirms the runtime user — not root — can write `/app/data` in the *new* container, which is where
+a volume that inherited the wrong ownership would show up.
+
+No step whose exit status matters is piped. `cmd | tail -5; echo "exit=$?"` reports `tail`'s status,
+not `cmd`'s, and that silently turned a crash into a green result while this was being written.
+
+**The `smoke` CI job** — builds the amd64 image with `load: true` under the exact tag
+`docker-compose.yml` names, runs the script, and republishes `smoke-report.txt` as **one** check
+annotation. The annotation is not a convenience: this environment cannot read job logs, because
+GitHub serves them from a host outside the egress allowlist, so without it a failure here is a red
+X with no content. One annotation rather than one per failure, because Actions caps annotations at
+10 per level per step and a long report would silently lose everything past the tenth.
+
+The job deliberately has no `needs:`. Lint and runtime are independent signals about different
+things, and chaining them means the runtime verdict arrives only on pushes that are already
+lint-clean.
+
+**11 new tests in `test_repo_hygiene.py`** hold all of the above in place, including running the
+checker against the real application served by uvicorn on an ephemeral port. That last one is the
+important part: it executes the checker end to end, over a real socket, with no docker involved, so
+a bug in the *checker* is caught offline instead of surfacing as a confusing red container job. Two
+such bugs were found while writing it and are now regression-tested — it crashed with an unhandled
+`URLError` traceback when nothing was listening (the least useful possible output from a bring-up
+check, since "the process is not there" is the one thing the operator already suspects), and one
+route probe used GET where it meant POST, so it failed against a correct application. All six
+negative controls over these tests fired, and each mutated file was verified restored individually
+rather than inferred from the controls passing.
 
 **O-009 and O-010 can be closed from CI, not from this sandbox.** GitHub-hosted runners have
 internet egress, which the sandbox does not: a scheduled or on-demand workflow can contact the
