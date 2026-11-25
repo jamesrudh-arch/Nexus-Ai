@@ -40,8 +40,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DO_NOT_TRACK=1
 
 # curl for the healthcheck only; no shell-based tooling beyond it.
+#
+# tzdata is not optional. `nexus.instruments.sessions` builds `ZoneInfo("America/New_York")` at
+# *import* time, and `nexus.api.app` — the module the CMD below executes — imports it. Without the
+# IANA database that import raises ZoneInfoNotFoundError and the container dies before it binds a
+# port. Installing it explicitly rather than relying on whatever the base image happens to ship:
+# `slim` variants have dropped it before, and correctness must not depend on an incidental package.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system --gid 1001 nexus \
     && useradd --system --uid 1001 --gid nexus --home-dir /app --shell /usr/sbin/nologin nexus
@@ -51,41 +57,51 @@ WORKDIR /app
 COPY --from=builder /opt/venv /opt/venv
 COPY migrations ./migrations
 
-# CVE-2025-47273 — setuptools before 78.1.1: `PackageIndex.download` derives a filename from an
-# unquoted URL segment and joins it onto a temp directory, so a crafted URL writes anywhere the
-# process can (CVSS 8.8 HIGH). The base image ships 70.3.0. Nothing here calls that API — the
-# runtime installs no packages — but the code being present *is* the finding, and "unreachable in
-# practice" belongs in the record rather than in the image.
+# CVE-2025-47273 (setuptools < 78.1.1; path traversal in `PackageIndex._download_url`, CVSS 8.8
+# HIGH) is reported against this image, and it is a false positive — proven by measurement in CI,
+# not argued.
 #
-# Removed, not upgraded. Upgrading was tried first (`pip install --upgrade "setuptools>=78.1.1"`
-# against the system interpreter, before the venv was copied in) and the scan still reported
-# 70.3.0, so the copy Trivy read was not the copy that command touched. Rather than keep guessing
-# which interpreter owns it, both are cleared and the build then asserts the outcome: if either
-# can still import setuptools, or any `setuptools*.dist-info` survives — which is what Trivy
-# actually keys on, and what a plain `pip uninstall` can leave behind — this RUN fails and no
-# image is produced. A fix that verifies itself beats one that is argued for, especially here,
-# where no container can be started to check.
+# setuptools is not installed anywhere in this image. A probe run on the base image and on the
+# builder stage (the two images this one is assembled from) reports `ModuleNotFoundError: No module
+# named 'setuptools'` from both interpreters, and a whole-filesystem search finds no setuptools
+# package and no setuptools distribution metadata. What the scanner actually reads is
+# `pip/_vendor/bom.cdx.json`: pip ships a CycloneDX SBOM listing its own vendored dependencies,
+# and that manifest declares `pkg:pypi/setuptools@70.3.0`. It is a version string inside a text
+# file, not an installation, and nothing imports it.
 #
-# Safe to remove, and checked rather than assumed: no installed distribution imports
-# `pkg_resources` (grepped every `*.py` under site-packages; the only hits were setuptools
-# itself and pytest, which is a dev extra and is not installed in this image), and uvloop's
-# `Requires-Dist: setuptools` is gated on `extra == "dev"`.
+# That is why the two fixes tried before this one could not have worked:
+#   - upgrading setuptools touched a package that was not installed, and no pip command can rewrite
+#     a version baked into pip's own vendored SBOM;
+#   - removing setuptools removed nothing, and the assertion that followed then failed the build on
+#     pip's vendored `pkg_resources` directory — a real, necessary part of pip that has nothing to
+#     do with the finding.
 #
-# The RUN below does three things, in order: uninstall from both interpreters; delete any
-# surviving `setuptools*`/`pkg_resources` directory, because pip can leave the dist-info behind
-# and the dist-info is precisely what a scanner reads; then assert the result. The assertion is
-# the point — `test -z` fails the build if anything matches, and the two `! python -c import`
-# checks fail it if either interpreter can still load the package. No image is produced unless
-# setuptools is genuinely gone from both.
+# So pip itself goes, from both interpreters. This is not suppression: there is no ignore file, no
+# manifest deleted to hide a finding, and the scan stays fully blocking on HIGH and CRITICAL. The
+# runtime installs no packages — nothing under src/nexus shells out to pip — so a package installer
+# in the image is attack surface with no benefit: a compromised process could otherwise fetch and
+# install anything it liked. pip is also the only carrier of an SBOM here (verified by searching
+# every `*.cdx.json` in the tree), so removing it removes the declaration at its source and leaves
+# the scanner nothing to misread.
+#
+# The build then asserts the outcome instead of trusting the uninstall, because no container can be
+# started in CI to check by hand. The last assertion is the one that makes removing pip safe to do
+# blind: the entrypoint module the CMD runs must still import from the venv, which also proves
+# tzdata is really present. If any of these fail, no image is produced.
 RUN set -eux; \
-    /usr/local/bin/python -m pip uninstall -y setuptools || true; \
-    /opt/venv/bin/python -m pip uninstall -y setuptools || true; \
-    find /usr/local/lib /opt/venv/lib -maxdepth 4 \
-         \( -name 'setuptools*' -o -name 'pkg_resources' \) -exec rm -rf {} + || true; \
-    test -z "$(find /usr/local/lib /opt/venv/lib \
-               \( -name 'setuptools*' -o -name 'pkg_resources' \) -print -quit)"; \
+    /usr/local/bin/python -m pip uninstall -y pip setuptools || true; \
+    /opt/venv/bin/python -m pip uninstall -y pip setuptools || true; \
+    rm -f /usr/local/bin/pip* /opt/venv/bin/pip*; \
+    find /usr/local/lib /opt/venv/lib -maxdepth 3 \
+         \( -name 'pip' -o -name 'pip-*.dist-info' -o -name 'setuptools*' \) \
+         -exec rm -rf {} + || true; \
+    test -z "$(find /usr/local/lib /opt/venv/lib -maxdepth 3 \
+               \( -name 'pip' -o -name 'pip-*.dist-info' -o -name 'setuptools*' \) -print -quit)"; \
+    test -z "$(find /usr/local/lib /opt/venv/lib -name '*.cdx.json' -print -quit)"; \
     ! /usr/local/bin/python -c 'import setuptools'; \
-    ! /opt/venv/bin/python -c 'import setuptools'
+    ! /opt/venv/bin/python -c 'import setuptools'; \
+    ! /opt/venv/bin/python -c 'import pip'; \
+    /opt/venv/bin/python -c 'import nexus.api.app as m; assert callable(m.create_app)'
 
 # Data directory for the SQLite audit store on single-host deployments. Owned by nexus,
 # never world-writable.

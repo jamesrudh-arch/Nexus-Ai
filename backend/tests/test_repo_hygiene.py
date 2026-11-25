@@ -580,33 +580,64 @@ class TestTrivyFindingsAreReadable:
         """CVE-2025-47273 was the single finding that closed O-011. Its fix must not vanish.
 
         Trivy would catch a regression, but only in CI and only while the scan runs; this catches
-        it in the suite, with the reason attached. The base image ships setuptools 70.3.0, whose
-        `PackageIndex.download` joins an unquoted URL segment onto a temp directory and so allows
-        an arbitrary file write. Fixed upstream in 78.1.1.
+        it in the suite, with the reason attached.
 
-        It is *removed* here rather than upgraded. Upgrading the system interpreter was tried
-        first and the scan still reported 70.3.0 — the copy the scanner read was not the copy the
-        upgrade touched. Removing it from both interpreters and asserting the result is the fix
-        that does not depend on knowing which one was wrong.
+        The finding is a false positive, and establishing that took three attempts. setuptools is
+        not installed in the image at all — CI probes the base image and the builder stage and
+        both report ModuleNotFoundError. What the scanner reads is `pip/_vendor/bom.cdx.json`, a
+        CycloneDX SBOM in which pip lists its own vendored dependencies; that manifest declares
+        `pkg:pypi/setuptools@70.3.0`. Upgrading could not work (nothing was installed to upgrade,
+        and no pip command rewrites a string inside pip's own SBOM) and neither could removal (it
+        removed nothing). So pip goes instead: the runtime installs no packages, a package
+        installer in the image is attack surface with no benefit, and pip is the only carrier of
+        an SBOM anywhere in the tree.
         """
         dockerfile = (BACKEND / "Dockerfile").read_text()
         runtime = dockerfile.split("AS runtime", 1)[1]
         for interpreter in ("/usr/local/bin/python", "/opt/venv/bin/python"):
-            assert f"{interpreter} -m pip uninstall -y setuptools" in runtime, (
-                f"setuptools is no longer uninstalled from {interpreter}; the base image's "
-                "70.3.0 would be scanned as HIGH and fail the build"
+            assert f"{interpreter} -m pip uninstall -y pip setuptools" in runtime, (
+                f"pip is no longer uninstalled from {interpreter}, so its vendored SBOM stays in "
+                "the image and the scanner keeps reporting setuptools 70.3.0 as HIGH"
             )
             # The uninstall is not the fix; the assertion after it is. pip can leave the
             # dist-info behind, and the dist-info is exactly what a scanner reads.
             assert f"! {interpreter} -c 'import setuptools'" in runtime, (
                 f"nothing verifies that {interpreter} can no longer import setuptools"
             )
+        assert "! /opt/venv/bin/python -c 'import pip'" in runtime, (
+            "nothing verifies pip is actually gone from the venv"
+        )
+        # The declaration the scanner reads, asserted absent by file content not package name.
+        assert "'*.cdx.json'" in runtime, "the vendored SBOM is no longer asserted absent"
         # Removal must happen after the venv is copied in and before privileges are dropped.
         assert (
             runtime.index("COPY --from=builder /opt/venv")
-            < runtime.index("pip uninstall -y setuptools")
+            < runtime.index("pip uninstall -y pip setuptools")
             < runtime.index("USER nexus")
-        ), "setuptools removal must run after the venv is copied and before `USER nexus`"
+        ), "pip removal must run after the venv is copied and before `USER nexus`"
+
+    def test_the_removal_does_not_match_pips_own_vendored_files(self) -> None:
+        """A `find -name 'pkg_resources'` deletes part of pip and fails the build on a non-defect.
+
+        This is the exact mistake that made the image job red: the assertion matched
+        `pip/_vendor/pkg_resources`, a real and necessary part of pip that has nothing to do with
+        the finding. Matching distribution metadata at the only depth a distribution can live at
+        is what makes the check both effective and harmless, so a bare `pkg_resources` pattern
+        must not come back — and because the removal is recursive, every pattern is enumerated.
+        """
+        runtime = (BACKEND / "Dockerfile").read_text().split("AS runtime", 1)[1]
+        names = re.findall(r"-name '([^']+)'", runtime)
+        assert names, "no find name patterns at all — the removal has silently stopped matching"
+        assert "pkg_resources" not in names, (
+            "matching a bare `pkg_resources` deletes pip's vendored copy and fails the build on "
+            "a file that is not the finding"
+        )
+        allowed = {"pip", "pip-*.dist-info", "setuptools*", "*.cdx.json"}
+        for pattern in names:
+            assert pattern in allowed, (
+                f"unexpected removal pattern {pattern!r}; this deletes files recursively, so "
+                "every pattern must be reviewed before it is added"
+            )
 
     def test_the_dockerfile_survivor_check_is_not_vacuous(self) -> None:
         """`find a -o b -print -quit` binds the action to `b` only.
@@ -617,12 +648,47 @@ class TestTrivyFindingsAreReadable:
         than trusted — the same reason `git check-ignore` is called with `--no-index`.
         """
         runtime = (BACKEND / "Dockerfile").read_text().split("AS runtime", 1)[1]
-        grouped = "\\( -name 'setuptools*' -o -name 'pkg_resources' \\)"
+        # Raw string: the Dockerfile escapes the parens for the shell with a single
+        # backslash, and a plain literal would need it doubled — ambiguity that has
+        # already caused one false failure here.
+        grouped = r"\( -name 'pip' -o -name 'pip-*.dist-info' -o -name 'setuptools*' \)"
         assert runtime.count(grouped) >= 2, (
             "the survivor check lost its grouping parentheses, so `-print -quit` applies only to "
-            "the pkg_resources branch and setuptools survivors go unreported"
+            "the last branch and the other survivors go unreported"
         )
         assert "-print -quit" in runtime, "the survivor check no longer prints what it finds"
+
+    def test_the_image_installs_the_tz_database_its_entrypoint_needs(self) -> None:
+        """The module the CMD runs builds `ZoneInfo("America/New_York")` at import time.
+
+        `nexus.instruments.sessions` resolves two zones at module scope and `nexus.api.app`
+        imports it, so without the IANA database the container raises ZoneInfoNotFoundError and
+        dies before it binds a port. Reproduced locally with PYTHONTZPATH pointed at nothing.
+        Nothing caught it before, because no container has ever been started and no test asserted
+        the import — the kind of failure that surfaces only on the deployment host.
+        """
+        runtime = (BACKEND / "Dockerfile").read_text().split("AS runtime", 1)[1]
+        assert "apt-get install -y --no-install-recommends curl tzdata" in runtime, (
+            "tzdata is no longer installed explicitly; the entrypoint import would fail on any "
+            "base image that does not happen to ship it"
+        )
+
+    def test_the_image_asserts_its_own_entrypoint_still_imports(self) -> None:
+        """Removing pip is only safe to do blind if the build proves the venv still works.
+
+        Nothing in CI has ever started this container, so a runtime dependency broken at build
+        time would otherwise be discovered on the deployment host. Importing the module the CMD
+        runs is the cheapest possible proof, and it verifies tzdata for real instead of trusting
+        the package manager's exit code.
+        """
+        runtime = (BACKEND / "Dockerfile").read_text().split("AS runtime", 1)[1]
+        assert "import nexus.api.app as m; assert callable(m.create_app)" in runtime, (
+            "the image no longer verifies that its own entrypoint can be imported"
+        )
+        cmd = runtime.split("CMD ", 1)[1]
+        assert "nexus.api.app:create_app" in cmd, (
+            "the CMD changed; the build-time import assertion must follow it"
+        )
 
     def test_a_missing_report_is_reported_not_crashed_on(self, tmp_path: Path) -> None:
         """The scan step can be skipped; the publish step must not then fail the job."""

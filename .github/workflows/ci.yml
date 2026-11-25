@@ -206,6 +206,17 @@ jobs:
               ("locations", "find",
                ["/", "-xdev", "(", "-name", "setuptools*", "-o", "-name", "pkg_resources*",
                 ")", "-not", "-path", "/proc/*"]),
+              # The runtime stage asserts no `*.cdx.json` survives anywhere under either lib tree,
+              # with no depth limit. That assertion is only safe to ship if pip is the sole carrier
+              # of an SBOM in the *installed* package set — which the builder stage has, exactly.
+              ("sboms", "find",
+               ["/usr/local/lib", "/opt/venv/lib", "(", "-name", "*.cdx.json", "-o",
+                "-name", "*.spdx.json", ")"]),
+              # And which of those actually declare the reported version.
+              ("sbom-declares-setuptools", "sh",
+               ["-c", "grep -rl 'setuptools' $(find /usr/local/lib /opt/venv/lib "
+                      "-name '*.cdx.json' -o -name '*.spdx.json' 2>/dev/null) 2>/dev/null "
+                      "|| echo '(no SBOM mentions setuptools)'"]),
               ("venv-sys.path", "/opt/venv/bin/python",
                ["-c", "import sys; print(' | '.join(p for p in sys.path if p))"]),
               ("pyvenv.cfg", "cat", ["/opt/venv/pyvenv.cfg"]),
@@ -328,6 +339,10 @@ jobs:
                           "severity": vuln.get("Severity", "?"),
                           "target": result.get("Target", "?"),
                           "cls": result.get("Class", "?"),
+                          # The file the scanner actually read. Without it, "setuptools 70.3.0"
+                          # cannot be told apart from a vendored SBOM that merely declares that
+                          # version — which is exactly the confusion defect 23 cost three attempts.
+                          "path": vuln.get("PkgPath") or "-",
                       }
                   )
 
@@ -345,7 +360,7 @@ jobs:
               "The scan fails the build until every one is fixed or explicitly justified."
           ]
           body += [
-              "{severity} {id} {pkg} {installed} -> {fixed} [{cls}] in {target}".format(**f)
+              "{severity} {id} {pkg} {installed} -> {fixed} [{cls}] in {target} @ {path}".format(**f)
               for f in findings[:CAP]
           ]
           if len(findings) > CAP:
