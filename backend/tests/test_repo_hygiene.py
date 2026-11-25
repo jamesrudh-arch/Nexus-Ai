@@ -169,3 +169,89 @@ def _is_ignored(path: Path) -> bool:
         check=False,
     )
     return result.returncode == 0
+
+
+class TestCiWorkflowIsRunnable:
+    """Both CI failures on the first two pushes were detectable offline.
+
+    `aquasecurity/trivy-action@0.28.0` does not exist (the tags are `v`-prefixed), so two jobs
+    died at "Set up job". And `docker-compose.yml` declares `MINIO_ROOT_USER` with the
+    required-variable syntax `:?`, but the compose step exported only the three passwords, so
+    `docker compose config` aborted before validating anything. Neither needs a runner to find.
+    """
+
+    WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+    COMPOSE = REPO_ROOT / "docker-compose.yml"
+
+    def test_the_workflow_and_compose_files_exist(self) -> None:
+        assert self.WORKFLOW.is_file(), "CI workflow missing"
+        assert self.COMPOSE.is_file(), "compose file missing"
+
+    def test_every_required_compose_variable_is_supplied_by_ci(self) -> None:
+        """A `${VAR:?...}` in compose aborts the parse unless CI exports it."""
+        import re
+
+        required = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*):\?", self.COMPOSE.read_text()))
+        assert required, "expected compose to declare required variables"
+
+        workflow = _load_workflow()
+        step = next(
+            (
+                s
+                for s in workflow["jobs"]["compose"]["steps"]
+                if s.get("name") == "Validate docker-compose.yml"
+            ),
+            None,
+        )
+        assert step is not None, "the compose validation step is missing from CI"
+        supplied = set(re.findall(r"([A-Z_][A-Z0-9_]*)=", step["run"]))
+        missing = required - supplied
+        assert not missing, (
+            f"docker compose config will abort: required variable(s) {sorted(missing)} are "
+            f"declared with `:?` in docker-compose.yml but never exported by the CI step"
+        )
+
+    def test_pinned_actions_use_tags_that_exist(self) -> None:
+        """trivy-action publishes `v0.28.0`, not `0.28.0`; an unresolvable ref kills the job."""
+        import re
+
+        refs = re.findall(r"uses:\s*([\w.-]+/[\w.-]+)@([\w.+-]+)", self.WORKFLOW.read_text())
+        assert refs, "no pinned actions found — the workflow probably changed shape"
+        known_v_prefixed = {"aquasecurity/trivy-action"}
+        for name, ref in refs:
+            if name in known_v_prefixed:
+                assert ref.startswith("v"), (
+                    f"{name}@{ref}: this action publishes v-prefixed tags, so `{ref}` will not "
+                    "resolve and the job fails at 'Set up job'"
+                )
+            assert not ref.startswith(("main", "master")), f"{name}@{ref} is an unpinned branch"
+
+    def test_ci_never_enables_live_trading(self) -> None:
+        """The workflow's own environment must fail closed, matching the phase gate."""
+        import yaml
+
+        workflow = yaml.safe_load(self.WORKFLOW.read_text())
+        env = workflow.get("env", {})
+        assert env.get("NEXUS_LIVE_TRADING_ENABLED") == "false"
+        assert env.get("NEXUS_ENVIRONMENT") == "DISABLED"
+
+    def test_ci_runs_the_phase_gate_assertion(self) -> None:
+        """If the assertion step is ever dropped, the gate stops being enforced in CI."""
+        text = self.WORKFLOW.read_text()
+        assert "real_money_orders_possible" in text
+        assert "order_capability" in text
+        assert "PHASE_GATE" in text
+
+    def test_ci_runs_the_repo_hygiene_guard(self) -> None:
+        """The guard that caught defect 12 must run in CI, not only on a developer machine."""
+        text = self.WORKFLOW.read_text()
+        assert "pytest" in text
+        # The suite runs as a whole, so the hygiene module is included; assert it is not
+        # excluded by a targeted selection that skips it.
+        assert "--ignore" not in text, "CI excludes part of the suite"
+
+
+def _load_workflow() -> dict:
+    import yaml
+
+    return yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text())

@@ -42,6 +42,10 @@ dev = [
   "pyarrow>=16.0",
   "duckdb>=1.0",
   "websockets>=12.0",
+  # Declared explicitly even though uvicorn[standard] already pulls it in: the repository
+  # hygiene tests parse ci.yml and docker-compose.yml, so a transitive dependency is not a
+  # safe thing to rely on for a test that guards the build itself.
+  "pyyaml>=6.0",
 ]
 
 [tool.setuptools.packages.find]
