@@ -658,6 +658,31 @@ class TestTrivyFindingsAreReadable:
         )
         assert "-print -quit" in runtime, "the survivor check no longer prints what it finds"
 
+    def test_the_image_checks_exit_with_distinct_documented_codes(self) -> None:
+        """A failed build publishes the failing command line but not the log.
+
+        Six assertions in one RUN can therefore only report "one of these failed", which is what
+        happened: the image job went red and nothing said which check had tripped. Each now exits
+        with its own code, and the legend above the RUN names them. Both halves are asserted, so
+        neither the codes nor the legend can drift — a legend that disagrees with the checks is
+        worse than none, because it is believed.
+
+        Every code was verified reachable on a mock tree, including 23 and 24, which fire only
+        when setuptools is importable from a path the two search roots do not cover.
+        """
+        runtime = (BACKEND / "Dockerfile").read_text().split("AS runtime", 1)[1]
+        block = runtime.split("# Each check exits", 1)[1].split("# Data directory", 1)[0]
+        used = sorted(set(re.findall(r"\|\| exit (\d+)", block)))
+        legend = sorted(set(re.findall(r"^#\s+(\d+) ", block, re.MULTILINE)))
+        assert used == [str(n) for n in range(21, 27)], (
+            f"the checks exit with {used}; expected the documented 21-26"
+        )
+        assert legend == used, (
+            f"the legend documents {legend} but the checks exit with {used} — one of them has "
+            "been edited without the other"
+        )
+        assert len(set(used)) == len(used), "two checks share an exit code and cannot be told apart"
+
     def test_the_image_installs_the_tz_database_its_entrypoint_needs(self) -> None:
         """The module the CMD runs builds `ZoneInfo("America/New_York")` at import time.
 

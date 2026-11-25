@@ -178,18 +178,21 @@ jobs:
 
       # TEMPORARY DIAGNOSTIC — delete once defect 23 is closed.
       #
-      # The runtime stage asserts setuptools is gone and the build failed on that assertion, so
-      # something survived. Job logs are not readable from every environment, which is what made
-      # O-011 take so long, so the answer is published as annotations instead.
+      # The runtime stage asserts things about the built image and fails the build when they do not
+      # hold, but a failed build publishes only the failing command line, never the log. So the
+      # evidence is gathered here instead and published as a check annotation, which the REST API
+      # serves from any host.
       #
-      # It runs before the builds and probes two images that do not depend on the failing step:
-      # the base image, and the builder stage (`--target builder`, which stops before the runtime
-      # stage). Between them they show every setuptools copy the final image could contain.
+      # It runs before the builds and probes two images that do not depend on the failing step: the
+      # base image, and the builder stage (`--target builder`, which stops before the runtime stage
+      # but already contains the venv with every installed extra). The builder stage can also be
+      # *run*, which the failing runtime stage cannot, so the import the Dockerfile asserts is
+      # executed here with its traceback printed.
       #
       # Everything is packed into ONE annotation on purpose. GitHub Actions allows at most 10
       # annotations per level per step, and the first version of this probe spent all ten on
-      # docker's image-pull progress, so the actual answer never arrived.
-      - name: Probe where setuptools lives (diagnostic, defect 23)
+      # docker's image-pull progress, so the answer it was built to fetch never arrived.
+      - name: Probe the image contents (diagnostic, defect 23)
         run: |
           python3 - <<'PY'
           import subprocess
@@ -198,64 +201,83 @@ jobs:
               result = subprocess.run(list(cmd), capture_output=True, text=True)
               return result.returncode, (result.stdout + result.stderr).strip()
 
+          BASE = "python:3.12-slim-bookworm"
+          BUILDER = "nexus-probe:builder"
+          IMAGES = {"base": BASE, "builder": BUILDER}
+
+          # Each probe names the images it applies to. Running the venv probes against the base
+          # image only produces OCI "no such file" errors, which is a third of the budget spent
+          # saying nothing.
+          IMPORT_ENTRYPOINT = (
+              "import traceback\n"
+              "try:\n"
+              "    import nexus.api.app as m\n"
+              "    print('OK create_app callable:', callable(m.create_app))\n"
+              "except BaseException:\n"
+              "    traceback.print_exc()"
+          )
+          FIND_SBOMS = (
+              "set -- $(find /usr/local/lib -name '*.cdx.json' 2>/dev/null) "
+              "$(find /opt/venv/lib -name '*.cdx.json' 2>/dev/null); "
+              "echo \"sbom files found: $#\"; "
+              "for f in \"$@\"; do grep -q setuptools \"$f\" && echo \"MENTIONS setuptools: $f\"; "
+              "done; echo end"
+          )
           PROBE = [
-              ("system-python", "/usr/local/bin/python",
+              ("setuptools-import", ("base", "builder"), "/usr/local/bin/python",
                ["-c", "import setuptools; print(setuptools.__version__, setuptools.__file__)"]),
-              ("venv-python", "/opt/venv/bin/python",
+              ("setuptools-import", ("builder",), "/opt/venv/bin/python",
                ["-c", "import setuptools; print(setuptools.__version__, setuptools.__file__)"]),
-              ("locations", "find",
+              ("setuptools-paths", ("base", "builder"), "find",
                ["/", "-xdev", "(", "-name", "setuptools*", "-o", "-name", "pkg_resources*",
                 ")", "-not", "-path", "/proc/*"]),
-              # The runtime stage asserts no `*.cdx.json` survives anywhere under either lib tree,
-              # with no depth limit. That assertion is only safe to ship if pip is the sole carrier
-              # of an SBOM in the *installed* package set — which the builder stage has, exactly.
-              ("sboms", "find",
+              # The runtime stage asserts no `*.cdx.json` survives under either lib tree, with no
+              # depth limit. Safe to ship only if pip is the sole SBOM carrier in the installed
+              # package set — which the builder stage has, exactly.
+              ("sbom-files", ("base", "builder"), "find",
                ["/usr/local/lib", "/opt/venv/lib", "(", "-name", "*.cdx.json", "-o",
                 "-name", "*.spdx.json", ")"]),
-              # And which of those actually declare the reported version.
-              ("sbom-declares-setuptools", "sh",
-               ["-c", "grep -rl 'setuptools' $(find /usr/local/lib /opt/venv/lib "
-                      "-name '*.cdx.json' -o -name '*.spdx.json' 2>/dev/null) 2>/dev/null "
-                      "|| echo '(no SBOM mentions setuptools)'"]),
-              ("venv-sys.path", "/opt/venv/bin/python",
+              # Written as a loop, because `grep -rl PAT $(find ...)` with an empty find searches
+              # the working directory instead; the previous version did that and published twenty
+              # lines of pip internals that meant nothing.
+              ("sbom-mentions-setuptools", ("base", "builder"), "sh", ["-c", FIND_SBOMS]),
+              # The import the Dockerfile asserts, run where it can actually be run.
+              ("entrypoint-import", ("builder",), "/opt/venv/bin/python", ["-c", IMPORT_ENTRYPOINT]),
+              # Whether the base ships the IANA database at all. If it does not, the explicit
+              # tzdata install in the runtime stage is load-bearing, not belt-and-braces.
+              ("tzdata", ("base", "builder"), "sh",
+               ["-c", "ls -d /usr/share/zoneinfo 2>/dev/null || echo 'NO /usr/share/zoneinfo'; "
+                      "test -f /usr/share/zoneinfo/America/New_York "
+                      "&& echo 'America/New_York present' || echo 'America/New_York MISSING'"]),
+              ("venv-sys.path", ("builder",), "/opt/venv/bin/python",
                ["-c", "import sys; print(' | '.join(p for p in sys.path if p))"]),
-              ("pyvenv.cfg", "cat", ["/opt/venv/pyvenv.cfg"]),
           ]
 
           lines = []
-          base = "python:3.12-slim-bookworm"
-          rc, out = sh("docker", "pull", "-q", base)
-          lines.append(f"pull {base}: rc={rc}")
-
+          rc, out = sh("docker", "pull", "-q", BASE)
+          lines.append(f"pull {BASE}: rc={rc}")
           rc, out = sh("docker", "build", "--progress=plain", "--target", "builder",
-                       "-t", "nexus-probe:builder", "./backend")
+                       "-t", BUILDER, "./backend")
           lines.append(f"build --target builder: rc={rc}")
           if rc != 0:
-              lines.extend("  " + l for l in out.splitlines()[-6:])
+              lines.extend("  " + ln for ln in out.splitlines()[-8:])
 
-          for image, tag in ((base, "base"), ("nexus-probe:builder", "builder")):
-              lines.append(f"--- {tag} ---")
-              for label, entry, args in PROBE:
-                  rc, out = sh("docker", "run", "--rm", "--entrypoint", entry, image, *args)
+          for label, tags, entry, args in PROBE:
+              for tag in tags:
+                  rc, out = sh("docker", "run", "--rm", "--entrypoint", entry,
+                               IMAGES[tag], *args)
                   body = out.splitlines() or ["(empty)"]
                   lines.append(f"[{tag}/{label}] rc={rc}")
-                  lines.extend("    " + l for l in body[:22])
+                  lines.extend("    " + ln for ln in body[:30])
 
-          text = "\n".join(lines[:150])
+          CAP = 300
+          if len(lines) > CAP:
+              lines = lines[:CAP] + [f"TRUNCATED at {CAP} of {len(lines)} lines"]
+          text = "\n".join(lines)
           esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
           esc = esc.replace(":", "%3A").replace(",", "%2C")
           print(f"::notice title=setuptools-probe::{esc}")
           PY
-
-      # Two builds, because one cannot do both jobs. A multi-platform image cannot be
-      # `load`ed into the Docker daemon — the daemon holds one architecture per tag — so a
-      # multi-arch build with `load: false` leaves nothing behind for a scanner to read.
-      # That is what made both Trivy steps fail on an image ref that did not exist.
-      #
-      # So: the multi-arch build proves the image cross-compiles for the ARM64 Oracle Always
-      # Free host as well as amd64 (D-021), and a second single-platform build loads a
-      # scannable image into the daemon. It reuses the first build's layer cache, so the
-      # extra cost is seconds, not minutes.
       - name: Build multi-arch (no push — proves amd64 + arm64 cross-compilation)
         uses: docker/build-push-action@v6
         with:

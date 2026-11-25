@@ -88,6 +88,15 @@ COPY migrations ./migrations
 # started in CI to check by hand. The last assertion is the one that makes removing pip safe to do
 # blind: the entrypoint module the CMD runs must still import from the venv, which also proves
 # tzdata is really present. If any of these fail, no image is produced.
+#
+# Each check exits with its own code, because CI publishes the failing command line but not the
+# build log: a single RUN with six assertions can only say "one of these failed".
+#   21 pip or setuptools distribution metadata survived the removal
+#   22 a CycloneDX SBOM survived — the file the scanner actually reads
+#   23 the system interpreter can still import setuptools
+#   24 the venv interpreter can still import setuptools
+#   25 the venv can still import pip
+#   26 the module the CMD runs cannot be imported from the venv
 RUN set -eux; \
     /usr/local/bin/python -m pip uninstall -y pip setuptools || true; \
     /opt/venv/bin/python -m pip uninstall -y pip setuptools || true; \
@@ -96,12 +105,13 @@ RUN set -eux; \
          \( -name 'pip' -o -name 'pip-*.dist-info' -o -name 'setuptools*' \) \
          -exec rm -rf {} + || true; \
     test -z "$(find /usr/local/lib /opt/venv/lib -maxdepth 3 \
-               \( -name 'pip' -o -name 'pip-*.dist-info' -o -name 'setuptools*' \) -print -quit)"; \
-    test -z "$(find /usr/local/lib /opt/venv/lib -name '*.cdx.json' -print -quit)"; \
-    ! /usr/local/bin/python -c 'import setuptools'; \
-    ! /opt/venv/bin/python -c 'import setuptools'; \
-    ! /opt/venv/bin/python -c 'import pip'; \
-    /opt/venv/bin/python -c 'import nexus.api.app as m; assert callable(m.create_app)'
+               \( -name 'pip' -o -name 'pip-*.dist-info' -o -name 'setuptools*' \) \
+               -print -quit)" || exit 21; \
+    test -z "$(find /usr/local/lib /opt/venv/lib -name '*.cdx.json' -print -quit)" || exit 22; \
+    ! /usr/local/bin/python -c 'import setuptools' || exit 23; \
+    ! /opt/venv/bin/python -c 'import setuptools' || exit 24; \
+    ! /opt/venv/bin/python -c 'import pip' || exit 25; \
+    /opt/venv/bin/python -c 'import nexus.api.app as m; assert callable(m.create_app)' || exit 26
 
 # Data directory for the SQLite audit store on single-host deployments. Owned by nexus,
 # never world-writable.
