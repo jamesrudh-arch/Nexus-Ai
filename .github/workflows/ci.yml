@@ -154,13 +154,31 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build (no push)
+      # Two builds, because one cannot do both jobs. A multi-platform image cannot be
+      # `load`ed into the Docker daemon — the daemon holds one architecture per tag — so a
+      # multi-arch build with `load: false` leaves nothing behind for a scanner to read.
+      # That is what made both Trivy steps fail on an image ref that did not exist.
+      #
+      # So: the multi-arch build proves the image cross-compiles for the ARM64 Oracle Always
+      # Free host as well as amd64 (D-021), and a second single-platform build loads a
+      # scannable image into the daemon. It reuses the first build's layer cache, so the
+      # extra cost is seconds, not minutes.
+      - name: Build multi-arch (no push — proves amd64 + arm64 cross-compilation)
         uses: docker/build-push-action@v6
         with:
           context: ./backend
           platforms: linux/amd64,linux/arm64
           push: false
           load: false
+          tags: nexus-core:ci-multiarch
+
+      - name: Build amd64 and load it (the image Trivy can actually read)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          platforms: linux/amd64
+          push: false
+          load: true
           tags: nexus-core:ci
 
       # CRITICAL blocks the build. HIGH is reported but does not, and that split is a

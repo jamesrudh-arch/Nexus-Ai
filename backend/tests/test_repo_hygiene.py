@@ -283,3 +283,73 @@ def _load_workflow() -> dict:
     import yaml
 
     return yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text())
+
+
+class TestImageScanHasAnImageToScan:
+    """Regression: both Trivy image steps failed on a ref that was never loaded.
+
+    The build step had `push: false` and `load: false`, and a multi-platform image cannot be
+    loaded into the daemon at all — one tag holds one architecture. So `nexus-core:ci` did not
+    exist, and the scan errored out regardless of severity. Notably the step configured with
+    `exit-code: "0"` failed too, which is the tell: the failure was not a finding, it was a
+    missing image. This is checkable offline, from the workflow alone.
+    """
+
+    WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+
+    def _image_job(self) -> list[dict]:
+        import yaml
+
+        workflow = yaml.safe_load(self.WORKFLOW.read_text())
+        return workflow["jobs"]["image"]["steps"]
+
+    def _loaded_refs(self) -> set[str]:
+        """Image refs that a build step actually loads into the daemon."""
+        loaded: set[str] = set()
+        for step in self._image_job():
+            with_block = step.get("with") or {}
+            if "build-push-action" in str(step.get("uses", "")) and with_block.get("load") is True:
+                for tag in str(with_block.get("tags", "")).split():
+                    loaded.add(tag.strip())
+        return loaded
+
+    def _scanned_refs(self) -> set[str]:
+        refs: set[str] = set()
+        for step in self._image_job():
+            with_block = step.get("with") or {}
+            if "trivy-action" in str(step.get("uses", "")) and with_block.get("image-ref"):
+                refs.add(str(with_block["image-ref"]))
+        return refs
+
+    def test_a_build_step_loads_an_image(self) -> None:
+        assert self._loaded_refs(), (
+            "no build step has `load: true`, so nothing is present in the daemon for a "
+            "scanner to read — a multi-arch build with load:false leaves no local image"
+        )
+
+    def test_every_scanned_ref_is_actually_loaded(self) -> None:
+        scanned = self._scanned_refs()
+        loaded = self._loaded_refs()
+        assert scanned, "no Trivy image-ref found — the scan step changed shape"
+        missing = scanned - loaded
+        assert not missing, (
+            f"Trivy scans {sorted(missing)} but no build step loads it; the scan will fail on a "
+            f"missing image. Loaded refs: {sorted(loaded)}"
+        )
+
+    def test_no_image_is_pushed_to_a_registry(self) -> None:
+        """D-019 and Phase 3: nothing is published, and no registry credential exists."""
+        for step in self._image_job():
+            with_block = step.get("with") or {}
+            if "build-push-action" in str(step.get("uses", "")):
+                assert with_block.get("push") is not True, f"step {step.get('name')} pushes an image"
+
+    def test_multi_arch_build_is_still_proven(self) -> None:
+        """The ARM64 Oracle host (D-021) must stay covered even though it cannot be loaded."""
+        platforms = [
+            str((step.get("with") or {}).get("platforms", ""))
+            for step in self._image_job()
+            if "build-push-action" in str(step.get("uses", ""))
+        ]
+        assert any("linux/arm64" in p for p in platforms), f"arm64 is no longer built: {platforms}"
+        assert any("linux/amd64" in p for p in platforms), f"amd64 is no longer built: {platforms}"
