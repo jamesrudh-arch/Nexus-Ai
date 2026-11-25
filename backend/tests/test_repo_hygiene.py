@@ -586,23 +586,46 @@ class TestTrivyFindingsAreReadable:
         it in the suite, with the reason attached. The base image ships setuptools 70.3.0, whose
         `PackageIndex.download` joins an unquoted URL segment onto a temp directory and so allows
         an arbitrary file write. Fixed upstream in 78.1.1.
+
+        It is *removed* here rather than upgraded. Upgrading the system interpreter was tried
+        first and the scan still reported 70.3.0 — the copy the scanner read was not the copy the
+        upgrade touched. Removing it from both interpreters and asserting the result is the fix
+        that does not depend on knowing which one was wrong.
         """
         dockerfile = (BACKEND / "Dockerfile").read_text()
-        match = re.search(r"setuptools>=(\d+)\.(\d+)\.(\d+)", dockerfile)
-        assert match, (
-            "the Dockerfile no longer upgrades setuptools past the CVE-2025-47273 fix; the base "
-            "image's 70.3.0 would be scanned as HIGH and fail the build"
-        )
-        assert tuple(int(g) for g in match.groups()) >= (78, 1, 1), (
-            f"setuptools>={'.'.join(match.groups())} is below 78.1.1, which is where CVE-2025-47273 is fixed"
-        )
-        # It has to happen in the runtime stage, where the scan looks, and as root.
         runtime = dockerfile.split("AS runtime", 1)[1]
-        assert "setuptools>=" in runtime, "setuptools is upgraded in the builder only"
-        user_line = runtime.index("USER nexus")
-        assert runtime.index("setuptools>=") < user_line, (
-            "the upgrade runs after `USER nexus`, which cannot write to /usr/local"
+        for interpreter in ("/usr/local/bin/python", "/opt/venv/bin/python"):
+            assert f"{interpreter} -m pip uninstall -y setuptools" in runtime, (
+                f"setuptools is no longer uninstalled from {interpreter}; the base image's "
+                "70.3.0 would be scanned as HIGH and fail the build"
+            )
+            # The uninstall is not the fix; the assertion after it is. pip can leave the
+            # dist-info behind, and the dist-info is exactly what a scanner reads.
+            assert f"! {interpreter} -c 'import setuptools'" in runtime, (
+                f"nothing verifies that {interpreter} can no longer import setuptools"
+            )
+        # Removal must happen after the venv is copied in and before privileges are dropped.
+        assert (
+            runtime.index("COPY --from=builder /opt/venv")
+            < runtime.index("pip uninstall -y setuptools")
+            < runtime.index("USER nexus")
+        ), "setuptools removal must run after the venv is copied and before `USER nexus`"
+
+    def test_the_dockerfile_survivor_check_is_not_vacuous(self) -> None:
+        """`find a -o b -print -quit` binds the action to `b` only.
+
+        Verified against a mock tree: with a setuptools dist-info present, the paren-less form
+        matched zero items, so the assertion passed while the finding was still there. The
+        grouping parentheses are what make the check mean anything, so they are asserted rather
+        than trusted — the same reason `git check-ignore` is called with `--no-index`.
+        """
+        runtime = (BACKEND / "Dockerfile").read_text().split("AS runtime", 1)[1]
+        grouped = "\\( -name 'setuptools*' -o -name 'pkg_resources' \\)"
+        assert runtime.count(grouped) >= 2, (
+            "the survivor check lost its grouping parentheses, so `-print -quit` applies only to "
+            "the pkg_resources branch and setuptools survivors go unreported"
         )
+        assert "-print -quit" in runtime, "the survivor check no longer prints what it finds"
 
     def test_a_missing_report_is_reported_not_crashed_on(self, tmp_path: Path) -> None:
         """The scan step can be skipped; the publish step must not then fail the job."""

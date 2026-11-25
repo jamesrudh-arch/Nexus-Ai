@@ -59,13 +59,14 @@ Environment: sandboxed Linux (Debian 12, Python 3.11.2, 2 vCPU, 3.9 GB RAM), loc
 
 | Check | Command | Result |
 |-------|---------|--------|
-| Tests | `pytest --junitxml` | **824 tests, 0 failures, 0 errors, 1 skipped** (2.7 s) |
+| Tests | `pytest --junitxml` | **861 tests, 0 failures, 0 errors, 1 skipped** |
 | Lint | `ruff check src tests` | **All checks passed** (69 files — see §4.1, two packages were previously skipped) |
 | Format | `ruff format --check` | clean (69 files) |
 | Types | `mypy` (strict) | **Success: no issues found in 49 source files** |
-| Repository hygiene | `pytest tests/test_repo_hygiene.py` | **10 passed** — every source module is tracked; no artifact or credential-shaped file is |
+| Repository & CI hygiene | `pytest tests/test_repo_hygiene.py` | **47 passed** — source tree tracked, no artifacts, CI workflow runnable, image scannable, Trivy report readable, secret scanning not weakened |
+| CI on GitHub | Actions, `push` + `pull_request` | **All four jobs green** on both events (§3.6) |
 
-Phase 3 added **525 tests** (824 − 299 Phase 2). Per module:
+Phase 3 added **562 tests** (861 − 299 Phase 2). Per module:
 
 | Module | Tests |
 |--------|-------|
@@ -78,7 +79,7 @@ Phase 3 added **525 tests** (824 − 299 Phase 2). Per module:
 | `test_parquet_archive.py` (incl. 8 anonymous-record regression tests) | 49 |
 | `test_retention.py` | 39 |
 | `test_api_phase3.py` | 29 |
-| `test_repo_hygiene.py` (source tree tracked, artifacts and credentials excluded) | 10 |
+| `test_repo_hygiene.py` (source tree tracked; CI runnable; image scannable; findings readable; secret scanning not weakened) | 47 |
 
 The 1 skip is a `pytest.skip` for an interval not in the modelled set — not a disabled test.
 
@@ -277,6 +278,62 @@ modules, and restoring the file makes it pass again. A guard that cannot fail is
 the first version of this test was vacuous, because `git check-ignore` consults the index and
 reports an already-tracked path as "not ignored"; it now passes `--no-index`, which asks the
 question that actually matters: what would happen to a fresh clone.
+
+**Re-verified 2026-11-25 against `43a8da2`**, cloned from GitHub rather than from the working
+tree, after the CI defects in §4 were fixed:
+
+```
+$ git clone --branch arena/06913352-nexus-ai https://github.com/jamesrudh-arch/Nexus-Ai.git
+HEAD ...................................... 43a8da2   shallow=false (full history)
+tracked files ............................. 87
+source modules under backend/src/nexus .... 49        (working tree: 49)
+test files ................................ 20
+artifacts wrongly committed ............... 0  (.pyc/__pycache__/.venv/.db/.parquet/.env)
+
+$ PYTHONPATH=<clone>/backend/src python -c "import nexus; ..."
+import OK: version 0.2.0 phase 3-market-data
+redact -> {'api_key': '[REDACTED]'}
+
+$ cd <clone>/backend && pytest -q
+CLONE 43a8da2: tests=861 failures=0 errors=0 skipped=1
+```
+
+The clone is not shallow, so `test_the_excused_commit_exists_in_this_repository` verified the
+excused commit for real rather than skipping — see defect 21 for why that distinction exists.
+
+### 3.6 CI executed on GitHub
+
+Phase 2's record listed "CI workflow committed but never executed" as a limitation. It has now
+executed, repeatedly, and it did not pass first time: **eight further defects were found only
+by running it** (§4, defects 13–22). Every one of them was invisible to the local suite, because
+each is a property of the CI environment rather than of the code — an action ref that does not
+resolve, a variable a compose file requires, an image a scanner cannot see, a config key the
+pinned scanner version does not define.
+
+Final state, 2026-11-25, on branch `arena/06913352-nexus-ai`:
+
+| Run | Event | Result | Jobs |
+|-----|-------|--------|------|
+| `45602895677` | `push` | **success** | Backend ✓ · Compose ✓ · Secret scanning ✓ · Container image ✓ |
+| `45602905437` | `pull_request` | **success** | Backend ✓ · Compose ✓ · Secret scanning ✓ · Container image ✓ |
+
+Both events matter because they scan different things. A `push` run covers only the new commits;
+a `pull_request` run covers the whole branch (`--log-opts=--no-merges --first-parent base^..head`,
+where base is the PR's first commit). Secret scanning passed on `push` while still failing on
+`pull_request` for three consecutive runs, and that asymmetry is defect 20.
+
+What the container image job establishes, for the first time:
+
+- the Dockerfile **builds for `linux/amd64` and `linux/arm64`** (the latter under QEMU), so the
+  image is buildable on the Oracle Always Free Ampere A1 host that D-021 approved;
+- the `archive`, `streams`, `postgres` and `nats` extras all install;
+- the non-root runtime user and the healthcheck stage build;
+- `docker compose config` validates with all four required variables supplied;
+- the image contains **no HIGH or CRITICAL vulnerability with an available fix**, and no secret —
+  the scan blocks on both severities again (§4 defect 22).
+
+What CI does **not** establish: no container was ever *started*. The image builds; nothing proves
+it runs. See §5.
 
 ---
 

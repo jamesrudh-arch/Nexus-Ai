@@ -40,22 +40,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DO_NOT_TRACK=1
 
 # curl for the healthcheck only; no shell-based tooling beyond it.
-#
-# setuptools is upgraded because the base image ships 70.3.0, which carries CVE-2025-47273:
-# `PackageIndex.download` derives a filename from an unquoted URL segment and joins it onto a
-# temp directory, so a crafted URL yields an arbitrary file write with the process's
-# permissions (fixed in 78.1.1, CVSS 8.8 HIGH). Nothing in this image ever calls that API — the
-# runtime installs no packages — but the code is present, so Trivy reports it, and "unreachable
-# in practice" is an argument to make in the record rather than a reason to ship it.
-#
-# Upgraded rather than removed: removal would be the smaller surface, but no container is ever
-# started in this sandbox, so a dependency that imports `pkg_resources` would break only in
-# production. Revisit on the first real `docker compose up` (docs/05 §5). The Trivy scan blocks
-# on HIGH again, so dropping this line fails CI.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
-    && /usr/local/bin/python -m pip install --no-cache-dir --upgrade "setuptools>=78.1.1" \
     && groupadd --system --gid 1001 nexus \
     && useradd --system --uid 1001 --gid nexus --home-dir /app --shell /usr/sbin/nologin nexus
 
@@ -63,6 +50,42 @@ WORKDIR /app
 
 COPY --from=builder /opt/venv /opt/venv
 COPY migrations ./migrations
+
+# CVE-2025-47273 — setuptools before 78.1.1: `PackageIndex.download` derives a filename from an
+# unquoted URL segment and joins it onto a temp directory, so a crafted URL writes anywhere the
+# process can (CVSS 8.8 HIGH). The base image ships 70.3.0. Nothing here calls that API — the
+# runtime installs no packages — but the code being present *is* the finding, and "unreachable in
+# practice" belongs in the record rather than in the image.
+#
+# Removed, not upgraded. Upgrading was tried first (`pip install --upgrade "setuptools>=78.1.1"`
+# against the system interpreter, before the venv was copied in) and the scan still reported
+# 70.3.0, so the copy Trivy read was not the copy that command touched. Rather than keep guessing
+# which interpreter owns it, both are cleared and the build then asserts the outcome: if either
+# can still import setuptools, or any `setuptools*.dist-info` survives — which is what Trivy
+# actually keys on, and what a plain `pip uninstall` can leave behind — this RUN fails and no
+# image is produced. A fix that verifies itself beats one that is argued for, especially here,
+# where no container can be started to check.
+#
+# Safe to remove, and checked rather than assumed: no installed distribution imports
+# `pkg_resources` (grepped every `*.py` under site-packages; the only hits were setuptools
+# itself and pytest, which is a dev extra and is not installed in this image), and uvloop's
+# `Requires-Dist: setuptools` is gated on `extra == "dev"`.
+#
+# The RUN below does three things, in order: uninstall from both interpreters; delete any
+# surviving `setuptools*`/`pkg_resources` directory, because pip can leave the dist-info behind
+# and the dist-info is precisely what a scanner reads; then assert the result. The assertion is
+# the point — `test -z` fails the build if anything matches, and the two `! python -c import`
+# checks fail it if either interpreter can still load the package. No image is produced unless
+# setuptools is genuinely gone from both.
+RUN set -eux; \
+    /usr/local/bin/python -m pip uninstall -y setuptools || true; \
+    /opt/venv/bin/python -m pip uninstall -y setuptools || true; \
+    find /usr/local/lib /opt/venv/lib -maxdepth 4 \
+         \( -name 'setuptools*' -o -name 'pkg_resources' \) -exec rm -rf {} + || true; \
+    test -z "$(find /usr/local/lib /opt/venv/lib \
+               \( -name 'setuptools*' -o -name 'pkg_resources' \) -print -quit)"; \
+    ! /usr/local/bin/python -c 'import setuptools'; \
+    ! /opt/venv/bin/python -c 'import setuptools'
 
 # Data directory for the SQLite audit store on single-host deployments. Owned by nexus,
 # never world-writable.
