@@ -59,14 +59,14 @@ Environment: sandboxed Linux (Debian 12, Python 3.11.2, 2 vCPU, 3.9 GB RAM), loc
 
 | Check | Command | Result |
 |-------|---------|--------|
-| Tests | `pytest --junitxml` | **861 tests, 0 failures, 0 errors, 1 skipped** |
+| Tests | `pytest --junitxml` | **868 tests, 0 failures, 0 errors, 1 skipped** |
 | Lint | `ruff check src tests` | **All checks passed** (69 files — see §4.1, two packages were previously skipped) |
 | Format | `ruff format --check` | clean (69 files) |
 | Types | `mypy` (strict) | **Success: no issues found in 49 source files** |
-| Repository & CI hygiene | `pytest tests/test_repo_hygiene.py` | **47 passed** — source tree tracked, no artifacts, CI workflow runnable, image scannable, Trivy report readable, secret scanning not weakened |
+| Repository & CI hygiene | `pytest tests/test_repo_hygiene.py` | **54 passed** — source tree tracked, no artifacts, CI workflow runnable, image scannable, Trivy report readable, secret scanning not weakened |
 | CI on GitHub | Actions, `push` + `pull_request` | **All four jobs green** on both events (§3.6) |
 
-Phase 3 added **562 tests** (861 − 299 Phase 2). Per module:
+Phase 3 added **569 tests** (868 − 299 Phase 2). Per module:
 
 | Module | Tests |
 |--------|-------|
@@ -79,7 +79,7 @@ Phase 3 added **562 tests** (861 − 299 Phase 2). Per module:
 | `test_parquet_archive.py` (incl. 8 anonymous-record regression tests) | 49 |
 | `test_retention.py` | 39 |
 | `test_api_phase3.py` | 29 |
-| `test_repo_hygiene.py` (source tree tracked; CI runnable; image scannable; findings readable; secret scanning not weakened) | 47 |
+| `test_repo_hygiene.py` (source tree tracked; CI runnable; image scannable; findings readable; the Dockerfile's own assertions) | 54 |
 
 The 1 skip is a `pytest.skip` for an interval not in the modelled set — not a disabled test.
 
@@ -301,39 +301,115 @@ CLONE 43a8da2: tests=861 failures=0 errors=0 skipped=1
 The clone is not shallow, so `test_the_excused_commit_exists_in_this_repository` verified the
 excused commit for real rather than skipping — see defect 21 for why that distinction exists.
 
+**Re-verified 2026-11-25 against `40e7ed6`** — the first commit whose CI runs are green on both
+events with the image scan blocking on HIGH *and* CRITICAL:
+
+```
+$ git clone --branch arena/06913352-nexus-ai https://github.com/jamesrudh-arch/Nexus-Ai.git
+HEAD ...................................... 40e7ed6   shallow=false (full history)
+tracked files ............................. 87
+source modules under backend/src/nexus .... 49        (working tree: 49)
+test files ................................ 20
+artifacts wrongly committed ............... 0  (.pyc/__pycache__/.venv/.db/.parquet/.env)
+scan-suppression files .................... 0  (no .trivyignore, no ignore list of any kind)
+
+$ PYTHONPATH=<clone>/backend/src python -c "import nexus; ..."
+import OK: version 0.2.0 phase 3-market-data
+redact -> {'api_key': '[REDACTED]'}
+
+$ cd <clone>/backend && pytest -q
+CLONE 40e7ed6: tests=868 failures=0 errors=0 skipped=1   (54 hygiene)
+```
+
+The suppression count is reported because it is the claim most worth checking. The image scan is
+green with **no** exception list, no severity split and no deleted manifest: the finding was
+removed from the image rather than excused from the report (§4, defects 22–25 and 30).
+
 ### 3.6 CI executed on GitHub
 
 Phase 2's record listed "CI workflow committed but never executed" as a limitation. It has now
-executed, repeatedly, and it did not pass first time: **eight further defects were found only
-by running it** (§4, defects 13–22). Every one of them was invisible to the local suite, because
-each is a property of the CI environment rather than of the code — an action ref that does not
-resolve, a variable a compose file requires, an image a scanner cannot see, a config key the
-pinned scanner version does not define.
+executed eighteen times on this branch, and it did not pass first time: **eighteen defects were
+found only by running it** (§4, defects 13–30). Every one was invisible to the local suite,
+because each is a property of the CI environment or of the built image rather than of the code —
+an action ref that does not resolve, a variable a compose file requires, an image a scanner cannot
+see, a config key the pinned scanner version does not define, an annotation budget that runs out,
+a manifest in a package the dev venv does not install.
 
-Final state, 2026-11-25, on branch `arena/06913352-nexus-ai`:
+**Final state, 2026-11-25, commit `40e7ed6`, branch `arena/06913352-nexus-ai`:**
 
 | Run | Event | Result | Jobs |
 |-----|-------|--------|------|
-| `45602895677` | `push` | **success** | Backend ✓ · Compose ✓ · Secret scanning ✓ · Container image ✓ |
-| `45602905437` | `pull_request` | **success** | Backend ✓ · Compose ✓ · Secret scanning ✓ · Container image ✓ |
+| `45621356165` | `push` | **success** | Backend ✓ · Compose ✓ · Secret scanning ✓ · Container image ✓ |
+| `45621369995` | `pull_request` | **success** | Backend ✓ · Compose ✓ · Secret scanning ✓ · Container image ✓ |
 
-Both events matter because they scan different things. A `push` run covers only the new commits;
-a `pull_request` run covers the whole branch (`--log-opts=--no-merges --first-parent base^..head`,
+All four jobs on both events, with the image scan **blocking on HIGH and CRITICAL** and no
+exception list of any kind. The scan's own published verdict on the green run:
+`no HIGH or CRITICAL fixable vulnerabilities in nexus-core:ci`.
+
+#### Run history, including the failures
+
+The red runs are recorded because they are where the evidence is. Six consecutive image-job
+failures separate the first green run from this one, and each produced a finding that changed the
+fix.
+
+| Run | Commit | Event | Result | What it established |
+|-----|--------|-------|--------|---------------------|
+| `45592289431` | `54516c2` | push | success | First successful multi-arch build (defect 16 fixed) |
+| `45595563135` | `1f7d17b` | both | mixed | gitleaks path-allowlist worked on `push`, still failed on `pull_request` (defect 20) |
+| `45600837707` / `45600847434` | `68d125e` | both | **success** | First all-green pair; singular `[allowlist]` confirmed against gitleaks 8.24.3 |
+| `45602895677` / `45602905437` | `edcefb6` | both | **success** | Findings publisher working — and it immediately named CVE-2025-47273, which the previous runs had been reporting non-blockingly |
+| `45604686230` / `45604695540` | `43a8da2` | both | failure | The setuptools **upgrade** did not clear the finding (defect 23) |
+| `45607464903` / `45607475361` | `97bce9e` | both | failure | Removal + assertion: the assertion tripped on pip's vendored `pkg_resources` (defect 24) |
+| `45607576520` / `45607584395` | `9f07537` | both | failure | Same, plus five F811 redefinitions caught by CI that the local gate had let through (defect 29) |
+| `45608526720` / `45608543355` | `98f3815` | both | failure | Diagnostic probe published **nothing but docker pull progress** — the 10-annotation cap (defect 27) |
+| `45609519876` / `45609528680` | `fbd0657` | both | failure | Packed probe delivered: **no setuptools is installed anywhere**; the scanner reads pip's vendored CycloneDX SBOM (defect 25) |
+| `45617637180` / `45617648641` | `1b0e8ce` | both | failure | Exit codes identified check 22; the probe named `psycopg_binary`'s `auditwheel.cdx.json` as a second, unrelated SBOM (defect 30) |
+| `45620461764` / `45620475367` | `ebd9f15` | both | failure | Same as above, with the probe rebuilt to publish the entrypoint traceback and the tzdata measurement |
+| `45621356165` / `45621369995` | `40e7ed6` | both | **success** | Scan green with pip removed, the SBOM check retargeted, and no suppression |
+
+Both events matter because they scan different things. A `push` run covers only the new commits; a
+`pull_request` run covers the whole branch (`--log-opts=--no-merges --first-parent base^..head`,
 where base is the PR's first commit). Secret scanning passed on `push` while still failing on
 `pull_request` for three consecutive runs, and that asymmetry is defect 20.
 
-What the container image job establishes, for the first time:
+#### Reading CI output at all
+
+Job logs, SARIF artifacts and `gh run download` are not reachable from every environment — the log
+endpoints return empty and artifact hosts are unreachable. Two channels do work, and the workflow
+was built around them:
+
+- **check annotations**, via `gh api repos/<owner>/<repo>/check-runs/<job-id>/annotations`. The
+  findings publisher exists to push Trivy's report into this channel, and the temporary probe used
+  it to publish filesystem measurements. GitHub allows **10 annotations per level per step**, so
+  each report is packed into one annotation with encoded newlines (defect 27).
+- **PR review comments**, which is how the gitleaks findings were read.
+
+This is why a failing `RUN` in the Dockerfile now exits with a distinct code per check: the
+annotation carries the command line and the exit status, and nothing else (defect 28).
+
+#### What the container image job establishes
 
 - the Dockerfile **builds for `linux/amd64` and `linux/arm64`** (the latter under QEMU), so the
   image is buildable on the Oracle Always Free Ampere A1 host that D-021 approved;
 - the `archive`, `streams`, `postgres` and `nats` extras all install;
-- the non-root runtime user and the healthcheck stage build;
+- the non-root runtime user, the healthcheck and the `CMD` stage build;
+- **the module the `CMD` runs imports successfully inside the image**, and `create_app` is callable
+  — asserted at build time, which is also what proves `tzdata` is really present (defect 26);
+- neither interpreter in the image can import `setuptools` or `pip`, and no manifest in the image
+  declares setuptools;
 - `docker compose config` validates with all four required variables supplied;
-- the image contains **no HIGH or CRITICAL vulnerability with an available fix**, and no secret —
-  the scan blocks on both severities again (§4 defect 22).
+- the image contains **no HIGH or CRITICAL vulnerability with an available fix**, and no secret,
+  with the scan blocking on both severities and no ignore list.
 
-What CI does **not** establish: no container was ever *started*. The image builds; nothing proves
-it runs. See §5.
+#### What CI does not establish
+
+No container has ever been **started**. The image builds and its entrypoint imports; nothing proves
+it serves a request, that the healthcheck answers, that the ten compose services come up together,
+or that Postgres/TimescaleDB, NATS, MinIO and Valkey accept a connection. The Caddyfile remains
+completely unexercised. Runs are on GitHub-hosted `ubuntu-latest` (x86-64), not on the ARM64 host
+D-021 approved; the arm64 build is QEMU-emulated, which proves it cross-compiles and not that it
+performs; and Trivy scans the **amd64 image only**, because a multi-platform image cannot be loaded
+into a daemon — one tag holds one architecture. See §5.
 
 ---
 
@@ -357,7 +433,7 @@ would have corrupted research data silently.
 | 11 | `rollup_bars` emitted `instrument_id or ""` when identity was not passed, and the archive partitioned blank venue/symbol into `venue=/symbol=` | **Anonymous bars on the D-024 retention ladder.** Every instrument's 5m/daily bars would share one partition — indistinguishable, unfindable by any `read_bars(venue=…)` filter, and it breaks the per-instrument coverage check that decides whether old ticks may be deleted | `_resolve_rollup_identity()`: inherit from the sources, refuse when they disagree or are anonymous, explicit override still wins. Plus a fail-closed archive guard refusing any record with a blank venue or symbol, for the whole batch (9 + 8 regression tests) |
 | 12 | **`.gitignore` had unanchored `data/` and `secrets/` patterns**, which match at *any* depth | **The pushed Phase 2 commit `72fcbcc` was missing 6 source modules it imports** (`nexus/data/{__init__,freshness,records}.py`, `nexus/secrets/{__init__,provider,redaction}.py`). A fresh clone could not import `nexus` at all. It also meant **ruff never linted those two packages** — ruff honours `.gitignore`, so every "ruff clean" result reported for Phase 2 silently excluded them | Anchored both patterns (`/data/`, `/secrets/`, `/backend/data/`, `/backups/`) and added end-of-file negations for `backend/src/**` and `backend/migrations/**`, with `__pycache__` re-excluded *after* them (a negation that re-includes the directory lets git descend and re-include every `.pyc`). New `backend/tests/test_repo_hygiene.py` compares the working tree against the repository (10 tests) |
 
-Defects 13–29 were found only by executing CI on GitHub. Almost none is a defect in the trading
+Defects 13–30 were found only by executing CI on GitHub. Almost none is a defect in the trading
 logic; they are defects in the machinery that is supposed to prove the trading logic works, which
 is why they are recorded with the same rigour as the rest. **Defect 26 is the exception and the
 most serious of the group**: it is a defect in the deliverable itself — an image that would not
@@ -379,10 +455,11 @@ to add before.
 | 23 | The fix committed for defect 22 — `pip install --upgrade "setuptools>=78.1.1"` — did not clear it; the next scan still reported 70.3.0 | A fix argued for instead of measured. The reasoning ("the base image ships 70.3.0, therefore upgrade it") was plausible, and wrong in a way no local check could reveal | Superseded by defect 25. Left in the record because the reasoning is the instructive part |
 | 24 | The removal that replaced it deleted nothing, and the assertion written to prove the removal worked then **failed the build on `pip/_vendor/pkg_resources`** | Five consecutive red image jobs. The check meant to prevent a wrong fix was itself wrong: it matched by filename rather than by distribution metadata, so it treated a necessary part of pip as the vulnerability | Match distributions only (`pip`, `pip-*.dist-info`, `setuptools*`) at the only depth a distribution can live. A test enumerates every removal pattern and refuses a bare `pkg_resources` |
 | 25 | **The finding is a false positive.** setuptools is not installed anywhere in the image; the scanner reads `pip/_vendor/bom.cdx.json` — pip's own CycloneDX SBOM listing its vendored dependencies — which declares `pkg:pypi/setuptools@70.3.0` | Three fixes could not have worked. Upgrading cannot rewrite a version string inside pip's own SBOM, removal has nothing to remove, and the reading "this image contains vulnerable code" was simply untrue | Remove pip from both interpreters. No ignore file, no deleted manifest, the scan still blocking on HIGH and CRITICAL: the runtime installs no packages, so a package installer in the image is attack surface with no benefit, and pip is the only SBOM carrier in the tree |
-| 26 | The runtime image never installed the IANA tz database, and the module the `CMD` runs builds `ZoneInfo("America/New_York")` at import time | **The container would not have started.** ZoneInfoNotFoundError before a port is bound — on the deployment host, unreproducible locally, present since the Phase 2 Dockerfile. No existing check could have found it, because nothing ever imported the image's own entrypoint | Install `tzdata` explicitly rather than inherit whatever the base image happens to ship, and assert at build time that `nexus.api.app` imports and `create_app` is callable |
+| 26 | The runtime image never installed the IANA tz database, and the module the `CMD` runs builds `ZoneInfo("America/New_York")` at import time | **Latent, not live — and first recorded here as worse than it was.** `nexus.instruments.sessions` resolves two zones at module scope and `nexus.api.app` imports it, so a base image without tzdata means ZoneInfoNotFoundError before a port is bound. Measured in CI: `python:3.12-slim-bookworm` *does* ship `/usr/share/zoneinfo`, so startup works today. The real defect is that the image depended on a package it never asked for, and nothing checked — no test anywhere imported the image's own entrypoint | Install `tzdata` explicitly instead of inheriting it, and assert at build time that `nexus.api.app` imports and `create_app` is callable. The commit that introduced this row claimed the container "would not have started"; the probe disproved that, and the claim is corrected in `40e7ed6` rather than rewritten |
 | 27 | GitHub Actions allows **10 annotations per level per step** | A diagnostic built to fetch one answer spent its entire budget on docker's image-pull progress and published nothing. The Trivy publisher had the same defect waiting in it: one annotation per finding, capped at 40, would silently have lost everything past the tenth — and a cap that truncates looks exactly like a result | Each report packed into a single annotation with encoded newlines; a test asserts the count stays within budget *and* that packing does not lose findings |
 | 28 | Six assertions in one `RUN`, and build logs are not readable from every environment | Eight and a half minutes of build, then an annotation printing all six checks without saying which had tripped. The failure was undiagnosable through the only channel available | Distinct exit codes 21–26 with a legend above the `RUN`; a test asserts the codes and the legend agree, because a legend that has drifted from the checks gets believed |
 | 29 | The local gate chained lint, types and tests with newlines instead of `&&` | A non-zero `ruff` exit did not stop the commit and push behind it. Five F811 redefinitions shipped and were caught by CI rather than locally (`9f07537`) | Chained with `&&`. A gate whose failure cannot stop the commit is not a gate |
+| 30 | The check that replaced defect 25's asserted "no SBOM survives anywhere in the image" | One more red build, on `psycopg_binary-3.3.9.dist-info/sboms/auditwheel.cdx.json` — a manifest that says nothing about setuptools. The claim it rested on, "pip is the only SBOM carrier in the tree", had been verified against the **local dev venv**, which does not install the `postgres` extra and so does not contain psycopg at all | Grep manifest *contents* for setuptools within `*.cdx.json`/`*.spdx.json`, which is the invariant that matters. A test refuses the blanket form from returning. The general rule: a conclusion drawn from the dev environment about the contents of the image is not a conclusion about the image |
 
 Defects 1–3 and 9–12 are the important ones: all seven produce *plausible-looking wrong
 results* rather than an error, which is the failure mode that destroys confidence in a
@@ -441,20 +518,31 @@ Stated plainly, per Appendix C. These are open items, not finished work.
    layout and the per-pair point divisors are the documented ones but have not been checked
    against a real file. `verify_layout()` exists to produce that evidence; it must run from a
    host with egress before FX tick history is treated as anything but PROVISIONAL.
-3. **The image builds; nothing has ever run.** Narrowed since Phase 2, not closed. CI now builds
-   the Dockerfile for `linux/amd64` **and** `linux/arm64` and `docker compose config` validates
-   with every required variable supplied (§3.6), so the Phase 3 additions — the
-   `archive`/`streams`/`postgres`/`nats` extras, the `archive-data` volume, the new env vars, the
-   non-root user — are proven to *install and build*. What remains unverified is everything that
-   needs a running container: no service has ever started, no healthcheck has ever answered, the
-   ten compose services have never been brought up together, Postgres/TimescaleDB and NATS have
-   never been connected to, and the **Caddyfile is still completely unexercised**. Consequence:
-   the setuptools removal in defect 23 is asserted at build time only — if some dependency did
-   import `pkg_resources` at runtime, nothing so far would have noticed. First real
+3. **The image builds and its entrypoint imports; nothing has ever run.** Narrowed twice since
+   Phase 2, still not closed. CI builds the Dockerfile for `linux/amd64` **and** `linux/arm64`,
+   `docker compose config` validates with every required variable supplied, and the build now
+   imports the module the `CMD` executes and checks `create_app` is callable (§3.6). So the Phase 3
+   additions — the `archive`/`streams`/`postgres`/`nats` extras, the `archive-data` volume, the new
+   env vars, the non-root user — are proven to *install, build and import*, and the IANA tz
+   database the entrypoint needs is proven present.
+
+   What remains unverified is everything that needs a **running** container: no service has ever
+   started, no healthcheck has ever answered, no request has ever been served, the ten compose
+   services have never been brought up together, Postgres/TimescaleDB and NATS have never been
+   connected to, and the **Caddyfile is still completely unexercised**. An import assertion proves
+   the dependency graph resolves; it does not prove the app binds a port, migrates, or answers
+   `/healthz`.
+
+   One consequence specific to this phase: pip is **removed** from the runtime image (§4 defect 25),
+   which was verified safe by grepping every installed distribution's metadata and confirming
+   nothing under `src/nexus` shells out to pip. That reasoning is sound but was done in the dev
+   venv, whose package set differs from the image's — the same mistake as defect 30. If some
+   installed package imports pip at runtime, nothing so far would have noticed. First real
    `docker compose up` is the test, and it is a Phase 4 task on the Oracle VM.
 4. **CI now executes — and the new limitations are about *where*.** This was open in Phase 2
    ("committed but never executed") and is closed: both `push` and `pull_request` runs are green
-   on all four jobs (§3.6), after exposing defects 13–23. What CI does *not* prove:
+   on all four jobs at `40e7ed6` (§3.6), after eighteen runs and defects 13–30. What CI does *not*
+   prove:
    - it runs on **GitHub-hosted `ubuntu-latest` (x86-64)**, not on the Oracle Always Free
      Ampere A1 host that D-021 approved. A green run here says nothing about that machine.
    - the `linux/arm64` build is **QEMU-emulated**, so it proves the image cross-compiles, not
@@ -490,7 +578,7 @@ Stated plainly, per Appendix C. These are open items, not finished work.
 | Sessions/calendar | DST-correct FX window, exchange sessions, declared holiday coverage, fail-closed unknowns; 53 tests | **PASS** |
 | Zero cost (D-019) | Free sources only; CI greps for paid vendors; no credential anywhere | **PASS** |
 | No live trading | Phase gate `False`×4; no order route; adapters credential-free and verb-free | **PASS** |
-| Repository is complete and cloneable | Fresh clone holds 49/49 modules, imports resolve inside the clone, 824 tests pass from a clean checkout; no artifact or credential-shaped file tracked (§3.5) | **PASS** |
+| Repository is complete and cloneable | Fresh clone of `40e7ed6` holds 49/49 modules, imports resolve inside the clone, 868 tests pass from a clean checkout; no artifact, credential-shaped file or scan-suppression file tracked (§3.5) | **PASS** |
 
 **Phase 3 exit gate: PASSED for the offline-verifiable scope.** Two items must close before
 Phase 3 can be called complete rather than code-complete:

@@ -1,6 +1,6 @@
 # NEXUS — Autonomous Financial Intelligence System
 
-**Status:** Phase 3 (market data + instrument master) built — **824 tests, 0 failures**, ruff clean, mypy strict clean (49 files).  
+**Status:** Phase 3 (market data + instrument master) built — **868 tests, 0 failures**, ruff clean, mypy strict clean (49 files). CI green on `push` and `pull_request`: lint, types, tests, secret scan, multi-arch image build and a Trivy image scan blocking on HIGH+CRITICAL with no exception list.  
 **Cost: $0/month — free tools, free APIs, free data only (D-019).**  
 **No trading adapters. No venue credentials. No order endpoint. Live trading disabled in code, not just config.**
 
