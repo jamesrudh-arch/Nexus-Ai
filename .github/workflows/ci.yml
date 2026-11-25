@@ -203,58 +203,44 @@ jobs:
           load: true
           tags: nexus-core:ci
 
-      # CRITICAL blocks the build. HIGH is reported but does not, and that split is a
-      # deliberate, temporary posture rather than a quiet downgrade:
+      # HIGH and CRITICAL both block, which is the posture this gate is supposed to have.
       #
-      # The combined HIGH,CRITICAL scan failed on the first successful image build, and the
-      # findings could not be triaged — GitHub serves job logs from
-      # results-receiver.actions.githubusercontent.com, which is outside this environment's
-      # egress allowlist, so the report itself was unreadable. A gate nobody can read is worse
-      # than no gate: it stays red, and a permanently red build teaches everyone to ignore it.
+      # It was split for a while — CRITICAL blocking, HIGH reported only — and that split was a
+      # consequence of not being able to read the report, not a risk judgement: GitHub serves job
+      # logs from results-receiver.actions.githubusercontent.com, which is outside this
+      # environment's egress allowlist. A gate nobody can read is worse than no gate, because it
+      # stays red and a permanently red build teaches everyone to ignore it. That was O-011.
       #
-      # So HIGH is reported without blocking, and tracking it down is recorded as an open item
-      # (O-011) rather than being closed by suppressing it. Once every finding below is triaged,
-      # restore `severity: HIGH,CRITICAL` with `exit-code: "1"` on the blocking step and delete
-      # the report-only one.
-      #
-      # The findings are republished as check annotations on purpose. Annotations are readable
-      # through the GitHub REST API (`/check-runs/<id>/annotations`) from any host, whereas job
-      # logs are served from a separate host that is not reachable from everywhere — the report
-      # being unreadable is what created O-011 in the first place. A gate whose output only some
-      # environments can read is a gate that stays open.
-      - name: Trivy image scan (CRITICAL blocks)
+      # Two things closed it. The findings are now republished below as check annotations, which
+      # the ordinary REST API exposes on any host — the same route that finally made the gitleaks
+      # findings readable. And there was exactly one HIGH finding to triage: CVE-2025-47273,
+      # setuptools 70.3.0 in the base image (arbitrary file write via PackageIndex.download,
+      # fixed in 78.1.1), now upgraded in the Dockerfile. With the report readable and the
+      # finding fixed, HIGH blocks again.
+      - name: Trivy image scan (HIGH + CRITICAL block)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: nexus-core:ci
           scanners: vuln,secret
-          severity: CRITICAL
+          severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
-
-      - name: Trivy image scan (HIGH reported, not blocking — see O-011)
-        if: ${{ !cancelled() }}
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: nexus-core:ci
-          scanners: vuln
-          severity: HIGH
-          ignore-unfixed: true
-          exit-code: "0"
           format: json
-          output: trivy-high.json
+          output: trivy-findings.json
 
-      - name: Publish HIGH findings as check annotations (O-011)
+      - name: Publish findings as check annotations
         if: ${{ always() }}
         run: |
-          # Turns the JSON report into `::warning::` annotations so the findings can be read
-          # without log access. Capped, because a base image can carry hundreds and annotations
-          # are not a report format — the totals line says what was truncated.
+          # Turns the JSON report into annotations so the findings can be read without log
+          # access, including on the runs where the scan above failed the job — which is exactly
+          # when they matter. Capped, because a base image can carry hundreds of findings and
+          # annotations are a pointer to the report, not the report; truncation is stated.
           python3 - <<'PY'
           import json, pathlib, urllib.parse
 
-          path = pathlib.Path("trivy-high.json")
+          path = pathlib.Path("trivy-findings.json")
           if not path.is_file():
-              print("::warning title=trivy-high::no report produced - the scan step did not run")
+              print("::warning title=trivy-image::no report produced - the scan step did not run")
               raise SystemExit(0)
 
           report = json.loads(path.read_text() or "{}")
@@ -267,6 +253,7 @@ jobs:
                           "installed": vuln.get("InstalledVersion", "?"),
                           "fixed": vuln.get("FixedVersion") or "no-fix",
                           "id": vuln.get("VulnerabilityID", "?"),
+                          "severity": vuln.get("Severity", "?"),
                           "target": result.get("Target", "?"),
                           "class": result.get("Class", "?"),
                       }
@@ -278,31 +265,33 @@ jobs:
               print(f"::{level} title={urllib.parse.quote(title)}::{esc}")
 
           if not findings:
-              emit("notice", "trivy-high", "no HIGH-severity fixable vulnerabilities in nexus-core:ci")
+              emit("notice", "trivy-image", "no HIGH or CRITICAL fixable vulnerabilities in nexus-core:ci")
               raise SystemExit(0)
 
+          critical = sum(1 for f in findings if f["severity"] == "CRITICAL")
           emit(
               "warning",
-              "trivy-high",
-              f"{len(findings)} HIGH findings, all with an available fix (O-011 untriaged)",
+              "trivy-image",
+              f"{len(findings)} findings ({critical} CRITICAL) with an available fix - the scan "
+              "above fails the build until each is fixed or explicitly justified",
           )
           for finding in findings[:40]:
               emit(
                   "warning",
-                  "trivy-high",
-                  "{id} {pkg} {installed} -> {fixed} [{cls}] in {target}".format(
+                  "trivy-image",
+                  "{severity} {id} {pkg} {installed} -> {fixed} [{cls}] in {target}".format(
                       cls=finding["class"], **finding
                   ),
               )
           if len(findings) > 40:
-              emit("warning", "trivy-high", f"...and {len(findings) - 40} more; see trivy-high.json")
+              emit("warning", "trivy-image", f"...and {len(findings) - 40} more; see trivy-findings.json")
 
           by_pkg = {}
           for finding in findings:
               by_pkg.setdefault(finding["pkg"], []).append(finding["id"])
           emit(
               "notice",
-              "trivy-high",
+              "trivy-image",
               "distinct packages: " + ", ".join(f"{k}({len(v)})" for k, v in sorted(by_pkg.items())),
           )
           PY

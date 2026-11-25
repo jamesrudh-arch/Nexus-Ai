@@ -40,9 +40,22 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DO_NOT_TRACK=1
 
 # curl for the healthcheck only; no shell-based tooling beyond it.
+#
+# setuptools is upgraded because the base image ships 70.3.0, which carries CVE-2025-47273:
+# `PackageIndex.download` derives a filename from an unquoted URL segment and joins it onto a
+# temp directory, so a crafted URL yields an arbitrary file write with the process's
+# permissions (fixed in 78.1.1, CVSS 8.8 HIGH). Nothing in this image ever calls that API — the
+# runtime installs no packages — but the code is present, so Trivy reports it, and "unreachable
+# in practice" is an argument to make in the record rather than a reason to ship it.
+#
+# Upgraded rather than removed: removal would be the smaller surface, but no container is ever
+# started in this sandbox, so a dependency that imports `pkg_resources` would break only in
+# production. Revisit on the first real `docker compose up` (docs/05 §5). The Trivy scan blocks
+# on HIGH again, so dropping this line fails CI.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
+    && /usr/local/bin/python -m pip install --no-cache-dir --upgrade "setuptools>=78.1.1" \
     && groupadd --system --gid 1001 nexus \
     && useradd --system --uid 1001 --gid nexus --home-dir /app --shell /usr/sbin/nologin nexus
 

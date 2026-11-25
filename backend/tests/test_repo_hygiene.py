@@ -15,6 +15,7 @@ only way to detect that class of failure.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -420,24 +421,25 @@ class TestImageScanHasAnImageToScan:
 
 
 class TestTrivyFindingsAreReadable:
-    """O-011 exists because a gate's output could not be read from every environment.
+    """O-011 existed because a gate's output could not be read from every environment.
 
     The first successful image build failed a combined HIGH,CRITICAL Trivy scan, and the
     findings were unreachable: GitHub serves job logs from a separate host, so the report could
     not be opened, triaged, or acted on. Splitting HIGH off made the build green but left the
-    findings just as unreadable — which is not a resolution, only a quieter problem.
+    findings just as unreadable — not a resolution, only a quieter problem.
 
-    So the HIGH scan now writes JSON and a follow-up step republishes it as check annotations,
-    which the REST API exposes on any host. These tests execute that step rather than merely
-    asserting it exists: a shell heredoc embedded in YAML breaks silently on indentation, and
-    "the step is present" would not notice.
+    Publishing the report as check annotations made it readable from anywhere, and there turned
+    out to be exactly one finding, so HIGH blocks again. These tests execute the publishing step
+    rather than merely asserting it exists: a shell heredoc embedded in YAML breaks silently on
+    indentation, and "the step is present" would not notice. They also hold the blocking posture,
+    because reverting to report-only is the easy way to make a future finding go away.
     """
 
     def _steps(self) -> list[dict]:
         return list(_load_workflow()["jobs"]["image"]["steps"])
 
     def _scan(self) -> dict:
-        return next(s for s in self._steps() if str(s.get("name", "")).startswith("Trivy image scan (HIGH"))
+        return next(s for s in self._steps() if str(s.get("name", "")).startswith("Trivy image scan"))
 
     def _publish(self) -> dict:
         return next(s for s in self._steps() if "annotations" in str(s.get("name", "")))
@@ -448,13 +450,24 @@ class TestTrivyFindingsAreReadable:
         assert "<<'PY'" in run, "expected the report step to embed a quoted heredoc"
         return run.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
 
-    def test_high_scan_writes_a_machine_readable_report(self) -> None:
+    def test_there_is_one_image_scan_and_it_blocks_on_high_and_critical(self) -> None:
+        """The split posture was a workaround for an unreadable report, not a risk decision."""
+        scans = [s for s in self._steps() if str(s.get("name", "")).startswith("Trivy image scan")]
+        assert len(scans) == 1, (
+            f"{len(scans)} Trivy image scans: {[s.get('name') for s in scans]}. HIGH was split "
+            "into a report-only step only while its findings could not be read; they can now."
+        )
         with_ = self._scan()["with"]
+        assert with_.get("exit-code") == "1", (
+            "a vulnerability scan that cannot fail the build is a comment, not a gate"
+        )
+        severity = set(str(with_.get("severity", "")).split(","))
+        assert {"HIGH", "CRITICAL"} <= severity, f"HIGH is no longer blocking: {sorted(severity)}"
         assert with_.get("format") == "json", "the report must be JSON to be reparsed"
         assert with_.get("output"), "the scan must write to a file, not only to the log"
-        assert with_.get("exit-code") == "0", (
-            "HIGH is report-only until O-011 is triaged; making it blocking again is the point "
-            "of triaging it, not of this test"
+        assert with_.get("ignore-unfixed") is True, (
+            "without a fix there is nothing to act on; unfixed findings would make the gate "
+            "permanently red, which is how gates get ignored"
         )
 
     def test_the_publish_step_reads_what_the_scan_writes(self) -> None:
@@ -488,7 +501,8 @@ class TestTrivyFindingsAreReadable:
         import subprocess
 
         if report is not None:
-            (tmp_path / "trivy-high.json").write_text(report)
+            # Named from the workflow, so the test cannot drift from the step it exercises.
+            (tmp_path / str(self._scan()["with"]["output"])).write_text(report)
         script = tmp_path / "emit.py"
         script.write_text(self._script())
         return subprocess.run(  # noqa: S603 - fixed arguments, no shell, no user input
@@ -525,12 +539,70 @@ class TestTrivyFindingsAreReadable:
         assert "::warning" in out, "findings must be warnings, not notices"
         assert "CVE-2025-12345" in out and "libssl3" in out
         assert "3.0.15" in out and "3.0.16" in out, "the available fix is the actionable part"
-        assert "1 HIGH findings" in out, "the total must be stated, not implied"
+        assert "HIGH CVE-2025-12345" in out, "severity belongs on the finding, not only the total"
+        assert "1 findings" in out, "the total must be stated, not implied"
+
+    def test_critical_findings_are_counted_separately(self, tmp_path: Path) -> None:
+        """CRITICAL is what blocks first; a total alone hides whether anything is that severe."""
+        report = json.dumps(
+            {
+                "Results": [
+                    {
+                        "Target": "t",
+                        "Class": "os-pkgs",
+                        "Vulnerabilities": [
+                            {
+                                "VulnerabilityID": "CVE-2025-00001",
+                                "PkgName": "libc6",
+                                "InstalledVersion": "1",
+                                "FixedVersion": "2",
+                                "Severity": "CRITICAL",
+                            },
+                            {
+                                "VulnerabilityID": "CVE-2025-00002",
+                                "PkgName": "zlib1g",
+                                "InstalledVersion": "1",
+                                "FixedVersion": "2",
+                                "Severity": "HIGH",
+                            },
+                        ],
+                    }
+                ]
+            }
+        )
+        result = self._run_script(tmp_path, report)
+        assert result.returncode == 0, result.stderr
+        assert "2 findings (1 CRITICAL)" in result.stdout
 
     def test_a_clean_image_says_so_instead_of_staying_silent(self, tmp_path: Path) -> None:
         result = self._run_script(tmp_path, json.dumps({"Results": []}))
         assert result.returncode == 0, result.stderr
-        assert "::notice" in result.stdout and "no HIGH-severity" in result.stdout
+        assert "::notice" in result.stdout and "no HIGH or CRITICAL" in result.stdout
+
+    def test_the_known_base_image_finding_is_still_fixed(self) -> None:
+        """CVE-2025-47273 was the single finding that closed O-011. Its fix must not vanish.
+
+        Trivy would catch a regression, but only in CI and only while the scan runs; this catches
+        it in the suite, with the reason attached. The base image ships setuptools 70.3.0, whose
+        `PackageIndex.download` joins an unquoted URL segment onto a temp directory and so allows
+        an arbitrary file write. Fixed upstream in 78.1.1.
+        """
+        dockerfile = (BACKEND / "Dockerfile").read_text()
+        match = re.search(r"setuptools>=(\d+)\.(\d+)\.(\d+)", dockerfile)
+        assert match, (
+            "the Dockerfile no longer upgrades setuptools past the CVE-2025-47273 fix; the base "
+            "image's 70.3.0 would be scanned as HIGH and fail the build"
+        )
+        assert tuple(int(g) for g in match.groups()) >= (78, 1, 1), (
+            f"setuptools>={'.'.join(match.groups())} is below 78.1.1, which is where CVE-2025-47273 is fixed"
+        )
+        # It has to happen in the runtime stage, where the scan looks, and as root.
+        runtime = dockerfile.split("AS runtime", 1)[1]
+        assert "setuptools>=" in runtime, "setuptools is upgraded in the builder only"
+        user_line = runtime.index("USER nexus")
+        assert runtime.index("setuptools>=") < user_line, (
+            "the upgrade runs after `USER nexus`, which cannot write to /usr/local"
+        )
 
     def test_a_missing_report_is_reported_not_crashed_on(self, tmp_path: Path) -> None:
         """The scan step can be skipped; the publish step must not then fail the job."""
