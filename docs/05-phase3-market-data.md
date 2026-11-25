@@ -357,9 +357,40 @@ would have corrupted research data silently.
 | 11 | `rollup_bars` emitted `instrument_id or ""` when identity was not passed, and the archive partitioned blank venue/symbol into `venue=/symbol=` | **Anonymous bars on the D-024 retention ladder.** Every instrument's 5m/daily bars would share one partition — indistinguishable, unfindable by any `read_bars(venue=…)` filter, and it breaks the per-instrument coverage check that decides whether old ticks may be deleted | `_resolve_rollup_identity()`: inherit from the sources, refuse when they disagree or are anonymous, explicit override still wins. Plus a fail-closed archive guard refusing any record with a blank venue or symbol, for the whole batch (9 + 8 regression tests) |
 | 12 | **`.gitignore` had unanchored `data/` and `secrets/` patterns**, which match at *any* depth | **The pushed Phase 2 commit `72fcbcc` was missing 6 source modules it imports** (`nexus/data/{__init__,freshness,records}.py`, `nexus/secrets/{__init__,provider,redaction}.py`). A fresh clone could not import `nexus` at all. It also meant **ruff never linted those two packages** — ruff honours `.gitignore`, so every "ruff clean" result reported for Phase 2 silently excluded them | Anchored both patterns (`/data/`, `/secrets/`, `/backend/data/`, `/backups/`) and added end-of-file negations for `backend/src/**` and `backend/migrations/**`, with `__pycache__` re-excluded *after* them (a negation that re-includes the directory lets git descend and re-include every `.pyc`). New `backend/tests/test_repo_hygiene.py` compares the working tree against the repository (10 tests) |
 
+Defects 13–23 were found only by executing CI on GitHub. None is a defect in the trading system;
+all are defects in the machinery that is supposed to prove the trading system works, which is
+why they are recorded with the same rigour as the rest.
+
+| # | Defect | Impact if unfixed | Fix |
+|---|--------|-------------------|-----|
+| 13 | `trivy-action@0.28.0` — the action's tags are `v`-prefixed | Every job died at "Set up job" with an unresolvable ref, before running anything | Corrected the ref. A tag that does not exist fails the whole job, not the step |
+| 14 | `trivy-action@v0.28.0` references `setup-trivy@v0.2.1`, which was **never published** (oldest is `v0.2.6`) | The action is permanently broken at its own internal reference. No offline check can find this: the tag exists, its *transitive* refs do not | Pinned `v0.36.0`, which pins setup-trivy by commit hash. A test now refuses any version not known to resolve |
+| 15 | The compose step never exported the `${VAR:?}` variables `docker-compose.yml` requires | `docker compose config` aborted immediately, so the compose file was never actually validated in CI | Exported throwaway `ci-only` values, with a comment saying they are for a config parse only |
+| 16 | Multi-arch build had `push: false` **and** `load: false`, so no image existed in the daemon | Both Trivy image steps scanned a ref that did not exist. The tell: the step configured `exit-code: "0"` failed too, so it was never a finding — a multi-platform image cannot be loaded, one tag holds one architecture | Second amd64-only build with `load: true` for the scanner; the multi-arch build stays as the cross-compilation proof |
+| 17 | `gitleaks-action@v2` accepts **no** inputs at all | `config-path` produced "Unexpected input(s) … valid inputs are ['']" and was discarded; the config was found by auto-discovery or not at all | Removed the `with:` block; the binary auto-discovers `.gitleaks.toml` at the repository root. A test asserts no inputs are passed |
+| 18 | The first allowlist reproduced the literals it was allowlisting | Copying the fabricated JWT and PEM into `.gitleaks.toml` and into the guard test created **new** findings and turned a green `push` run red. An allowlist that contains what it excuses defeats itself | Scope by path only; the config and its guard test assemble expected values from fragments and assert they contain no contiguous literal |
+| 19 | `permissions: contents: read` alone | gitleaks could not post its findings to the PR: `HttpError: Resource not accessible by integration` | Added `pull-requests: write`, and a test pins the permission set so it cannot widen |
+| 20 | **`.gitleaks.toml` used plural `[[allowlists]]`, which gitleaks 8.24.3 does not define** | Viper ignored the unknown key with no error and no warning. Five consecutive runs failed on the same two findings while the config looked correct, my guard tests read the same key back and passed, and nothing anywhere said why | Singular `[allowlist]` (verified against 8.24.3's `ViperConfig` source: only a singular `Allowlist` struct exists; `extend()` appends the default's entries and matching is OR). `GITLEAKS_VERSION` pinned in the workflow, and a test validates every key in the config against that version's schema |
+| 21 | `actions/checkout` defaults to `fetch-depth: 1` | A test verifying that an excused commit exists passed locally and failed **only in CI** — a test that passes only on the machine that wrote it is not a test | `fetch-depth: 0` on the backend job, asserted by a test; the verification itself skips only when the object is genuinely absent, not merely when the clone is shallow |
+| 22 | The image scan's findings were unreadable, so HIGH was made report-only | A gate whose output cannot be read stays open: the build went green while an untriaged HIGH finding shipped. That was O-011, and splitting the severity was a quieter problem, not a solution | Findings republished as **check annotations**, which the REST API serves from any host (logs are served from a different one). Exactly one finding existed: CVE-2025-47273, setuptools 70.3.0 in the base image. Removed from both interpreters with a build-time assertion, and HIGH blocks again |
+| 23 | An upgrade was committed as the fix for defect 22 and the scan still reported 70.3.0 | The copy the scanner read was not the copy the upgrade touched. Shipping "fixed" on the strength of a command that ran successfully would have left the finding in place | Remove from both interpreters, delete surviving `dist-info`, and fail the build unless neither can `import setuptools`. The survivor check itself had a `find` precedence bug — `-name a -o -name b -print -quit` binds the action to `b` alone and matched **zero** items with setuptools present; caught on a mock tree, parentheses added, and now asserted by a test |
+
 Defects 1–3 and 9–12 are the important ones: all seven produce *plausible-looking wrong
 results* rather than an error, which is the failure mode that destroys confidence in a
 backtest — or, in defect 12's case, in the repository itself.
+
+Defects 20 and 23 are the same failure mode one level up: a configuration key and a shell
+expression that were silently inert while looking correct. Both were found by reading source
+rather than by testing, and both are now guarded by tests that fail when the inert form returns.
+
+One correction to the record, in the same spirit: the commit message for `edcefb6` claimed 860
+tests when the gate had reported 859. The number was written before it was measured. The commit
+was left unrewritten, consistent with how `72fcbcc` is handled in limitation 8.
+
+The gate command that let defect 23's predecessor through is also worth naming: it chained the
+lint, type and test steps with newlines rather than `&&`, so a non-zero `ruff` exit did not stop
+the commit and push that followed it. Five F811 redefinitions shipped and were caught by CI
+rather than locally (`9f07537`). A gate whose failure cannot stop the commit is not a gate.
 
 Defects 9 and 10 were found only by running the whole pipeline end-to-end on realistic
 volumes; no single-unit test would have exposed either. Defect 12 was found only by asking
@@ -395,13 +426,29 @@ Stated plainly, per Appendix C. These are open items, not finished work.
    layout and the per-pair point divisors are the documented ones but have not been checked
    against a real file. `verify_layout()` exists to produce that evidence; it must run from a
    host with egress before FX tick history is treated as anything but PROVISIONAL.
-3. **Docker Compose, the Dockerfile and the Caddyfile are still not runtime-verified.** Docker
-   is unavailable in this sandbox. The Phase 3 additions (`archive`/`streams`/`postgres`/`nats`
-   extras, the `archive-data` volume, the new env vars) are unvalidated in a real build.
-4. **CI has still never executed on GitHub.** The assertions were run locally and passed, but
-   no Actions run exists. This is not a paperwork gap: had CI run on the Phase 2 push it would
-   have failed at import and exposed defect 12 immediately. First push gives the real signal,
-   and the hygiene test now runs as part of the suite rather than relying on CI to notice.
+3. **The image builds; nothing has ever run.** Narrowed since Phase 2, not closed. CI now builds
+   the Dockerfile for `linux/amd64` **and** `linux/arm64` and `docker compose config` validates
+   with every required variable supplied (§3.6), so the Phase 3 additions — the
+   `archive`/`streams`/`postgres`/`nats` extras, the `archive-data` volume, the new env vars, the
+   non-root user — are proven to *install and build*. What remains unverified is everything that
+   needs a running container: no service has ever started, no healthcheck has ever answered, the
+   ten compose services have never been brought up together, Postgres/TimescaleDB and NATS have
+   never been connected to, and the **Caddyfile is still completely unexercised**. Consequence:
+   the setuptools removal in defect 23 is asserted at build time only — if some dependency did
+   import `pkg_resources` at runtime, nothing so far would have noticed. First real
+   `docker compose up` is the test, and it is a Phase 4 task on the Oracle VM.
+4. **CI now executes — and the new limitations are about *where*.** This was open in Phase 2
+   ("committed but never executed") and is closed: both `push` and `pull_request` runs are green
+   on all four jobs (§3.6), after exposing defects 13–23. What CI does *not* prove:
+   - it runs on **GitHub-hosted `ubuntu-latest` (x86-64)**, not on the Oracle Always Free
+     Ampere A1 host that D-021 approved. A green run here says nothing about that machine.
+   - the `linux/arm64` build is **QEMU-emulated**, so it proves the image cross-compiles, not
+     that it performs — or even runs — natively on ARM64.
+   - Trivy scans the **amd64 image only**. A multi-platform image cannot be loaded into the
+     daemon (one tag, one architecture), so the arm64 variant has never been scanned. Its
+     package set can differ.
+   - the suite runs against **SQLite** in CI as elsewhere; no CI job has ever touched a real
+     Postgres, NATS, MinIO or Valkey process (see limitation 5).
 5. **PostgreSQL/TimescaleDB remains untested at runtime.** Only SQLite was exercised.
 6. **No real gaps, outages or throttling observed.** Reconnection behaviour, 429 handling and
    gap recording are tested with synthetic faults only. The free feeds' actual reliability is

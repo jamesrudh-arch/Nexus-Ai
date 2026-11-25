@@ -176,6 +176,69 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # TEMPORARY DIAGNOSTIC — delete once defect 23 is closed.
+      #
+      # The runtime stage asserts setuptools is gone and the build failed on that assertion, so
+      # something survived. Job logs are not readable from every environment, which is what made
+      # O-011 take so long, so the answer is published as annotations instead.
+      #
+      # It runs before the builds and probes two images that do not depend on the failing step:
+      # the base image, and the builder stage (`--target builder`, which stops before the runtime
+      # stage). Between them they show every setuptools copy the final image could contain.
+      - name: Probe where setuptools lives (diagnostic, defect 23)
+        run: |
+          python3 - <<'PY'
+          import subprocess
+
+          def emit(message):
+              esc = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              esc = esc.replace(":", "%3A").replace(",", "%2C")
+              print(f"::notice title=setuptools-probe::{esc}")
+
+          def probe(image, entrypoint, args):
+              result = subprocess.run(
+                  ["docker", "run", "--rm", "--entrypoint", entrypoint, image, *args],
+                  capture_output=True,
+                  text=True,
+              )
+              out = (result.stdout + result.stderr).strip().splitlines()
+              return out or [f"(no output, rc={result.returncode})"]
+
+          PROBE = [
+              ("system python", "/usr/local/bin/python",
+               ["-c", "import setuptools; print(setuptools.__version__, setuptools.__file__)"]),
+              ("venv python", "/opt/venv/bin/python",
+               ["-c", "import setuptools; print(setuptools.__version__, setuptools.__file__)"]),
+              ("locations", "find",
+               ["/", "-xdev", "(", "-name", "setuptools*", "-o", "-name", "pkg_resources*",
+                ")", "-not", "-path", "/proc/*"]),
+              ("venv sys.path", "/opt/venv/bin/python",
+               ["-c", "import sys; print(' | '.join(sys.path))"]),
+              ("pyvenv.cfg", "cat", ["/opt/venv/pyvenv.cfg"]),
+          ]
+
+          base = "python:3.12-slim-bookworm"
+          emit(f"=== base image {base} ===")
+          for label, entry, args in PROBE:
+              for line in probe(base, entry, args)[:20]:
+                  emit(f"[base/{label}] {line}")
+
+          emit("=== builder stage of backend/Dockerfile ===")
+          build = subprocess.run(
+              ["docker", "build", "--target", "builder", "-t", "nexus-probe:builder", "./backend"],
+              capture_output=True,
+              text=True,
+          )
+          emit(f"[builder] docker build --target builder rc={build.returncode}")
+          if build.returncode != 0:
+              for line in build.stderr.strip().splitlines()[-5:]:
+                  emit(f"[builder/error] {line}")
+          else:
+              for label, entry, args in PROBE:
+                  for line in probe("nexus-probe:builder", entry, args)[:20]:
+                      emit(f"[builder/{label}] {line}")
+          PY
+
       # Two builds, because one cannot do both jobs. A multi-platform image cannot be
       # `load`ed into the Docker daemon — the daemon holds one architecture per tag — so a
       # multi-arch build with `load: false` leaves nothing behind for a scanner to read.
