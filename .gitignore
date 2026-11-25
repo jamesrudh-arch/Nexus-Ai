@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+
+# Secrets — NEVER commit (Section 13.3, D-019 secrets flow)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+secrets/
+sops/
+age-keys/
+*.age
+
+# Data / artifacts (kept out of git; 200 GB free-tier cap, Feasibility §10.6 Z-04)
+data/
+*.duckdb
+*.sqlite
+*.sqlite3
+*.parquet
+*.zst
+backups/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log

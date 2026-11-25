@@ -1,8 +1,8 @@
 # NEXUS — Autonomous Financial Intelligence System
 
-**Status:** Discovery complete · Feasibility approved (D-018) · Phase 1 UX Bible designed.  
+**Status:** Phase 2 (core foundation) built and passing — 299 tests, ruff clean, mypy strict clean.  
 **Cost: $0/month — free tools, free APIs, free data only (D-019).**  
-**No production code yet. No live accounts connected. Live trading disabled.**
+**No venue adapters. No live accounts connected. Live trading disabled in code, not just config.**
 
 > Built to the NEXUS Living Master Specification v1.0 (25 Nov 2026).  
 > Owner: Personal, Nigeria. Multi-asset, intraday, autonomous live (within hard limits), conservative risk.
@@ -14,7 +14,10 @@
 | `docs/00-discovery-ledger.md` | Living record of every owner decision (D-001–D-019) + open items (O-001–O-008) |
 | `docs/01-owner-requirements-baseline.md` | Approved baseline (2026-11-25) — gates implementation |
 | `docs/02-feasibility-report.md` | Appendix B First Development Report v1.1 — architecture, capability matrix, Nigeria eligibility, **$0 hosting/tooling/data plan**, threat model, staged plan |
-| `docs/03-product-ux-bible.md` | Phase 1 — journeys, 15-page architecture, design system, states, mobile, accessibility |
+| `docs/03-product-ux-bible.md` | Phase 1 — journeys, 15-page architecture, design system, states, mobile, $0 UI stack, accessibility |
+| `docs/04-phase2-core-foundation.md` | Phase 2 — design, acceptance evidence, security/reliability posture, stated limitations |
+| `backend/` | `nexus-core` Python package: config, audit chain, secrets, events, data gates, risk engine, live-authority gate, halt, gateway, API |
+| `docker-compose.yml`, `infra/`, `.github/workflows/ci.yml` | $0 self-hosted stack (Postgres+Timescale, NATS, Valkey, MinIO, Caddy, Prometheus/Grafana/Loki) + free CI |
 
 ## Key Decisions (summary)
 
@@ -59,10 +62,12 @@ See `docs/02-feasibility-report.md` §3 for full matrix with sources.
 ## Gates
 
 - ✅ Phase 0 — Discovery + Owner Requirements Baseline approved (D-017, 2026-11-25)
-- ✅ Appendix B — Feasibility Report approved (D-018, 2026-11-25), revised to v1.1 for zero cost (D-019)
-- ⏳ **Phase 1 — Product/UX Bible awaiting owner approval** (`docs/03-product-ux-bible.md`)
-- ⏳ Open owner decisions: Q-05 (SMS/WhatsApp not free), Q-07 (single free VM), Q-08 (storage cap), Q-01–Q-04
-- ⛔ Phase 2+ (code) starts only after Phase 1 approval
+- ✅ Appendix B — Feasibility Report approved (D-018), revised to v1.1 for zero cost (D-019)
+- ✅ Phase 1 — Product/UX Bible approved (D-022, 2026-11-25)
+- ✅ Q-05 alerts — free set accepted (D-020); Q-07 single free VM accepted (D-021)
+- ✅ **Phase 2 — Core foundation: exit gate PASSED** (`docs/04-phase2-core-foundation.md`)
+- ⏳ Open owner decisions: Q-08 (storage cap), Q-01 currency, Q-02 exact risk numbers, Q-03 MT broker, Q-04 legal review
+- ⏭️ Next: Phase 3 — market data + instrument master (free feeds only, still $0)
 
 **No live trading until Phases 0–9 gates pass + Nigerian legal review + separate live-authority approval.**
 

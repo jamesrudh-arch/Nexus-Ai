@@ -1,0 +1,30 @@
+# Prometheus scrape config (Apache-2, self-hosted, $0).
+# Scrapes the NEXUS core API over the internal compose network only.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    host: nexus-core
+    stage: phase2
+
+scrape_configs:
+  - job_name: nexus-core
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["core:8000"]
+        labels:
+          service: nexus-core
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Node metrics help detect the Oracle free-tier idle-reclaim pattern (CPU/net <20%
+  # over 7 days). Keeping utilisation visible is a $0 mitigation for Z-02.
+  - job_name: node
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+# Alerting is handled by Alertmanager in Phase 12; until then Uptime Kuma plus the
+# GCP free-tier watchdog provide the dead-man switch.

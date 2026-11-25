@@ -1,0 +1,247 @@
+# NEXUS — zero-cost self-hosted stack (D-019)
+#
+# Every image below is free/open-source. Total memory budget is sized for the Oracle
+# Cloud Always Free Ampere A1 VM (2 OCPU / 12 GB RAM, allowance halved 15 Jun 2026).
+# Caps below total ~5.2 GB, leaving headroom for the OS and an optional local model.
+#
+# Usage:
+#   docker compose up -d core db                     # minimal: API + Postgres
+#   docker compose --profile observability up -d     # + Prometheus/Grafana/Loki
+#   docker compose --profile full up -d              # everything
+#
+# Nothing here connects to a venue or can place an order. Live trading is disabled in
+# code (Phase 2), not by configuration.
+
+name: nexus
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-restart: &restart-policy
+  restart: unless-stopped
+
+services:
+  # ---------------------------------------------------------------- system of record
+  db:
+    image: timescale/timescaledb:latest-pg16   # PostgreSQL 16 + TimescaleDB (Apache-2)
+    <<: *restart-policy
+    logging: *default-logging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexus}
+      POSTGRES_USER: ${POSTGRES_USER:-nexus}
+      # Value comes from the host env / secrets file — never committed.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env, never commit}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./backend/migrations:/migrations:ro
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexus} -d ${POSTGRES_DB:-nexus}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [nexus-internal]
+
+  # ---------------------------------------------------------------- event bus
+  nats:
+    image: nats:2-alpine                       # NATS + JetStream (Apache-2)
+    <<: *restart-policy
+    logging: *default-logging
+    command: ["--jetstream", "--store_dir", "/data"]
+    volumes:
+      - nats-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [nexus-internal]
+
+  # ---------------------------------------------------------------- cache / rate limits
+  cache:
+    image: valkey/valkey:8-alpine              # Valkey, the Redis OSS fork (BSD-3)
+    <<: *restart-policy
+    logging: *default-logging
+    command: ["valkey-server", "--maxmemory", "200mb", "--maxmemory-policy", "allkeys-lru"]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks: [nexus-internal]
+
+  # ---------------------------------------------------------------- object storage
+  minio:
+    image: minio/minio:latest                  # MinIO community (AGPL-3, self-hosted)
+    <<: *restart-policy
+    logging: *default-logging
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in .env, never commit}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in .env, never commit}
+    volumes:
+      - minio-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    networks: [nexus-internal]
+
+  # ---------------------------------------------------------------- NEXUS core API
+  core:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: nexus-core:0.1.0
+    <<: *restart-policy
+    logging: *default-logging
+    environment:
+      NEXUS_ENVIRONMENT: ${NEXUS_ENVIRONMENT:-DISABLED}
+      NEXUS_LIVE_TRADING_ENABLED: "false"          # hard-off in Phase 2
+      NEXUS_LEGAL_REVIEW_COMPLETE: "false"         # O-004 pending
+      NEXUS_OWNER_LIVE_AUTHORITY_GRANTED: "false"
+      NEXUS_DATABASE_URL: ${NEXUS_DATABASE_URL:-sqlite:///./data/nexus.db}
+      NEXUS_NATS_URL: nats://nats:4222
+      NEXUS_SECRETS_BACKEND: ${NEXUS_SECRETS_BACKEND:-env}
+      NEXUS_ALERTS_TELEGRAM_ENABLED: "true"
+      NEXUS_ALERTS_WEBPUSH_ENABLED: "true"
+      NEXUS_ALERTS_EMAIL_ENABLED: "true"
+      NEXUS_MODEL_ALLOW_PAID_APIS: "false"         # D-019
+    volumes:
+      - core-data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    # Bound to the internal network only; Caddy is the single public entry point.
+    expose:
+      - "8000"
+    networks: [nexus-internal]
+
+  # ---------------------------------------------------------------- TLS entry point
+  caddy:
+    image: caddy:2-alpine                      # Caddy (Apache-2) + Let's Encrypt
+    <<: *restart-policy
+    logging: *default-logging
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - core
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks: [nexus-internal]
+
+  # ---------------------------------------------------------------- observability
+  prometheus:
+    image: prom/prometheus:latest              # Prometheus (Apache-2)
+    profiles: [observability, full]
+    <<: *restart-policy
+    logging: *default-logging
+    volumes:
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks: [nexus-internal]
+
+  grafana:
+    image: grafana/grafana-oss:latest          # Grafana OSS (AGPL-3)
+    profiles: [observability, full]
+    <<: *restart-policy
+    logging: *default-logging
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set in .env, never commit}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks: [nexus-internal]
+
+  loki:
+    image: grafana/loki:latest                 # Loki (AGPL-3)
+    profiles: [observability, full]
+    <<: *restart-policy
+    logging: *default-logging
+    volumes:
+      - loki-data:/loki
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks: [nexus-internal]
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:latest         # Uptime Kuma (MIT) — self-monitoring
+    profiles: [observability, full]
+    <<: *restart-policy
+    logging: *default-logging
+    volumes:
+      - kuma-data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks: [nexus-internal]
+
+  # ------------------------------------------------- optional local model (no GPU on free tier)
+  # Uncomment on the 12 GB host only after the core stack is stable. Quantized 7B models
+  # run at roughly 5-12 tok/s on Ampere A1 CPU. Never receives credentials or positions.
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   profiles: [ai]
+  #   volumes: [ollama-data:/root/.ollama]
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 5120M
+  #   networks: [nexus-internal]
+
+volumes:
+  db-data:
+  nats-data:
+  minio-data:
+  core-data:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  kuma-data:
+  # ollama-data:
+
+networks:
+  nexus-internal:
+    driver: bridge

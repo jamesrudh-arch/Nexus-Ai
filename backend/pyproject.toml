@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-core"
+version = "0.1.0"
+description = "NEXUS Autonomous Financial Intelligence System — core foundation (Phase 2)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "LicenseRef-Proprietary"
+authors = [{ name = "NEXUS" }]
+
+# D-019: every dependency is free/open-source. No paid SDK, no licensed service client.
+dependencies = [
+  "pydantic>=2.7,<3",
+  "pydantic-settings>=2.2,<3",
+  "fastapi>=0.111,<1",
+  "uvicorn[standard]>=0.30,<1",
+  "sqlalchemy>=2.0,<3",
+  "structlog>=24.1",
+  "prometheus-client>=0.20",
+  "pyotp>=2.9",
+  "cryptography>=42.0",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# Optional production extras — still $0 / OSS. Absent in dev: code degrades to local fallbacks.
+postgres = ["psycopg[binary]>=3.1"]
+nats = ["nats-py>=2.7"]
+dev = [
+  "pytest>=8.2",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+  "mypy>=1.10",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["error::DeprecationWarning:nexus.*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "A", "C4", "SIM", "RET", "ARG", "PTH", "TD", "ERA"]
+ignore = [
+  "S101",  # asserts are used in tests
+  "TD003", # long-form TODO links not required
+  "B008",  # FastAPI Depends() in defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "ARG001"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src/nexus"]
+
+# nats-py is an optional production transport (D-019: free/OSS). It ships no stubs and is
+# not installed in dev, where the in-memory bus is used instead.
+[[tool.mypy.overrides]]
+module = ["nats", "nats.*"]
+ignore_missing_imports = true
+follow_untyped_imports = true

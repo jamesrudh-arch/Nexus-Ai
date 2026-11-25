@@ -1,0 +1,62 @@
+# NEXUS edge — Caddy 2 (Apache-2, $0) with automatic Let's Encrypt certificates.
+#
+# Caddy is the ONLY service reachable from the internet. Everything else stays on the
+# internal compose network. Owner access is expected over Tailscale or a Cloudflare
+# Tunnel (both free); this file is the fallback for a public hostname.
+#
+# Set NEXUS_HOST in .env (e.g. nexus.example.com). Using the placeholder below binds
+# Caddy to all names on :80 for local testing only.
+
+{$NEXUS_HOST::80} {
+	# --- TLS: automatic via Let's Encrypt when a real hostname is configured ---
+	# tls is implicit for a domain; for local :80 testing Caddy serves plain HTTP.
+
+	encode zstd gzip
+
+	# --- Baseline hardening headers ---
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "geolocation=(), microphone=(), camera=(), payment=()"
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' wss:; frame-ancestors 'none'; base-uri 'self'"
+		-Server
+	}
+
+	# --- Never serve or proxy these paths ---
+	@blocked path /metrics /docs /openapi.json /redoc
+	respond @blocked 404
+
+	# --- Rate limiting by client IP: blunt but free, and it slows credential stuffing ---
+	# (Caddy's rate_limit is available via the caddy-ratelimit module; without it we rely
+	# on Keycloak lockout + Tailscale-only access. Do not expose control endpoints.)
+	@control path /v1/halt /v1/halt/release
+	handle @control {
+		reverse_proxy core:8000 {
+			transport http {
+				dial_timeout 2s
+				response_header_timeout 5s
+			}
+		}
+	}
+
+	# --- Everything else: the API and, later, the Next.js UI ---
+	handle {
+		reverse_proxy core:8000 {
+			transport http {
+				dial_timeout 2s
+				response_header_timeout 30s
+			}
+		}
+	}
+
+	log {
+		output stdout
+		format json
+		# Access logs must not capture Authorization headers.
+		fields {
+			delete request>headers
+		}
+	}
+}
