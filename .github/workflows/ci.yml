@@ -212,10 +212,16 @@ jobs:
       # egress allowlist, so the report itself was unreadable. A gate nobody can read is worse
       # than no gate: it stays red, and a permanently red build teaches everyone to ignore it.
       #
-      # So HIGH is surfaced in the log and the job summary for review, and tracking it down is
-      # recorded as an open item (O-011) rather than being closed by suppressing it. When the
-      # findings have been triaged on a host with log access, restore `severity: HIGH,CRITICAL`
-      # with `exit-code: "1"` on the blocking step and delete the report-only one.
+      # So HIGH is reported without blocking, and tracking it down is recorded as an open item
+      # (O-011) rather than being closed by suppressing it. Once every finding below is triaged,
+      # restore `severity: HIGH,CRITICAL` with `exit-code: "1"` on the blocking step and delete
+      # the report-only one.
+      #
+      # The findings are republished as check annotations on purpose. Annotations are readable
+      # through the GitHub REST API (`/check-runs/<id>/annotations`) from any host, whereas job
+      # logs are served from a separate host that is not reachable from everywhere — the report
+      # being unreadable is what created O-011 in the first place. A gate whose output only some
+      # environments can read is a gate that stays open.
       - name: Trivy image scan (CRITICAL blocks)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
@@ -234,6 +240,72 @@ jobs:
           severity: HIGH
           ignore-unfixed: true
           exit-code: "0"
+          format: json
+          output: trivy-high.json
+
+      - name: Publish HIGH findings as check annotations (O-011)
+        if: ${{ always() }}
+        run: |
+          # Turns the JSON report into `::warning::` annotations so the findings can be read
+          # without log access. Capped, because a base image can carry hundreds and annotations
+          # are not a report format — the totals line says what was truncated.
+          python3 - <<'PY'
+          import json, pathlib, urllib.parse
+
+          path = pathlib.Path("trivy-high.json")
+          if not path.is_file():
+              print("::warning title=trivy-high::no report produced - the scan step did not run")
+              raise SystemExit(0)
+
+          report = json.loads(path.read_text() or "{}")
+          findings = []
+          for result in report.get("Results") or []:
+              for vuln in result.get("Vulnerabilities") or []:
+                  findings.append(
+                      {
+                          "pkg": vuln.get("PkgName", "?"),
+                          "installed": vuln.get("InstalledVersion", "?"),
+                          "fixed": vuln.get("FixedVersion") or "no-fix",
+                          "id": vuln.get("VulnerabilityID", "?"),
+                          "target": result.get("Target", "?"),
+                          "class": result.get("Class", "?"),
+                      }
+                  )
+
+          def emit(level: str, title: str, message: str) -> None:
+              esc = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              esc = esc.replace(":", "%3A").replace(",", "%2C")
+              print(f"::{level} title={urllib.parse.quote(title)}::{esc}")
+
+          if not findings:
+              emit("notice", "trivy-high", "no HIGH-severity fixable vulnerabilities in nexus-core:ci")
+              raise SystemExit(0)
+
+          emit(
+              "warning",
+              "trivy-high",
+              f"{len(findings)} HIGH findings, all with an available fix (O-011 untriaged)",
+          )
+          for finding in findings[:40]:
+              emit(
+                  "warning",
+                  "trivy-high",
+                  "{id} {pkg} {installed} -> {fixed} [{cls}] in {target}".format(
+                      cls=finding["class"], **finding
+                  ),
+              )
+          if len(findings) > 40:
+              emit("warning", "trivy-high", f"...and {len(findings) - 40} more; see trivy-high.json")
+
+          by_pkg = {}
+          for finding in findings:
+              by_pkg.setdefault(finding["pkg"], []).append(finding["id"])
+          emit(
+              "notice",
+              "trivy-high",
+              "distinct packages: " + ", ".join(f"{k}({len(v)})" for k, v in sorted(by_pkg.items())),
+          )
+          PY
 
   # ---------------------------------------------------------------- compose sanity
   compose:

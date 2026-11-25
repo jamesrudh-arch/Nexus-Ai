@@ -14,8 +14,10 @@ only way to detect that class of failure.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -415,6 +417,146 @@ class TestImageScanHasAnImageToScan:
         ]
         assert any("linux/arm64" in p for p in platforms), f"arm64 is no longer built: {platforms}"
         assert any("linux/amd64" in p for p in platforms), f"amd64 is no longer built: {platforms}"
+
+
+class TestTrivyFindingsAreReadable:
+    """O-011 exists because a gate's output could not be read from every environment.
+
+    The first successful image build failed a combined HIGH,CRITICAL Trivy scan, and the
+    findings were unreachable: GitHub serves job logs from a separate host, so the report could
+    not be opened, triaged, or acted on. Splitting HIGH off made the build green but left the
+    findings just as unreadable — which is not a resolution, only a quieter problem.
+
+    So the HIGH scan now writes JSON and a follow-up step republishes it as check annotations,
+    which the REST API exposes on any host. These tests execute that step rather than merely
+    asserting it exists: a shell heredoc embedded in YAML breaks silently on indentation, and
+    "the step is present" would not notice.
+    """
+
+    def _steps(self) -> list[dict]:
+        return list(_load_workflow()["jobs"]["image"]["steps"])
+
+    def _scan(self) -> dict:
+        return next(s for s in self._steps() if str(s.get("name", "")).startswith("Trivy image scan (HIGH"))
+
+    def _publish(self) -> dict:
+        return next(s for s in self._steps() if "annotations" in str(s.get("name", "")))
+
+    def _script(self) -> str:
+        """The embedded Python, extracted from the shell heredoc exactly as bash would."""
+        run = str(self._publish()["run"])
+        assert "<<'PY'" in run, "expected the report step to embed a quoted heredoc"
+        return run.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+
+    def test_high_scan_writes_a_machine_readable_report(self) -> None:
+        with_ = self._scan()["with"]
+        assert with_.get("format") == "json", "the report must be JSON to be reparsed"
+        assert with_.get("output"), "the scan must write to a file, not only to the log"
+        assert with_.get("exit-code") == "0", (
+            "HIGH is report-only until O-011 is triaged; making it blocking again is the point "
+            "of triaging it, not of this test"
+        )
+
+    def test_the_publish_step_reads_what_the_scan_writes(self) -> None:
+        """Two steps agreeing on a filename is the kind of thing that drifts."""
+        written = str(self._scan()["with"]["output"])
+        assert written in str(self._publish()["run"]), (
+            f"the scan writes {written} but the publish step never mentions it"
+        )
+        assert self._publish().get("if") == "${{ always() }}", (
+            "must run even when the scan step is skipped or failed, or the findings vanish "
+            "exactly when they are most interesting"
+        )
+
+    def test_the_embedded_script_parses(self) -> None:
+        """Heredoc-in-YAML fails on indentation, not on logic. Check both layers."""
+        import subprocess
+
+        script = self._script()
+        compile(script, "embedded-report-step", "exec")  # noqa: S102 - parse check, not eval
+        bash = shutil.which("bash")
+        if bash is not None:
+            result = subprocess.run(  # noqa: S603 - fixed arguments, no shell, no user input
+                [bash, "-n", "-c", str(self._publish()["run"])],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert result.returncode == 0, f"embedded shell does not parse: {result.stderr}"
+
+    def _run_script(self, tmp_path: Path, report: str | None) -> subprocess.CompletedProcess[str]:
+        import subprocess
+
+        if report is not None:
+            (tmp_path / "trivy-high.json").write_text(report)
+        script = tmp_path / "emit.py"
+        script.write_text(self._script())
+        return subprocess.run(  # noqa: S603 - fixed arguments, no shell, no user input
+            [sys.executable, str(script)],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_findings_become_annotations_naming_the_cve_and_the_fix(self, tmp_path: Path) -> None:
+        report = json.dumps(
+            {
+                "Results": [
+                    {
+                        "Target": "nexus-core:ci (debian 12)",
+                        "Class": "os-pkgs",
+                        "Vulnerabilities": [
+                            {
+                                "VulnerabilityID": "CVE-2025-12345",
+                                "PkgName": "libssl3",
+                                "InstalledVersion": "3.0.15",
+                                "FixedVersion": "3.0.16",
+                                "Severity": "HIGH",
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+        result = self._run_script(tmp_path, report)
+        assert result.returncode == 0, result.stderr
+        out = result.stdout
+        assert "::warning" in out, "findings must be warnings, not notices"
+        assert "CVE-2025-12345" in out and "libssl3" in out
+        assert "3.0.15" in out and "3.0.16" in out, "the available fix is the actionable part"
+        assert "1 HIGH findings" in out, "the total must be stated, not implied"
+
+    def test_a_clean_image_says_so_instead_of_staying_silent(self, tmp_path: Path) -> None:
+        result = self._run_script(tmp_path, json.dumps({"Results": []}))
+        assert result.returncode == 0, result.stderr
+        assert "::notice" in result.stdout and "no HIGH-severity" in result.stdout
+
+    def test_a_missing_report_is_reported_not_crashed_on(self, tmp_path: Path) -> None:
+        """The scan step can be skipped; the publish step must not then fail the job."""
+        result = self._run_script(tmp_path, None)
+        assert result.returncode == 0, f"a missing report must not break CI: {result.stderr}"
+        assert "::warning" in result.stdout and "no report produced" in result.stdout
+
+    def test_the_annotation_list_is_capped_and_says_it_was(self, tmp_path: Path) -> None:
+        """A base image can carry hundreds; annotations are a pointer, not the report."""
+        vulns = [
+            {
+                "VulnerabilityID": f"CVE-2025-{i:05d}",
+                "PkgName": f"pkg{i}",
+                "InstalledVersion": "1.0",
+                "FixedVersion": "1.1",
+                "Severity": "HIGH",
+            }
+            for i in range(60)
+        ]
+        result = self._run_script(
+            tmp_path, json.dumps({"Results": [{"Target": "t", "Vulnerabilities": vulns}]})
+        )
+        assert result.returncode == 0, result.stderr
+        emitted = [line for line in result.stdout.splitlines() if "CVE-2025-" in line]
+        assert len(emitted) == 40, f"expected the cap of 40, got {len(emitted)}"
+        assert "and 20 more" in result.stdout, "truncation must be stated, never silent"
 
 
 class TestSecretScanningIsNotWeakened:
