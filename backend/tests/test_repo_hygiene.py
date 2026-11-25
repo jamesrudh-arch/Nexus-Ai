@@ -226,6 +226,34 @@ class TestCiWorkflowIsRunnable:
                 )
             assert not ref.startswith(("main", "master")), f"{name}@{ref} is an unpinned branch"
 
+    def test_trivy_version_is_one_verified_to_resolve(self) -> None:
+        """A tag existing is not sufficient — its *own* references must resolve too.
+
+        `trivy-action@v0.28.0` is a real published tag, and it still failed every job at
+        "Set up job", because its composite action hard-references
+        `aquasecurity/setup-trivy@v0.2.1` — a tag that no longer exists (the oldest published
+        is v0.2.6). No offline check can discover that; it was found by reading the failure.
+        `v0.36.0` pins setup-trivy by commit hash to v0.2.6 and is verified to resolve.
+
+        So this is a deliberate allowlist: bumping trivy must be a reviewed act, with the new
+        version confirmed to run, not a guess at a version number.
+        """
+        import re
+
+        verified = {"v0.36.0"}
+        known_broken = {
+            "0.28.0": "not a published tag (trivy-action tags are v-prefixed)",
+            "v0.28.0": "references aquasecurity/setup-trivy@v0.2.1, which does not exist",
+        }
+        refs = re.findall(r"aquasecurity/trivy-action@([\w.+-]+)", self.WORKFLOW.read_text())
+        assert refs, "trivy is no longer referenced — update this test deliberately"
+        for ref in refs:
+            assert ref not in known_broken, f"trivy-action@{ref} is known broken: {known_broken[ref]}"
+            assert ref in verified, (
+                f"trivy-action@{ref} has not been verified to resolve in CI. Confirm the run is "
+                f"green, then add it to `verified`. Known broken: {known_broken}"
+            )
+
     def test_ci_never_enables_live_trading(self) -> None:
         """The workflow's own environment must fail closed, matching the phase gate."""
         import yaml
