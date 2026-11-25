@@ -1557,3 +1557,155 @@ class TestTheSmokeCheckerIsExecutedNotJustPresent:
             "distinguishing anything"
         )
         assert "is absent from the runtime image" in result.stdout
+
+
+class TestLiveEndpointVerificationIsGatedAndReadable:
+    """O-009 and O-010 need a host with egress, and the development sandbox is not one.
+
+    A test that cannot run must say so loudly rather than look like it passed. The live module
+    skips at module level unless ``NEXUS_LIVE_VERIFY=1``, and the workflow that sets it publishes
+    its measurements as an annotation because job logs are unreachable from here. Two details in
+    that chain are load-bearing and were each found by running it rather than by reading it: pytest
+    writes no captured stdout into its JUnit XML by default, so without ``junit_logging=all`` the
+    report holds statuses and no numbers; and a run where every source was unreachable must fail,
+    because a verification that verified nothing is not a pass.
+    """
+
+    WORKFLOW = REPO_ROOT / ".github" / "workflows" / "venue-verification.yml"
+    MODULE = BACKEND / "tests" / "test_live_endpoints.py"
+
+    def _steps(self) -> list[dict]:
+        workflow = yaml.safe_load(self.WORKFLOW.read_text())
+        return list(workflow["jobs"]["live"]["steps"])
+
+    def _publish_step(self) -> str:
+        for step in self._steps():
+            if str(step.get("name", "")).startswith("Publish"):
+                assert "always()" in str(step.get("if", "")), (
+                    "the report step must run on failure too — that is when it matters most"
+                )
+                return str(step.get("run", ""))
+        raise AssertionError("no step publishes the verification report")
+
+    def test_the_workflow_and_module_exist(self) -> None:
+        assert self.WORKFLOW.is_file()
+        assert self.MODULE.is_file()
+
+    def test_the_live_marker_is_registered(self) -> None:
+        """`--strict-markers` is on, so an unregistered marker fails collection outright."""
+        import tomllib
+
+        config = tomllib.loads((BACKEND / "pyproject.toml").read_text())
+        markers = config["tool"]["pytest"]["ini_options"].get("markers") or []
+        assert any(str(m).startswith("live:") for m in markers), f"markers: {markers}"
+
+    def test_the_module_skips_without_the_flag_and_runs_with_it(self) -> None:
+        """Executed, not asserted from the source: the gate has to hold in both directions.
+
+        Both directions use `--collect-only`, because with the flag set the tests really would
+        contact Bybit, OKX, Binance Vision and Dukascopy — and this hygiene module runs in the
+        ordinary CI job, which must not make market-data requests on every push.
+        """
+        base = [
+            sys.executable,
+            "-m",
+            "pytest",
+            "tests/test_live_endpoints.py",
+            "-p",
+            "no:cacheprovider",
+            "--no-header",
+            "--collect-only",
+        ]
+        gated = subprocess.run(  # noqa: S603 - fixed arguments, no shell, no user input
+            base,
+            cwd=BACKEND,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "NEXUS_LIVE_VERIFY": ""},
+        )
+        assert "no tests collected" in gated.stdout, (
+            f"without the flag the module must collapse to its module-level skip and collect "
+            f"nothing, so the ordinary suite never touches the network. Got rc={gated.returncode}: "
+            f"{gated.stdout[-400:]}"
+        )
+
+        live = subprocess.run(  # noqa: S603 - fixed arguments, no shell, no user input
+            base,
+            cwd=BACKEND,
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**os.environ, "NEXUS_LIVE_VERIFY": "1"},
+        )
+        collected = re.search(r"(\d+) tests? collected", live.stdout)
+        assert live.returncode == 0 and collected is not None, (
+            f"with the flag the module must collect every live check. rc={live.returncode}: "
+            f"{live.stdout[-400:]}"
+        )
+        assert int(collected.group(1)) >= 10, (
+            f"only {collected.group(1)} live checks collected; the module has quietly lost coverage"
+        )
+
+    def test_the_workflow_requests_captured_output_in_the_report(self) -> None:
+        """Without this the JUnit XML holds statuses and none of the measurements."""
+        runs = " ".join(str(step.get("run", "")) for step in self._steps())
+        assert "junit_logging=all" in runs, (
+            "pytest writes no captured stdout into its JUnit XML by default, so the EVIDENCE lines "
+            "the annotation is built from would never reach the report"
+        )
+        assert "NEXUS_LIVE_VERIFY=1" in runs, "the module-level skip is never lifted"
+
+    def test_the_workflow_publishes_the_report_as_an_annotation(self) -> None:
+        body = self._publish_step()
+        assert "::" in body and "live-report.xml" in body
+
+    def test_a_run_that_verified_nothing_is_not_reported_as_a_pass(self) -> None:
+        """Executed against a real report shape: all-skipped must exit non-zero."""
+        script = re.search(r"python3 - <<'PY'\n(.*)\nPY\n", self._publish_step(), re.S)
+        assert script is not None, "could not extract the embedded report script"
+        work = BACKEND.parent / ".pytest-live-control"
+        work.mkdir(exist_ok=True)
+        try:
+            (work / "vv.py").write_text(script.group(1))
+            (work / "live-report.xml").write_text(
+                '<?xml version="1.0" encoding="utf-8"?>\n'
+                '<testsuites><testsuite tests="2" failures="0" errors="0" skipped="2">'
+                '<testcase classname="tests.test_live_endpoints.TestBybitLiveEndpoints" name="test_a">'
+                '<skipped message="bybit did not answer"/></testcase>'
+                '<testcase classname="tests.test_live_endpoints.TestOkxLiveEndpoints" name="test_b">'
+                '<skipped message="okx did not answer"/></testcase>'
+                "</testsuite></testsuites>\n"
+            )
+            result = subprocess.run(  # noqa: S603 - fixed arguments, no shell, no user input
+                [sys.executable, "vv.py"], cwd=work, capture_output=True, text=True, check=False
+            )
+            assert result.returncode != 0, (
+                f"an all-skipped run exited 0, so a verification that reached nothing would look "
+                f"green: {result.stdout[:300]}"
+            )
+            assert "NOTHING WAS VERIFIED" in result.stdout
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+
+    def test_the_live_workflow_needs_no_credential_of_any_kind(self) -> None:
+        """D-026: these are public endpoints. A secret reference here would be a design change."""
+        text = self.WORKFLOW.read_text()
+        assert "secrets." not in text, "the verification workflow reads a secret"
+        # Substrings that would indicate an authenticated call. Deliberately not the bare word
+        # "token": this module rate-limits through `TokenBucket`, and a check that fires on a rate
+        # limiter teaches everyone to ignore it.
+        module = self.MODULE.read_text().lower()
+        for shape in (
+            "authorization",
+            "api_key",
+            "apikey",
+            "api_secret",
+            "apisecret",
+            "passphrase",
+            "ok-access",
+            "private_key",
+            "signin",
+            "nexuS_secret_".lower(),
+        ):
+            assert shape not in module, f"the live verification module mentions {shape!r}"

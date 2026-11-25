@@ -61,6 +61,10 @@ testpaths = ["tests"]
 addopts = "-q --strict-markers"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# --strict-markers is on, so this has to be declared or collection fails outright.
+markers = [
+  "live: contacts real public endpoints (O-009/O-010); skipped at module level unless NEXUS_LIVE_VERIFY=1 on a host with egress, which the venue-verification workflow sets",
+]
 filterwarnings = ["error::DeprecationWarning:nexus.*"]
 
 [tool.ruff]
