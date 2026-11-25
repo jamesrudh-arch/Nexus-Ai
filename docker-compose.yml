@@ -62,7 +62,18 @@ services:
     image: nats:2-alpine                       # NATS + JetStream (Apache-2)
     <<: *restart-policy
     logging: *default-logging
-    command: ["--jetstream", "--store_dir", "/data"]
+    # `-m 8222` is load-bearing, not decoration. Overriding `command:` discards the image's own
+    # default (`nats-server --config /etc/nats/nats-server.conf`), and that config file is what
+    # set `monitor_port: 8222`. Without it the monitoring port is never opened, the healthcheck
+    # below can only ever get a connection refused, the container is permanently unhealthy, and
+    # `core` — which waits on `nats: condition: service_healthy` — never starts at all. The stack
+    # was unstartable until the first real `docker compose up` proved it (defect 36, docs/06 §2).
+    #
+    # Restoring `--config /etc/nats/nats-server.conf` instead would be worse, not simpler: that
+    # file also opens cluster route port 6222 with an upstream hardcoded credential
+    # (ruser/T0pS3cr3t). Enabling only the monitoring port keeps the healthcheck working without
+    # turning on clustering this deployment does not use or authenticate.
+    command: ["--jetstream", "--store_dir", "/data", "-m", "8222"]
     volumes:
       - nats-data:/data
     deploy:

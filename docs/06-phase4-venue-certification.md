@@ -30,9 +30,10 @@ approval (D-012).
 
 ## 2. Pre-flight defects — found before any venue work began
 
-Found while preparing the bring-up, by reading what the deployment actually configures against
-what the code actually honours. None is a venue defect; all would have been discovered *during*
-the bring-up, at the worst possible moment, and one would have destroyed evidence.
+Found while preparing the bring-up — 31 to 35 by reading what the deployment actually configures
+against what the code actually honours, and 36 and 37 by *starting the stack for the first time*.
+None is a venue defect; all would have been discovered during the bring-up at the worst possible
+moment, one would have destroyed evidence, and one made the deployment unstartable.
 
 | # | Defect | Impact if unfixed | Fix |
 |---|--------|-------------------|-----|
@@ -41,12 +42,27 @@ the bring-up, at the worst possible moment, and one would have destroyed evidenc
 | 33 | **`.env.example` never documented `NEXUS_SECRET_OWNER_TOTP_SECRET`** | The step-up factor for `POST /v1/halt/release`. An operator following the documentation would bring up a system whose emergency halt could be **engaged but never released**, and nothing would explain why until the first incident needed it | Documented, with what it gates. Guarded in *both* directions by a new test class: every variable the deployment sets or the docs recommend must be read by something (a `Settings` field, an `os.environ` read, a Caddyfile/compose template, or the secrets naming convention), and every `SecretRef` the code declares must appear in `.env.example` |
 | 34 | **`core` waits for `db` to be healthy but never connects to it** | TimescaleDB costs ~1.5 GB of the 12 GB Always Free budget and adds startup latency for a database nothing reads, on the most memory-constrained host in the plan | Recorded as a KNOWN GAP in the compose header rather than papered over. Wiring `core` to Postgres is Phase 4 work; until then a memory-constrained host should bring up `core` alone. `backend/migrations/0001_core.sql` is complete Postgres DDL, including append-only triggers, and is what that wiring will apply |
 | 35 | **A negative-control loop silently failed to restore the files it mutated** | Six deliberate mutations — including re-introducing defect 31 — were left in the working tree, and the next commit would have shipped every one of them. Two causes: the loop backed up each file *after* mutating it, and `git -C <repo> checkout -- <path>` was given paths relative to a different cwd, so git errored and the fallback restored the mutated copy | Repaired by hand and verified line by line. The lesson is recorded rather than the history rewritten: a control whose restoration is not verified is worse than no control, because it leaves the tree in a state that looks intentional. Restore by absolute path, and diff against HEAD before committing |
+| 36 | **The compose stack was unstartable: the `nats` healthcheck probed a port the service never opened.** `nats:2-alpine` ships `CMD nats-server --config /etc/nats/nats-server.conf`, and that config file is what sets `monitor_port: 8222`. compose overrode `command:` with `--jetstream --store_dir /data`, discarding the `--config` flag, so nothing listened on 8222 | The healthcheck could only ever get a connection refused, so the container was **permanently unhealthy**, and `core` — which waits on `nats: condition: service_healthy` — never started. `docker compose up` of this stack has never worked, in any environment, and nothing in the repository could say so: the config parses, the image builds, and both of those were all CI had ever checked | `command: ["--jetstream", "--store_dir", "/data", "-m", "8222"]`, with the reasoning in a comment. Restoring `--config` instead would be worse: that upstream file also opens cluster route port 6222 with a hardcoded credential (`ruser`/`T0pS3cr3t`), so enabling only the monitoring port is the tighter fix. Now guarded by a generalised test — any service that overrides `command:` and has an HTTP healthcheck must re-declare every port that healthcheck probes |
+| 37 | **`NatsEventBus` called `nats.connect()` synchronously, but it is a coroutine function.** Measured, not inferred: `asyncio.iscoroutinefunction(nats.connect)` is `True`, and calling it returns a `coroutine` object with no `jetstream` attribute | Every first publish raised `EventPublishError`, so **no event could ever have reached NATS**. The class documented itself as fail-closed and was in fact fail-always. It survived because nothing publishes in Phase 3 and both lines carried `# pragma: no cover`, so no test ever executed them — the pragma hid the defect from the only thing that could have found it | The bus now owns a dedicated event loop on a daemon thread and drives `connect`, `publish` and `close` through `run_coroutine_threadsafe`, with a bound on each so a stalled socket produces a refusal rather than a hung audit path. Tested against an injected fake async client, which covers the part that was wrong without needing a NATS server; the coroutine-function assumption itself is pinned against the real library, which is why `nats-py` joined the dev extra. **Reaching a real server is still unverified** — that is B-5 |
 
 Defect 31 is the significant one. It is the same shape as the CI-era defects in `docs/05` §4 — a
 configuration key or code path that is silently inert while looking correct — but the payload is
 worse: those lost a scan result or a build diagnosis, and this one loses the evidence trail that
 every other guarantee depends on. It was found by asking a question nobody had asked: *which of the
 variables this deployment sets does the code actually read?*
+
+Defect 36 is the one that justifies the whole exercise. It was not subtle, it was not in an obscure
+corner, and it was not findable by any check the repository had: `docker compose config` parses the
+file happily, the image builds, the tests pass, and 884 green tests said nothing about it. One
+`docker compose up` found it in about four minutes. That is the concrete cost of limitation 1 below,
+and it is why the smoke test now runs on every push rather than being a script somebody remembers to
+run before a release.
+
+Defect 37 is the same shape one level down, and it is worth naming the mechanism: `# pragma: no
+cover` on the two lines that talked to the network meant the only code path that could have revealed
+the transport was broken was excluded from measurement. A pragma that suppresses coverage does not
+make code correct; here it made a broken transport look deliberately untested rather than untested
+by accident.
 
 ---
 
@@ -145,9 +161,12 @@ endpoints only).
 
 Per Appendix C. These are open, not finished.
 
-1. **No container has ever been started.** Everything in Phase 2 and Phase 3 verified that the
-   image *builds* and that its entrypoint *imports*. B-1 is the first step that changes this, and
-   until it passes, every claim about runtime behaviour is inference.
+1. **`core` has still never run inside a container.** Containers have now been started — the first
+   real `docker compose up` ran in CI on 2026-11-25 — and it got as far as TimescaleDB reporting
+   healthy before NATS was found permanently unhealthy (defect 36), which stopped `core` from ever
+   starting. So the image builds, its entrypoint imports, and one dependency has been observed
+   running; every claim about the *application* serving a request from inside the runtime image is
+   still inference, and limitation 2 stands with it. This narrows again on the next CI run.
 2. **The pip removal from the runtime image is reasoned, not observed.** It was verified safe by
    grepping every installed distribution's metadata in the **dev venv**, whose package set differs
    from the image's — the same mistake as `docs/05` defect 30, which cost a red build. Nothing in
@@ -172,13 +191,25 @@ Per Appendix C. These are open, not finished.
 
 | Check | Result | Date | Environment |
 |-------|--------|------|-------------|
-| Full suite | **884 tests, 0 failures, 0 errors, 1 skipped** (59 hygiene, 66 API) | 2026-11-25 | sandbox, local venv, Python 3.11.2 |
+| Full suite | **902 tests, 0 failures, 0 errors, 1 skipped** (71 hygiene, 66 API, 88 core guarantees) | 2026-11-25 | sandbox, local venv, Python 3.11 |
 | Lint / format | `ruff check` clean, `ruff format --check` clean (69 files) | 2026-11-25 | same |
 | Types | `mypy` strict — no issues in 49 source files | 2026-11-25 | same |
 | Negative controls | **6 of 6 fired**: re-advertising the Postgres URL, un-documenting the TOTP secret, adding a variable nothing reads, changing the compose default to a refused scheme, reverting the refusal to a silent in-memory fallback, and making the cwd fixture non-autouse | 2026-11-25 | same |
 | Control restoration | Failed silently on the first attempt (defect 35); repaired and verified line by line against HEAD before committing | 2026-11-25 | same |
 | Repository state | No `backend/data`, no artifact, no credential-shaped file, no scan-suppression file | 2026-11-25 | same |
 | CI on GitHub | **Green on both events** at `9522856`: `push` run `45709533997`, `pull_request` run `45709545037` — Backend ✓ · Compose ✓ · Secret scanning ✓ · Container image ✓ | 2026-11-25 | GitHub-hosted `ubuntu-latest`, x86-64 |
+| First container start | **`docker compose up` ran for the first time** and found defect 36: TimescaleDB reached healthy, NATS never did (`dependency failed to start: container nexus-smoke-nats-1 is unhealthy`), `core` never started | 2026-11-25 | CI run `45716117878`, job `139562484012`, x86-64 |
+| Failure was readable without log access | The smoke job republished its report as a check annotation, and the diagnosis above came entirely from that annotation — job logs remain unreachable from this environment, which is the O-011 constraint | 2026-11-25 | same |
+| Checker against a real process | **34/34 checks passed** against the application served by uvicorn on a real socket (posture, phase gate, DENIED authority with reasons, no order route, halt-only mutations, master refuses POST with 405, hash chain intact) | 2026-11-25 | sandbox, no docker |
+| Negative controls | **10 of 10 fired**: 6 over the smoke wiring (image not loaded, job gated behind lint, annotation step disabled, wrong expected phase, checker path renamed, unreachable-process handler removed), 1 reverting the NATS port fix, 3 over the async bridge (synchronous connect, no loop cleanup on failed connect, no loop cleanup on close) | 2026-11-25 | same |
+| Control restoration | Every mutated file verified restored individually against its pre-mutation content, and `git diff --numstat` reviewed before committing — the defect 35 discipline, applied rather than merely recorded | 2026-11-25 | same |
+| Defect 37 measurement | `asyncio.iscoroutinefunction(nats.connect)` → `True`; calling it synchronously returns a `coroutine` with no `jetstream` attribute. Measured against the installed library, not inferred from documentation | 2026-11-25 | sandbox, nats-py installed |
 
 The 1 skip is a pre-existing `pytest.skip` for an interval outside the modelled set, not a disabled
-test. Test counts rise from Phase 3's 868 because defects 31–33 each added tests.
+test. The count rises 868 → 884 → 902 as defects 31–33, the smoke wiring, and defects 36–37 each
+added tests.
+
+The failed smoke run above is recorded as evidence rather than hidden: it is the first time this
+project has observed a container start, and what it observed was that the stack could not. The
+fixes are in; whether they are sufficient is the next CI run's answer, and B-1 stays open until a
+run reports `core` healthy and serving.

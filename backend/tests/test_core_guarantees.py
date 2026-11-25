@@ -10,6 +10,12 @@ These tests pin the properties the specification calls non-negotiable:
 
 from __future__ import annotations
 
+import asyncio
+import json
+import sys
+import threading
+import time
+import types
 from decimal import Decimal
 
 import pytest
@@ -28,6 +34,7 @@ from nexus.core.ids import new_id, new_idempotency_key
 from nexus.core.time import age_seconds, iso_utc, parse_iso, utc_now
 from nexus.domain.decision import DecisionRecord, DecisionState, DecisionVerb
 from nexus.domain.instrument import AssetClass, CanonicalInstrument, Venue, VenueMapping, VenueStatus
+from nexus.events import bus as event_bus
 from nexus.events.bus import EventEnvelope, EventPublishError, InMemoryEventBus, NatsEventBus
 
 
@@ -263,10 +270,153 @@ class TestEventBus:
         assert payload["version"] == 1
         assert payload["event_id"].startswith("EVT-")
 
-    def test_nats_without_library_fails_closed(self) -> None:
+    def test_nats_without_library_fails_closed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Holds the fail-closed rule independent of what happens to be installed.
+
+        This used to rely on nats-py being absent from the interpreter, so it silently changed
+        meaning the moment the library was installed -- and it then passed for a different reason
+        in CI than locally. `None` in sys.modules makes `import nats` raise ImportError wherever
+        this runs.
+        """
+        monkeypatch.setitem(sys.modules, "nats", None)
         bus = NatsEventBus("nats://localhost:4222")
-        with pytest.raises(EventPublishError):
+        with pytest.raises(EventPublishError, match="not installed"):
             bus.publish(EventEnvelope(topic="t", payload={}))
+        bus.close()
+
+
+def _nats_loop_threads() -> list[threading.Thread]:
+    """Live threads owned by a NatsEventBus bridge. Named, so a leak is attributable."""
+    return [t for t in threading.enumerate() if t.name == "nexus-nats" and t.is_alive()]
+
+
+class _FakeJetStream:
+    """Stands in for nats-py's JetStream context. `publish` is a coroutine function, as in the real one."""
+
+    def __init__(self) -> None:
+        self.published: list[tuple[str, bytes]] = []
+
+    async def publish(self, topic: str, payload: bytes) -> None:
+        self.published.append((topic, payload))
+
+
+class _FakeClient:
+    def __init__(self) -> None:
+        self.js = _FakeJetStream()
+        self.closed = False
+
+    def jetstream(self) -> _FakeJetStream:  # synchronous in nats-py as well
+        return self.js
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+def _install_fake_nats(monkeypatch: pytest.MonkeyPatch, connect=None):  # type: ignore[no-untyped-def]
+    """Put a fake `nats` module where the lazy import inside `_ensure_client` will find it."""
+    client = _FakeClient()
+    urls: list[str] = []
+
+    async def default_connect(url, **options):  # type: ignore[no-untyped-def]
+        urls.append(url)
+        return client
+
+    module = types.ModuleType("nats")
+    module.connect = connect if connect is not None else default_connect  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "nats", module)
+    return client, urls
+
+
+class TestNatsEventBusBridgesTheAsyncTransport:
+    """Defect 37: `nats.connect` is a coroutine function, and it was called synchronously.
+
+    Calling it without awaiting returns a coroutine object, which has no `jetstream` attribute, so
+    the very first publish raised `EventPublishError` and no event could ever have reached NATS. It
+    survived because nothing publishes in Phase 3 and both lines carried `pragma: no cover`, so no
+    test executed them: the transport was declared fail-closed and was in fact fail-always.
+
+    These tests drive the bridge with an injected async client rather than a server. That covers
+    the part that was wrong -- owning an event loop and awaiting coroutines across a thread
+    boundary -- without needing a NATS process, which no test environment here has. Reaching a real
+    server stays a VM bring-up item.
+    """
+
+    def test_publish_reaches_the_jetstream_context(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The regression test for defect 37: a synchronous call would fail right here."""
+        client, urls = _install_fake_nats(monkeypatch)
+        bus = NatsEventBus("nats://nats:4222")
+        try:
+            bus.publish(EventEnvelope(topic="nexus.test", payload={"a": 1}))
+
+            assert urls == ["nats://nats:4222"], "the URL never reached the async connect"
+            assert len(client.js.published) == 1, "the event never reached JetStream"
+            topic, raw = client.js.published[0]
+            assert topic == "nexus.test"
+            envelope = json.loads(raw)
+            assert envelope["payload"] == {"a": 1}
+            assert envelope["event_id"].startswith("EVT-")
+        finally:
+            bus.close()
+
+    def test_local_subscribers_still_see_the_event(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Bridging to NATS must not cost the in-process subscribers their copy."""
+        client, _ = _install_fake_nats(monkeypatch)
+        seen: list[EventEnvelope] = []
+        bus = NatsEventBus("nats://nats:4222")
+        try:
+            bus.subscribe("nexus.test", seen.append)
+            bus.publish(EventEnvelope(topic="nexus.test", payload={}))
+            assert len(seen) == 1
+            assert len(client.js.published) == 1
+        finally:
+            bus.close()
+
+    def test_a_failed_connect_leaks_no_thread(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        async def refusing(url, **options):  # type: ignore[no-untyped-def]
+            raise OSError("connection refused")
+
+        _install_fake_nats(monkeypatch, connect=refusing)
+        bus = NatsEventBus("nats://nats:4222")
+        with pytest.raises(EventPublishError, match="cannot connect to NATS"):
+            bus.publish(EventEnvelope(topic="t", payload={}))
+        bus.close()
+        assert _nats_loop_threads() == [], "a failed connect leaked its event loop thread"
+
+    def test_a_stalled_transport_times_out_rather_than_hanging(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The bound is the point: the callers are the audit and alert paths."""
+
+        async def stalling(url, **options):  # type: ignore[no-untyped-def]
+            await asyncio.sleep(60)
+
+        _install_fake_nats(monkeypatch, connect=stalling)
+        monkeypatch.setattr(event_bus, "_CONNECT_TIMEOUT_SECONDS", 0.2)
+        bus = NatsEventBus("nats://nats:4222")
+        started = time.monotonic()
+        try:
+            with pytest.raises(EventPublishError):
+                bus.publish(EventEnvelope(topic="t", payload={}))
+            elapsed = time.monotonic() - started
+            assert elapsed < 15, f"the connect was not bounded; it blocked for {elapsed:.1f}s"
+        finally:
+            bus.close()
+
+    def test_close_stops_the_loop_and_closes_the_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client, _ = _install_fake_nats(monkeypatch)
+        bus = NatsEventBus("nats://nats:4222")
+        bus.publish(EventEnvelope(topic="t", payload={}))
+        assert _nats_loop_threads(), "a connected bus should own a running loop thread"
+
+        bus.close()
+        assert client.closed is True
+        assert _nats_loop_threads() == [], "close left the event loop thread running"
+
+    def test_the_real_connect_is_a_coroutine_function(self) -> None:
+        """Pin the measurement the whole bridge rests on, against the real library."""
+        nats = pytest.importorskip("nats", reason="nats-py is an optional extra")
+        assert asyncio.iscoroutinefunction(nats.connect), (
+            "nats.connect is no longer a coroutine function. The bridge in NatsEventBus exists "
+            "only because it is one, so that class should be re-examined before trusting it."
+        )
 
 
 class TestInstrumentIdentity:

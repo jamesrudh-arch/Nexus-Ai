@@ -383,6 +383,41 @@ class TestCiWorkflowIsRunnable:
         # excluded by a targeted selection that skips it.
         assert "--ignore" not in text, "CI excludes part of the suite"
 
+    def test_a_healthcheck_only_probes_a_port_the_service_actually_opens(self) -> None:
+        """Overriding `command:` discards the image's defaults, including the ports it opened.
+
+        `nats:2-alpine` ships `CMD nats-server --config /etc/nats/nats-server.conf`, and that
+        config file is what set `monitor_port: 8222`. compose replaced the command with
+        `--jetstream --store_dir /data`, so nothing ever listened on 8222, the healthcheck could
+        only ever get a connection refused, the container was permanently unhealthy, and `core` —
+        which waits on `nats: condition: service_healthy` — never started. The whole stack was
+        unstartable and nothing in the repository could say so, because a config parse succeeds and
+        an image builds regardless. Only starting it found this (defect 36).
+
+        The rule generalises: if a service both overrides its command and has an HTTP healthcheck,
+        every port that healthcheck probes must be re-declared in the command.
+        """
+        compose = yaml.safe_load(self.COMPOSE.read_text())
+        checked: list[str] = []
+        for name, service in compose["services"].items():
+            healthcheck = service.get("healthcheck") or {}
+            command = service.get("command")
+            if not healthcheck or command is None:
+                continue
+            probe = " ".join(str(part) for part in healthcheck.get("test") or [])
+            args = " ".join(str(part) for part in command) if isinstance(command, list) else str(command)
+            for port in sorted(set(re.findall(r"(?:127\.0\.0\.1|localhost):(\d+)", probe))):
+                checked.append(f"{name}:{port}")
+                assert port in args, (
+                    f"service `{name}` healthcheck probes port {port} but its command does not "
+                    f"enable it ({args!r}); the container will never become healthy and anything "
+                    f"waiting on it will never start"
+                )
+        assert checked, (
+            "no service both overrides its command and probes a local HTTP port, so this test has "
+            "gone vacuous rather than passing"
+        )
+
 
 def _load_workflow() -> dict:
     import yaml

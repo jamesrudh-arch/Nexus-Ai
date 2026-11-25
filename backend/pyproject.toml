@@ -42,6 +42,11 @@ dev = [
   "pyarrow>=16.0",
   "duckdb>=1.0",
   "websockets>=12.0",
+  # NatsEventBus bridges a synchronous call site into nats-py's asyncio client. The bridge is
+  # tested against an injected fake, but the assumption it rests on -- that `nats.connect` is a
+  # coroutine function -- can only be pinned against the real library. Without it here the test
+  # that guards defect 37 would skip in CI, and a skipped guard is not a guard.
+  "nats-py>=2.7",
   # Declared explicitly even though uvicorn[standard] already pulls it in: the repository
   # hygiene tests parse ci.yml and docker-compose.yml, so a transitive dependency is not a
   # safe thing to rely on for a test that guards the build itself.
