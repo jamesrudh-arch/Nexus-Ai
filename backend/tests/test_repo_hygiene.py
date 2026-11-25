@@ -630,25 +630,53 @@ class TestTrivyFindingsAreReadable:
         assert result.returncode == 0, f"a missing report must not break CI: {result.stderr}"
         assert "::warning" in result.stdout and "no report produced" in result.stdout
 
-    def test_the_annotation_list_is_capped_and_says_it_was(self, tmp_path: Path) -> None:
-        """A base image can carry hundreds; annotations are a pointer, not the report."""
-        vulns = [
-            {
-                "VulnerabilityID": f"CVE-2025-{i:05d}",
-                "PkgName": f"pkg{i}",
-                "InstalledVersion": "1.0",
-                "FixedVersion": "1.1",
-                "Severity": "HIGH",
-            }
-            for i in range(60)
-        ]
-        result = self._run_script(
-            tmp_path, json.dumps({"Results": [{"Target": "t", "Vulnerabilities": vulns}]})
-        )
+    def test_the_finding_list_is_capped_and_says_it_was(self, tmp_path: Path) -> None:
+        """A base image can carry hundreds; the annotation is a pointer, not the report."""
+        result = self._run_script(tmp_path, self._report_with(80))
         assert result.returncode == 0, result.stderr
-        emitted = [line for line in result.stdout.splitlines() if "CVE-2025-" in line]
-        assert len(emitted) == 40, f"expected the cap of 40, got {len(emitted)}"
+        assert result.stdout.count("CVE-2025-") == 60, "expected the cap of 60 findings"
         assert "and 20 more" in result.stdout, "truncation must be stated, never silent"
+
+    def test_findings_are_packed_into_one_annotation(self, tmp_path: Path) -> None:
+        """GitHub Actions allows 10 annotations per level per step. Then it stops listening.
+
+        This is not a hypothetical: the first diagnostic written for defect 23 emitted one
+        annotation per line, and docker's image-pull progress consumed the entire budget, so the
+        answer it was built to fetch never arrived. A report that emits one annotation per
+        finding would lose everything past the tenth and the cap would look like the result.
+        """
+        result = self._run_script(tmp_path, self._report_with(80))
+        assert result.returncode == 0, result.stderr
+        warnings = [line for line in result.stdout.splitlines() if line.startswith("::")]
+        assert len(warnings) <= 2, (
+            f"{len(warnings)} annotations emitted; the per-step limit is 10 per level and the "
+            "findings must be packed into one"
+        )
+        # Packing must not lose the findings: they survive as encoded newlines inside it.
+        assert result.stdout.count("%0A") >= 60, "the packed annotation dropped finding lines"
+
+    @staticmethod
+    def _report_with(count: int) -> str:
+        return json.dumps(
+            {
+                "Results": [
+                    {
+                        "Target": "t",
+                        "Class": "os-pkgs",
+                        "Vulnerabilities": [
+                            {
+                                "VulnerabilityID": f"CVE-2025-{i:05d}",
+                                "PkgName": f"pkg{i}",
+                                "InstalledVersion": "1.0",
+                                "FixedVersion": "1.1",
+                                "Severity": "HIGH",
+                            }
+                            for i in range(count)
+                        ],
+                    }
+                ]
+            }
+        )
 
 
 class TestSecretScanningIsNotWeakened:

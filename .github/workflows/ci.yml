@@ -185,58 +185,55 @@ jobs:
       # It runs before the builds and probes two images that do not depend on the failing step:
       # the base image, and the builder stage (`--target builder`, which stops before the runtime
       # stage). Between them they show every setuptools copy the final image could contain.
+      #
+      # Everything is packed into ONE annotation on purpose. GitHub Actions allows at most 10
+      # annotations per level per step, and the first version of this probe spent all ten on
+      # docker's image-pull progress, so the actual answer never arrived.
       - name: Probe where setuptools lives (diagnostic, defect 23)
         run: |
           python3 - <<'PY'
           import subprocess
 
-          def emit(message):
-              esc = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-              esc = esc.replace(":", "%3A").replace(",", "%2C")
-              print(f"::notice title=setuptools-probe::{esc}")
-
-          def probe(image, entrypoint, args):
-              result = subprocess.run(
-                  ["docker", "run", "--rm", "--entrypoint", entrypoint, image, *args],
-                  capture_output=True,
-                  text=True,
-              )
-              out = (result.stdout + result.stderr).strip().splitlines()
-              return out or [f"(no output, rc={result.returncode})"]
+          def sh(*cmd):
+              result = subprocess.run(list(cmd), capture_output=True, text=True)
+              return result.returncode, (result.stdout + result.stderr).strip()
 
           PROBE = [
-              ("system python", "/usr/local/bin/python",
+              ("system-python", "/usr/local/bin/python",
                ["-c", "import setuptools; print(setuptools.__version__, setuptools.__file__)"]),
-              ("venv python", "/opt/venv/bin/python",
+              ("venv-python", "/opt/venv/bin/python",
                ["-c", "import setuptools; print(setuptools.__version__, setuptools.__file__)"]),
               ("locations", "find",
                ["/", "-xdev", "(", "-name", "setuptools*", "-o", "-name", "pkg_resources*",
                 ")", "-not", "-path", "/proc/*"]),
-              ("venv sys.path", "/opt/venv/bin/python",
-               ["-c", "import sys; print(' | '.join(sys.path))"]),
+              ("venv-sys.path", "/opt/venv/bin/python",
+               ["-c", "import sys; print(' | '.join(p for p in sys.path if p))"]),
               ("pyvenv.cfg", "cat", ["/opt/venv/pyvenv.cfg"]),
           ]
 
+          lines = []
           base = "python:3.12-slim-bookworm"
-          emit(f"=== base image {base} ===")
-          for label, entry, args in PROBE:
-              for line in probe(base, entry, args)[:20]:
-                  emit(f"[base/{label}] {line}")
+          rc, out = sh("docker", "pull", "-q", base)
+          lines.append(f"pull {base}: rc={rc}")
 
-          emit("=== builder stage of backend/Dockerfile ===")
-          build = subprocess.run(
-              ["docker", "build", "--target", "builder", "-t", "nexus-probe:builder", "./backend"],
-              capture_output=True,
-              text=True,
-          )
-          emit(f"[builder] docker build --target builder rc={build.returncode}")
-          if build.returncode != 0:
-              for line in build.stderr.strip().splitlines()[-5:]:
-                  emit(f"[builder/error] {line}")
-          else:
+          rc, out = sh("docker", "build", "--progress=plain", "--target", "builder",
+                       "-t", "nexus-probe:builder", "./backend")
+          lines.append(f"build --target builder: rc={rc}")
+          if rc != 0:
+              lines.extend("  " + l for l in out.splitlines()[-6:])
+
+          for image, tag in ((base, "base"), ("nexus-probe:builder", "builder")):
+              lines.append(f"--- {tag} ---")
               for label, entry, args in PROBE:
-                  for line in probe("nexus-probe:builder", entry, args)[:20]:
-                      emit(f"[builder/{label}] {line}")
+                  rc, out = sh("docker", "run", "--rm", "--entrypoint", entry, image, *args)
+                  body = out.splitlines() or ["(empty)"]
+                  lines.append(f"[{tag}/{label}] rc={rc}")
+                  lines.extend("    " + l for l in body[:22])
+
+          text = "\n".join(lines[:150])
+          esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          esc = esc.replace(":", "%3A").replace(",", "%2C")
+          print(f"::notice title=setuptools-probe::{esc}")
           PY
 
       # Two builds, because one cannot do both jobs. A multi-platform image cannot be
@@ -296,14 +293,26 @@ jobs:
         run: |
           # Turns the JSON report into annotations so the findings can be read without log
           # access, including on the runs where the scan above failed the job — which is exactly
-          # when they matter. Capped, because a base image can carry hundreds of findings and
-          # annotations are a pointer to the report, not the report; truncation is stated.
+          # when they matter.
+          #
+          # Everything is packed into ONE warning annotation. GitHub Actions allows at most 10
+          # annotations per level per step, so a report that emitted one annotation per finding
+          # would silently lose everything past the tenth — the cap would look like the answer.
+          # The finding list inside the annotation is capped at 60 with truncation stated.
           python3 - <<'PY'
-          import json, pathlib, urllib.parse
+          import json, pathlib
+
+          CAP = 60
+
+          def annotation(level, title, lines):
+              text = "\n".join(lines[:CAP + 2])
+              esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              esc = esc.replace(":", "%3A").replace(",", "%2C")
+              print(f"::{level} title={title}::{esc}")
 
           path = pathlib.Path("trivy-findings.json")
           if not path.is_file():
-              print("::warning title=trivy-image::no report produced - the scan step did not run")
+              annotation("warning", "trivy-image", ["no report produced - the scan step did not run"])
               raise SystemExit(0)
 
           report = json.loads(path.read_text() or "{}")
@@ -318,45 +327,34 @@ jobs:
                           "id": vuln.get("VulnerabilityID", "?"),
                           "severity": vuln.get("Severity", "?"),
                           "target": result.get("Target", "?"),
-                          "class": result.get("Class", "?"),
+                          "cls": result.get("Class", "?"),
                       }
                   )
 
-          def emit(level: str, title: str, message: str) -> None:
-              esc = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-              esc = esc.replace(":", "%3A").replace(",", "%2C")
-              print(f"::{level} title={urllib.parse.quote(title)}::{esc}")
-
           if not findings:
-              emit("notice", "trivy-image", "no HIGH or CRITICAL fixable vulnerabilities in nexus-core:ci")
+              annotation(
+                  "notice",
+                  "trivy-image",
+                  ["no HIGH or CRITICAL fixable vulnerabilities in nexus-core:ci"],
+              )
               raise SystemExit(0)
 
           critical = sum(1 for f in findings if f["severity"] == "CRITICAL")
-          emit(
-              "warning",
-              "trivy-image",
-              f"{len(findings)} findings ({critical} CRITICAL) with an available fix - the scan "
-              "above fails the build until each is fixed or explicitly justified",
-          )
-          for finding in findings[:40]:
-              emit(
-                  "warning",
-                  "trivy-image",
-                  "{severity} {id} {pkg} {installed} -> {fixed} [{cls}] in {target}".format(
-                      cls=finding["class"], **finding
-                  ),
-              )
-          if len(findings) > 40:
-              emit("warning", "trivy-image", f"...and {len(findings) - 40} more; see trivy-findings.json")
-
+          body = [
+              f"{len(findings)} findings ({critical} CRITICAL), each with an available fix. "
+              "The scan fails the build until every one is fixed or explicitly justified."
+          ]
+          body += [
+              "{severity} {id} {pkg} {installed} -> {fixed} [{cls}] in {target}".format(**f)
+              for f in findings[:CAP]
+          ]
+          if len(findings) > CAP:
+              body.append(f"...and {len(findings) - CAP} more; see trivy-findings.json")
           by_pkg = {}
-          for finding in findings:
-              by_pkg.setdefault(finding["pkg"], []).append(finding["id"])
-          emit(
-              "notice",
-              "trivy-image",
-              "distinct packages: " + ", ".join(f"{k}({len(v)})" for k, v in sorted(by_pkg.items())),
-          )
+          for f in findings:
+              by_pkg.setdefault(f["pkg"], []).append(f["id"])
+          body.append("packages: " + ", ".join(f"{k}({len(v)})" for k, v in sorted(by_pkg.items())))
+          annotation("warning", "trivy-image", body)
           PY
 
   # ---------------------------------------------------------------- compose sanity
