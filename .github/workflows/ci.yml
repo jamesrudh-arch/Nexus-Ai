@@ -17,6 +17,11 @@ on:
 
 permissions:
   contents: read
+  # gitleaks-action posts its findings as a PR comment. Without this the scan still runs but
+  # the report is unreadable ("Resource not accessible by integration"), which is how a real
+  # finding could go unnoticed. Scoped to pull-requests only: no write access to code, issues
+  # or releases, and nothing here can push a commit.
+  pull-requests: write
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -42,6 +47,11 @@ jobs:
 
       - name: gitleaks (full history)
         uses: gitleaks/gitleaks-action@v2
+        with:
+          # Explicit rather than relying on discovery: the config carries a narrow allowlist for
+          # two fabricated redaction-test fixtures (see .gitleaks.toml). If this path ever stops
+          # resolving, the scan would fall back to the default ruleset and fail on fixtures.
+          config-path: .gitleaks.toml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -1,0 +1,42 @@
+# Gitleaks configuration — extends the default ruleset and allowlists exactly two things.
+#
+# Why this file exists
+# --------------------
+# `backend/tests/test_secrets_and_redaction.py` proves that the redactor catches secret-shaped
+# values before they can reach a log, an audit record or an API response. To prove that, the
+# test has to contain values that *look* like secrets. They are fabricated fixtures, not
+# credentials: the JWT has a hardcoded signature of `abcdefghijklmnopqrstuv`, and the PEM body
+# is the four characters `MIIE`. Neither unlocks anything.
+#
+# Gitleaks flags both, correctly — it cannot know a fixture is a fixture.
+#
+# Scope discipline
+# ----------------
+# This allowlist is deliberately as narrow as it can be:
+#   * it extends the default ruleset rather than replacing or disabling it;
+#   * it is bound to ONE file path, so a real secret committed anywhere else still fails the
+#     build, and a real secret committed anywhere else *in the repo* still fails the build;
+#   * it names no `ruleIDs`, so no rule is switched off globally;
+#   * there is no top-level `[allowlist]`, which would suppress findings repo-wide.
+#
+# `backend/tests/test_repo_hygiene.py::TestSecretScanningIsNotWeakened` asserts all four of
+# those properties, so widening this file breaks the build rather than quietly reducing
+# coverage.
+#
+# Residual risk, stated plainly: a genuine credential pasted into that one test file would be
+# missed by gitleaks. That file is reviewed on every change precisely because of this.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = """
+Redaction test fixtures in backend/tests/test_secrets_and_redaction.py: a fabricated JWT and a
+truncated PEM block, both used to prove nexus.secrets.redaction masks secret-shaped values.
+Not credentials; they unlock nothing.
+"""
+paths = ['''backend/tests/test_secrets_and_redaction\.py''']
+regexes = [
+  '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkwIn0\.abcdefghijklmnopqrstuv''',
+  '''-----BEGIN PRIVATE KEY-----\\nMIIE\\n-----END PRIVATE KEY-----''',
+]

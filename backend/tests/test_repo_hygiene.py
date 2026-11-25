@@ -353,3 +353,128 @@ class TestImageScanHasAnImageToScan:
         ]
         assert any("linux/arm64" in p for p in platforms), f"arm64 is no longer built: {platforms}"
         assert any("linux/amd64" in p for p in platforms), f"amd64 is no longer built: {platforms}"
+
+
+class TestSecretScanningIsNotWeakened:
+    """`.gitleaks.toml` allowlists two fabricated fixtures. This keeps that scope honest.
+
+    An allowlist is how a security gate gets quietly turned off: one broad path, or a `ruleIDs`
+    list, or a top-level `[allowlist]`, and the scanner still reports "passed" while finding
+    nothing. These tests assert the config stays as narrow as it claims to be, so widening it
+    breaks the build instead of silently reducing coverage.
+    """
+
+    CONFIG = REPO_ROOT / ".gitleaks.toml"
+
+    def _parsed(self) -> dict:
+        import tomllib
+
+        with self.CONFIG.open("rb") as handle:
+            return tomllib.load(handle)
+
+    def test_the_config_exists_and_extends_the_default_ruleset(self) -> None:
+        assert self.CONFIG.is_file(), ".gitleaks.toml is missing — gitleaks would use defaults"
+        config = self._parsed()
+        assert config.get("extend", {}).get("useDefault") is True, (
+            "the config must extend the default ruleset; replacing it would drop every built-in "
+            "rule and let real credentials through"
+        )
+
+    def test_no_rule_is_disabled_globally(self) -> None:
+        config = self._parsed()
+        for entry in config.get("allowlists", []):
+            assert not entry.get("ruleIDs"), (
+                f"allowlist {entry.get('description', '')[:40]!r} disables rules globally: "
+                f"{entry['ruleIDs']}. Scope it to a path instead."
+            )
+
+    def test_there_is_no_repo_wide_allowlist(self) -> None:
+        """A top-level `[allowlist]` suppresses findings everywhere. That is a disabled gate."""
+        config = self._parsed()
+        assert "allowlist" not in config, "top-level [allowlist] found — this suppresses repo-wide"
+
+    def test_every_allowlist_is_bound_to_a_narrow_path(self) -> None:
+        config = self._parsed()
+        allowlists = config.get("allowlists", [])
+        assert allowlists, "expected exactly the fixture allowlist"
+        for entry in allowlists:
+            paths = entry.get("paths") or []
+            assert paths, "an allowlist with no path scope applies everywhere"
+            assert len(paths) == 1, f"allowlist spans {len(paths)} paths; keep it to one file"
+            assert paths[0].startswith("backend/tests/test_secrets_and_redaction"), (
+                f"allowlist is scoped to {paths[0]!r}, which is not the redaction fixture file"
+            )
+
+    def test_only_the_redaction_fixture_file_is_allowlisted(self) -> None:
+        """Source, docs, config and every other test remain fully scanned."""
+        config = self._parsed()
+        scoped = {p for e in config.get("allowlists", []) for p in (e.get("paths") or [])}
+        assert scoped == {r"backend/tests/test_secrets_and_redaction\.py"}
+
+    def test_ci_points_gitleaks_at_the_config(self) -> None:
+        """If the path stops resolving, the scan silently falls back to default rules."""
+        import yaml
+
+        workflow = yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text())
+        steps = workflow["jobs"]["secrets"]["steps"]
+        gitleaks = next(s for s in steps if "gitleaks" in str(s.get("uses", "")))
+        assert (gitleaks.get("with") or {}).get("config-path") == ".gitleaks.toml"
+
+    def test_ci_permissions_are_still_least_privilege(self) -> None:
+        """pull-requests: write is needed to post findings; contents: write would not be."""
+        import yaml
+
+        workflow = yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text())
+        perms = workflow.get("permissions", {})
+        assert perms.get("contents") == "read", f"contents permission widened: {perms.get('contents')}"
+        assert perms.get("pull-requests") == "write"
+        for scope in ("issues", "deployments", "packages", "actions", "checks", "statuses"):
+            assert scope not in perms, f"unexpected permission grant: {scope}"
+
+    def test_the_allowlisted_fixtures_are_still_fake(self) -> None:
+        """The allowlist is justified only while those literals unlock nothing."""
+        text = (BACKEND / "tests" / "test_secrets_and_redaction.py").read_text()
+        # The fabricated JWT signature and the four-character PEM body are the whole point:
+        # if either is ever replaced with something real, this test fails before gitleaks does.
+        assert "abcdefghijklmnopqrstuv" in text, "the JWT fixture signature changed"
+        assert r"-----BEGIN PRIVATE KEY-----\nMIIE\n-----END PRIVATE KEY-----" in text, (
+            "the PEM fixture changed — re-verify it is still fabricated, then update the allowlist"
+        )
+
+    def test_no_real_credential_shaped_literal_exists_anywhere(self) -> None:
+        """A coarse sweep, independent of gitleaks, over every tracked text file."""
+        import re
+
+        patterns = {
+            "aws_access_key": re.compile(r"AKIA[0-9A-Z]{16}"),
+            "slack_token": re.compile(r"xox[baprs]-[0-9A-Za-z-]{10,}"),
+            "github_pat": re.compile(r"gh[pousr]_[0-9A-Za-z]{20,}"),
+            "openai_style_key": re.compile(r"sk-[0-9A-Za-z]{20,}"),
+            "pem_body": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----\s*\n[MII]{4,}[0-9A-Za-z+/]{40,}"),
+        }
+        # The redaction fixtures and the detection regexes are allowed to mention these shapes;
+        # nothing else may.
+        permitted = {
+            "backend/tests/test_secrets_and_redaction.py",
+            "backend/src/nexus/secrets/redaction.py",
+            "backend/src/nexus/audit/log.py",
+            ".gitleaks.toml",
+            "backend/tests/test_repo_hygiene.py",
+        }
+        offenders: list[str] = []
+        for path in _tracked_files():
+            if path in permitted or not path.endswith(
+                (".py", ".md", ".yml", ".yaml", ".toml", ".sql", ".env")
+            ):
+                continue
+            full = REPO_ROOT / path
+            if not full.is_file():
+                continue
+            try:
+                content = full.read_text()
+            except (UnicodeDecodeError, OSError):
+                continue
+            for name, pattern in patterns.items():
+                if pattern.search(content):
+                    offenders.append(f"{path}: {name}")
+        assert not offenders, f"credential-shaped literals outside the permitted fixtures: {offenders}"
