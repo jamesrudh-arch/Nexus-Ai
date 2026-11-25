@@ -254,7 +254,6 @@ class TestCiWorkflowIsRunnable:
 
     def test_every_required_compose_variable_is_supplied_by_ci(self) -> None:
         """A `${VAR:?...}` in compose aborts the parse unless CI exports it."""
-        import re
 
         required = set(re.findall(r"\$\{([A-Z_][A-Z0-9_]*):\?", self.COMPOSE.read_text()))
         assert required, "expected compose to declare required variables"
@@ -278,7 +277,6 @@ class TestCiWorkflowIsRunnable:
 
     def test_pinned_actions_use_tags_that_exist(self) -> None:
         """trivy-action publishes `v0.28.0`, not `0.28.0`; an unresolvable ref kills the job."""
-        import re
 
         refs = re.findall(r"uses:\s*([\w.-]+/[\w.-]+)@([\w.+-]+)", self.WORKFLOW.read_text())
         assert refs, "no pinned actions found — the workflow probably changed shape"
@@ -303,7 +301,6 @@ class TestCiWorkflowIsRunnable:
         So this is a deliberate allowlist: bumping trivy must be a reviewed act, with the new
         version confirmed to run, not a guess at a version number.
         """
-        import re
 
         verified = {"v0.36.0"}
         known_broken = {
@@ -773,7 +770,6 @@ class TestSecretScanningIsNotWeakened:
         is just as invisible in a passing scan. So each pattern is required to match the real
         file it names, and that file is required to exist.
         """
-        import re
 
         for pattern in self._allowlist().get("paths") or []:
             plain = pattern.replace("\\.", ".").replace("\\", "")
@@ -949,7 +945,6 @@ class TestSecretScanningIsNotWeakened:
 
     def test_no_real_credential_shaped_literal_exists_anywhere(self) -> None:
         """A coarse sweep, independent of gitleaks, over every tracked text file."""
-        import re
 
         patterns = {
             "aws_access_key": re.compile(r"AKIA[0-9A-Z]{16}"),
