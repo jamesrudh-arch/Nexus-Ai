@@ -114,6 +114,7 @@ Per Appendix C. These are open, not finished.
 | Negative controls | **6 of 6 fired**: re-advertising the Postgres URL, un-documenting the TOTP secret, adding a variable nothing reads, changing the compose default to a refused scheme, reverting the refusal to a silent in-memory fallback, and making the cwd fixture non-autouse | 2026-11-25 | same |
 | Control restoration | Failed silently on the first attempt (defect 35); repaired and verified line by line against HEAD before committing | 2026-11-25 | same |
 | Repository state | No `backend/data`, no artifact, no credential-shaped file, no scan-suppression file | 2026-11-25 | same |
+| CI on GitHub | **Green on both events** at `9522856`: `push` run `45709533997`, `pull_request` run `45709545037` — Backend ✓ · Compose ✓ · Secret scanning ✓ · Container image ✓ | 2026-11-25 | GitHub-hosted `ubuntu-latest`, x86-64 |
 
 The 1 skip is a pre-existing `pytest.skip` for an interval outside the modelled set, not a disabled
 test. Test counts rise from Phase 3's 868 because defects 31–33 each added tests.
