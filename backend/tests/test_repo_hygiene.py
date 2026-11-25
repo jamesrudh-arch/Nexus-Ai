@@ -53,17 +53,26 @@ _SECRET_SHAPE_PLAIN = frozenset(p.replace("\\", "") for p in _SECRET_SHAPE_FILES
 #: a secret-shaped literal, so the excuse cannot quietly become a hiding place.
 _ALLOWLISTED_COMMITS = ("eb5234f25a587da6b442785be8754a6954f0bdd4",)
 
+#: The gitleaks release CI runs, pinned in `.github/workflows/ci.yml` via `GITLEAKS_VERSION`.
+#: gitleaks-action@v2 defaults to this same version (hard-coded in its src/index.js), but the
+#: default moves when the action is updated, and `.gitleaks.toml` is written against this
+#: release's config schema — so it is pinned explicitly and asserted here.
+_GITLEAKS_VERSION = "8.24.3"
+
+#: Top-level tables gitleaks 8.24.3 reads from a config file (`config.ViperConfig`).
+#:
+#: Plural `allowlists` is NOT in this list: it was added to gitleaks after 8.24.3. A config that
+#: uses it is not rejected — Viper ignores the unknown key and the allowlist simply never applies,
+#: which is how five consecutive CI runs failed while `.gitleaks.toml` looked perfectly correct.
+_GITLEAKS_TOP_LEVEL_KEYS = frozenset({"description", "title", "extend", "allowlist", "rules"})
+
+#: Fields of the singular global `[allowlist]` table in gitleaks 8.24.3. Note there is no
+#: `description` field, so the rationale for each entry lives in TOML comments instead.
+_GITLEAKS_ALLOWLIST_KEYS = frozenset({"commits", "paths", "regextarget", "regexes", "stopwords"})
+
 #: Resolved to an absolute path once. Running a bare "git" would depend on PATH contents,
 #: which is both a security smell and a portability one.
 GIT = shutil.which("git")
-
-
-def _parsed_allowlists(config_path: Path) -> list[dict]:
-    """The `[[allowlists]]` entries from a gitleaks config."""
-    import tomllib
-
-    with config_path.open("rb") as handle:
-        return list(tomllib.load(handle).get("allowlists", []))
 
 
 def _is_shallow_clone() -> bool:
@@ -412,9 +421,13 @@ class TestSecretScanningIsNotWeakened:
     """`.gitleaks.toml` allowlists the detection code. This keeps that scope honest.
 
     An allowlist is how a security gate gets quietly turned off: one broad path, or a `ruleIDs`
-    list, or a top-level `[allowlist]`, and the scanner still reports "passed" while finding
-    nothing. These tests assert the config stays as narrow as it claims to be, so widening it
-    breaks the build instead of silently reducing coverage.
+    list, or a bare `[allowlist]` with no conditions at all, and the scanner still reports
+    "passed" while finding nothing. These tests assert the config stays as narrow as it claims
+    to be, so widening it breaks the build instead of silently reducing coverage.
+
+    They also assert the config is *understood* by the gitleaks version CI runs, which is the
+    failure that took five runs to find: a key gitleaks does not recognise is ignored without an
+    error, so a config that looks correct can have no effect whatsoever.
     """
 
     CONFIG = REPO_ROOT / ".gitleaks.toml"
@@ -425,6 +438,39 @@ class TestSecretScanningIsNotWeakened:
         with self.CONFIG.open("rb") as handle:
             return tomllib.load(handle)
 
+    def _allowlist(self) -> dict:
+        config = self._parsed()
+        assert "allowlist" in config, (
+            "no top-level [allowlist] table. gitleaks 8.24.3 reads exactly one singular allowlist; "
+            "without it nothing in this repository is excused and the scan fails on fixtures."
+        )
+        return config["allowlist"]
+
+    def test_the_config_uses_the_schema_the_pinned_gitleaks_understands(self) -> None:
+        """Every key here must exist in gitleaks 8.24.3's `ViperConfig`, or it is ignored silently.
+
+        This is the test that would have saved five failed runs. The previous version of this
+        file used plural `[[allowlists]]` — valid in current gitleaks, but 8.24.3 declares only a
+        singular `Allowlist` struct, so Viper dropped the unknown key without complaint. The
+        config looked right, the scan kept reporting the same two findings, and nothing anywhere
+        said why.
+        """
+        config = self._parsed()
+        unknown_top = set(config) - _GITLEAKS_TOP_LEVEL_KEYS
+        assert not unknown_top, (
+            f"keys gitleaks {_GITLEAKS_VERSION} does not define: {sorted(unknown_top)}. It would "
+            f"ignore them silently. Known: {sorted(_GITLEAKS_TOP_LEVEL_KEYS)}"
+        )
+        assert "allowlists" not in config, (
+            "plural [[allowlists]] is not understood by gitleaks 8.24.3 and would be ignored "
+            "without an error. Use the singular [allowlist] table."
+        )
+        unknown_keys = set(self._allowlist()) - _GITLEAKS_ALLOWLIST_KEYS
+        assert not unknown_keys, (
+            f"[allowlist] keys gitleaks {_GITLEAKS_VERSION} does not define: {sorted(unknown_keys)}. "
+            f"Known: {sorted(_GITLEAKS_ALLOWLIST_KEYS)}"
+        )
+
     def test_the_config_exists_and_extends_the_default_ruleset(self) -> None:
         assert self.CONFIG.is_file(), ".gitleaks.toml is missing — gitleaks would use defaults"
         config = self._parsed()
@@ -434,48 +480,90 @@ class TestSecretScanningIsNotWeakened:
         )
 
     def test_no_rule_is_disabled_globally(self) -> None:
+        """Disabling a rule is repo-wide suppression with extra steps."""
         config = self._parsed()
-        for entry in config.get("allowlists", []):
-            assert not entry.get("ruleIDs"), (
-                f"allowlist {entry.get('description', '')[:40]!r} disables rules globally: "
-                f"{entry['ruleIDs']}. Scope it to a path instead."
+        allowlist = self._allowlist()
+        for key in ("ruleIDs", "targetRules"):
+            assert not allowlist.get(key), (
+                f"[allowlist] sets {key}={allowlist[key]}, which switches rules off globally. "
+                "Scope by path or commit instead."
             )
+        assert not config.get("rules"), (
+            "defining `rules` here would shadow the default ruleset's rules of the same id"
+        )
+        assert not config.get("extend", {}).get("disabledRules"), (
+            f"disabledRules={config['extend']['disabledRules']} turns built-in detection off"
+        )
 
-    def test_there_is_no_repo_wide_allowlist(self) -> None:
-        """A top-level `[allowlist]` suppresses findings everywhere. That is a disabled gate."""
-        config = self._parsed()
-        assert "allowlist" not in config, "top-level [allowlist] found — this suppresses repo-wide"
+    def test_no_secret_shape_is_excused_anywhere(self) -> None:
+        """`regexes` excuse a *shape* wherever it appears. This config must not use them.
 
-    def test_every_allowlist_is_bound_to_narrow_paths(self) -> None:
-        config = self._parsed()
-        allowlists = config.get("allowlists", [])
-        assert allowlists, "expected the detection-code allowlist"
-        for entry in allowlists:
-            paths = entry.get("paths") or []
-            commits = entry.get("commits") or []
-            assert paths or commits, "an allowlist with neither path nor commit scope applies everywhere"
-            unexpected = [p for p in paths if p not in _SECRET_SHAPE_FILES]
-            assert not unexpected, (
-                f"allowlist covers {unexpected}, which are not the files whose job is to "
-                f"recognise secret shapes. Permitted: {sorted(_SECRET_SHAPE_FILES)}"
+        An earlier version allowlisted the fixtures by regex, which meant copying a fabricated
+        JWT and a fabricated PEM into this file — and gitleaks then flagged the file itself.
+        An allowlist that reproduces what it allowlists defeats itself.
+        """
+        allowlist = self._allowlist()
+        assert not allowlist.get("regexes"), (
+            f"[allowlist] uses regexes {allowlist['regexes']}, which would excuse that shape in "
+            "every file in the repository. Scope by path or commit instead."
+        )
+        assert not allowlist.get("stopwords"), (
+            f"stopwords {allowlist['stopwords']} would excuse any secret containing those words "
+            "anywhere in the repository"
+        )
+
+    def test_the_allowlist_is_bound_to_narrow_paths(self) -> None:
+        allowlist = self._allowlist()
+        paths = allowlist.get("paths") or []
+        assert paths, "an allowlist with no path scope applies everywhere"
+        unexpected = [p for p in paths if p not in _SECRET_SHAPE_FILES]
+        assert not unexpected, (
+            f"allowlist covers {unexpected}, which are not the files whose job is to recognise "
+            f"secret shapes. Permitted: {sorted(_SECRET_SHAPE_FILES)}"
+        )
+        missing = sorted(_SECRET_SHAPE_FILES - set(paths))
+        assert not missing, (
+            f"detection code no longer allowlisted: {missing}. Those files must spell out secret "
+            "shapes to mask them, so the scan would fail on their fixtures."
+        )
+
+    def test_every_allowlisted_path_pattern_actually_matches_its_file(self) -> None:
+        """A path regex that matches nothing is as useless as a key gitleaks ignores.
+
+        gitleaks compiles each entry with `regexp.MustCompile` and matches it against the
+        finding's path. A typo — a wrong escape, a bad separator — produces an allowlist entry
+        that silently excuses nothing, which is the same failure mode as the plural-key bug and
+        is just as invisible in a passing scan. So each pattern is required to match the real
+        file it names, and that file is required to exist.
+        """
+        import re
+
+        for pattern in self._allowlist().get("paths") or []:
+            plain = pattern.replace("\\.", ".").replace("\\", "")
+            assert (REPO_ROOT / plain).is_file(), (
+                f"allowlist path {pattern!r} names {plain}, which does not exist — the entry "
+                "would excuse nothing and should be removed or corrected"
             )
-            unexpected_commits = [c for c in commits if c not in _ALLOWLISTED_COMMITS]
-            assert not unexpected_commits, (
-                f"allowlist excuses commit(s) {unexpected_commits}. Only "
-                f"{sorted(_ALLOWLISTED_COMMITS)} may be excused, each with a documented reason."
-            )
+            compiled = re.compile(pattern)
+            assert compiled.search(plain), f"pattern {pattern!r} does not match {plain!r}"
 
-    def test_exactly_one_commit_is_excused_and_why(self) -> None:
-        """A commit allowlist excuses history forever, so it must stay a closed, documented set."""
-        config = self._parsed()
-        excused = [c for e in config.get("allowlists", []) for c in (e.get("commits") or [])]
-        assert excused == list(_ALLOWLISTED_COMMITS)
-        for entry in config.get("allowlists", []):
-            if entry.get("commits"):
-                description = entry.get("description", "")
-                # The reason has to be written down, not just referenced by SHA.
-                assert len(description) > 200, "a commit allowlist needs a real explanation"
-                assert "fabricated" in description or "not a real credential" in description
+    def test_exactly_one_commit_is_excused(self) -> None:
+        """A commit allowlist excuses history forever, so it must stay a closed set.
+
+        The reason lives in the comments above the table rather than a `description` key:
+        gitleaks 8.24.3's global allowlist struct has no such field, so writing one there would
+        be ignored — the same silent-key trap this whole test class exists to catch.
+        """
+        excused = list(self._allowlist().get("commits") or [])
+        assert excused == list(_ALLOWLISTED_COMMITS), (
+            f"excused commits changed from {list(_ALLOWLISTED_COMMITS)} to {excused}. Each entry "
+            "needs a documented reason in .gitleaks.toml and in _ALLOWLISTED_COMMITS."
+        )
+        text = self.CONFIG.read_text()
+        for sha in _ALLOWLISTED_COMMITS:
+            assert sha in text
+        # The justification has to be written down next to the SHA, not just asserted here.
+        assert "fabricated" in text, "the config must state that the excused values are fabricated"
 
     def test_the_excused_commit_exists_in_this_repository(self) -> None:
         """A typo'd SHA would silently excuse nothing — or, worse, look like it excuses something.
@@ -538,12 +626,6 @@ class TestSecretScanningIsNotWeakened:
             "Either remove them or justify widening the allowlist."
         )
 
-    def test_only_detection_code_and_its_tests_are_allowlisted(self) -> None:
-        """Source, docs, config and every other test remain fully scanned."""
-        config = self._parsed()
-        scoped = {p for e in config.get("allowlists", []) for p in (e.get("paths") or [])}
-        assert scoped == _SECRET_SHAPE_FILES
-
     def test_the_config_contains_no_secret_shaped_literal_of_its_own(self) -> None:
         """An allowlist that reproduces what it allowlists defeats itself.
 
@@ -558,11 +640,25 @@ class TestSecretScanningIsNotWeakened:
         assert "AKIA" not in text, ".gitleaks.toml contains an AWS key shape"
         own_source = Path(__file__).read_text()
         assert header not in own_source, "this test must not embed a PEM header literal either"
-        for entry in _parsed_allowlists(self.CONFIG):
-            assert not entry.get("regexes"), (
-                "allowlist uses `regexes`, which requires embedding a secret-shaped literal in "
-                "the config. Scope by path instead."
-            )
+
+    def test_ci_pins_the_gitleaks_version_this_schema_targets(self) -> None:
+        """The config's meaning depends on the gitleaks release that reads it.
+
+        gitleaks-action@v2 defaults to a version hard-coded in its own source, which changes when
+        the action is updated. Pinning it keeps `[allowlist]` semantics — and therefore the tests
+        above — tied to a known release instead of drifting.
+        """
+        import yaml
+
+        workflow = yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text())
+        steps = workflow["jobs"]["secrets"]["steps"]
+        gitleaks = next(s for s in steps if "gitleaks" in str(s.get("uses", "")))
+        pinned = (gitleaks.get("env") or {}).get("GITLEAKS_VERSION")
+        assert pinned == _GITLEAKS_VERSION, (
+            f"CI runs gitleaks {pinned} but .gitleaks.toml and these tests are written for "
+            f"{_GITLEAKS_VERSION}. Re-check the config schema against the new version before "
+            "changing this."
+        )
 
     def test_ci_passes_no_ignored_inputs_to_gitleaks(self) -> None:
         """gitleaks-action@v2 accepts no inputs; `config-path` is warned about and discarded."""

@@ -1,9 +1,31 @@
-# Gitleaks configuration — extends the default ruleset and allowlists three files by path.
+# Gitleaks configuration — extends the default ruleset and allowlists three paths and one commit.
 #
-# Why this file exists
-# --------------------
-# Three files in this repository have to contain strings that *look* like secrets, because
-# recognising secret-shaped values is literally their job:
+# READ THIS FIRST: the schema is version-specific
+# -----------------------------------------------
+# This file uses a SINGLE `[allowlist]` table, not `[[allowlists]]`. That is not a style choice.
+#
+# gitleaks-action@v2 pins gitleaks 8.24.3 (src/index.js: `process.env.GITLEAKS_VERSION ||
+# "8.24.3"`), and in that release `ViperConfig` declares only a singular `Allowlist` struct —
+# there is no top-level `Allowlists` field at all. Plural `[[allowlists]]` was added later.
+#
+# An earlier version of this file used `[[allowlists]]`. Viper silently ignored the unknown key:
+# no error, no warning, and the scan kept reporting the same two findings across five runs while
+# the file looked correct. Every allowlist written that way did nothing. Two consequences here:
+#
+#   * the workflow pins `GITLEAKS_VERSION` explicitly, so the version this schema was written
+#     against cannot drift underneath it;
+#   * `test_repo_hygiene.py` validates every key in this file against that version's struct, so
+#     a key gitleaks would ignore fails the build instead of failing silently.
+#
+# In 8.24.3 a single global allowlist carries `commits`, `paths`, `regextarget`, `regexes` and
+# `stopwords`, matched with OR semantics (MatchCondition defaults to AllowlistMatchOr), and
+# `[extend] useDefault = true` appends the default config's own allowlist entries to these
+# rather than replacing them. So one table holding both paths and commits is exactly right.
+#
+# Why these three paths
+# ---------------------
+# Three files have to contain strings that *look* like secrets, because recognising secret-shaped
+# values is literally their job:
 #
 #   backend/src/nexus/secrets/redaction.py   the redactor: its regexes must spell out the shape
 #                                            of a PEM block, an AWS key and a Slack token in
@@ -18,20 +40,31 @@
 # its PEM body is four characters. Nothing here unlocks anything, and gitleaks flags all of it
 # correctly — a scanner cannot know that a fixture is a fixture.
 #
-# This file deliberately contains NO secret-shaped literal of its own. An earlier version
-# allowlisted the fixtures by regex, which meant copying the fake JWT and the fake PEM into this
-# file — and gitleaks then flagged *this* file too, failing a build that had been green. An
-# allowlist that reproduces what it is allowlisting defeats itself. Scope by path instead.
+# Why one commit
+# --------------
+# A `pull_request` run scans the whole branch history (`--log-opts=--no-merges --first-parent
+# base^..head`, where base is the PR's first commit); a `push` run scans only the new commits.
+# That asymmetry is why this entry exists: commit eb5234f added the first version of this file,
+# which allowlisted the fixtures *by regex* and so copied a fabricated JWT and a fabricated PEM
+# block into `backend/tests/test_repo_hygiene.py`. That file is not detection code, so the PEM
+# there is a genuine `private-key` finding against that commit.
 #
-# Scope discipline
-# ----------------
-#   * extends the default ruleset rather than replacing or disabling it;
-#   * bound to three named paths, all of which are detection code or its tests;
-#   * names no `ruleIDs`, so no rule is switched off globally;
-#   * has no top-level `[allowlist]`, which would suppress findings repo-wide.
+# The literals were removed one commit later, in 1f7d17b, and HEAD carries secret-shaped strings
+# only inside the three paths above. Excusing one revision by full SHA is the narrowest available
+# fix: it does not reduce coverage of any current file, and it does not rewrite published history
+# that the documentation cites. Note that `.gitleaks.toml` itself never needed excusing — the
+# default ruleset already exempts paths matching `gitleaks\.toml`.
 #
-# `backend/tests/test_repo_hygiene.py::TestSecretScanningIsNotWeakened` asserts all four
-# properties plus the exact path set, so widening this file breaks the build rather than
+# What this deliberately does not do
+# ----------------------------------
+#   * does not replace or disable the default ruleset, only extends it;
+#   * names no `ruleIDs` / `targetRules`, so no rule is switched off;
+#   * defines no `regexes`, so no secret *shape* is excused anywhere — only named files and one
+#     named historical revision. An allowlist that reproduces the literal it is allowlisting
+#     defeats itself, which is how eb5234f came to exist.
+#
+# `backend/tests/test_repo_hygiene.py::TestSecretScanningIsNotWeakened` asserts every property
+# above plus the exact path and commit sets, so widening this file breaks the build rather than
 # quietly reducing coverage.
 #
 # Residual risk, stated plainly: a genuine credential pasted into one of those three files would
@@ -41,35 +74,10 @@
 [extend]
 useDefault = true
 
-[[allowlists]]
-description = """
-Files whose purpose is to recognise or test recognition of secret-shaped values: the redactor,
-the audit gate, and their tests. They must spell out what a PEM block, an AWS key or a JWT looks
-like. Every matching value in them is fabricated and unlocks nothing. Scoped by path only — this
-file intentionally contains no secret-shaped literal to allowlist by regex.
-"""
+[allowlist]
 paths = [
   '''backend/src/nexus/secrets/redaction\.py''',
   '''backend/src/nexus/audit/log\.py''',
   '''backend/tests/test_secrets_and_redaction\.py''',
 ]
-
-[[allowlists]]
-description = """
-One commit, by SHA, for one mistake that is now fixed at HEAD.
-
-Commit eb5234f added the first version of this file. That version allowlisted the fixtures by
-regex, which meant copying a fabricated JWT and a fabricated PEM block into `.gitleaks.toml`
-itself — and into `backend/tests/test_repo_hygiene.py`, which asserted those literals were still
-present. Both files are outside the path allowlist above, so gitleaks flags that commit.
-
-The literals were removed one commit later, in 1f7d17b, and `git grep` confirms HEAD carries
-secret-shaped strings only inside the three allowlisted paths. Nothing in this entry is a real
-credential: the JWT's signature is a run of the alphabet and the PEM body is four characters.
-
-A `pull_request` run scans the whole branch history, which is why this is needed at all — a
-`push` run scans only new commits and was already green. Scoping by commit SHA is the narrowest
-available fix: it excuses one historical revision without reducing coverage of any file at HEAD,
-and without rewriting published history.
-"""
 commits = ['eb5234f25a587da6b442785be8754a6954f0bdd4']

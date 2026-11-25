@@ -53,6 +53,13 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pinned to the version the action would pick anyway, because .gitleaks.toml is written
+          # against this exact release's config schema. 8.24.3 understands only a singular
+          # [allowlist] table; a newer gitleaks added plural [[allowlists]]. Leaving the version
+          # implicit would let the action's default move and silently change what this config
+          # means — and an unrecognised key is ignored without an error, so the failure mode is a
+          # scan that quietly stops honouring its own allowlist.
+          GITLEAKS_VERSION: "8.24.3"
 
       - name: Trivy filesystem scan (config + secrets + licences)
         uses: aquasecurity/trivy-action@v0.36.0
