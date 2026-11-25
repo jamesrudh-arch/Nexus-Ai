@@ -73,6 +73,12 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history, not the default depth of 1. test_repo_hygiene.py verifies that the one
+          # commit excused from secret scanning in .gitleaks.toml actually exists, and that check
+          # cannot run against a shallow clone — it failed on exactly that before this was set.
+          # The repository is small (tens of commits), so this costs seconds.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:

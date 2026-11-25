@@ -66,6 +66,22 @@ def _parsed_allowlists(config_path: Path) -> list[dict]:
         return list(tomllib.load(handle).get("allowlists", []))
 
 
+def _is_shallow_clone() -> bool:
+    """True when this working copy was cloned with a truncated history."""
+    import subprocess
+
+    if GIT is None:
+        return False
+    result = subprocess.run(  # noqa: S603 - fixed arguments, no shell, no user input
+        [GIT, "rev-parse", "--is-shallow-repository"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout.strip() == "true"
+
+
 def _git_available() -> bool:
     return GIT is not None and (REPO_ROOT / ".git").exists()
 
@@ -462,18 +478,33 @@ class TestSecretScanningIsNotWeakened:
                 assert "fabricated" in description or "not a real credential" in description
 
     def test_the_excused_commit_exists_in_this_repository(self) -> None:
-        """A typo'd SHA would silently excuse nothing — or, worse, look like it excuses something."""
+        """A typo'd SHA would silently excuse nothing — or, worse, look like it excuses something.
+
+        Verifies for real wherever the commit object is present, and skips only when it is
+        genuinely absent — which is what a depth-1 checkout looks like. Checking shallowness
+        first would be wrong: this workspace *is* shallow, and the commit is still there,
+        because it was made locally after the graft point. CI checks out with
+        ``fetch-depth: 0`` so the verification always runs there.
+        """
         import subprocess
 
+        assert GIT is not None
         for sha in _ALLOWLISTED_COMMITS:
-            assert GIT is not None
             result = subprocess.run(  # noqa: S603 - fixed arguments, no shell, no user input
                 [GIT, "cat-file", "-e", f"{sha}^{{commit}}"],
                 cwd=REPO_ROOT,
                 capture_output=True,
+                text=True,
                 check=False,
             )
-            assert result.returncode == 0, f"allowlisted commit {sha} does not exist in this repo"
+            if result.returncode == 0:
+                continue
+            if _is_shallow_clone():
+                pytest.skip(f"shallow clone: commit {sha[:12]} is not present to verify")
+            assert result.returncode == 0, (
+                f"allowlisted commit {sha} does not exist in this repo — a typo'd SHA would "
+                "silently excuse nothing while looking like it excuses something"
+            )
 
     def test_head_carries_secret_shapes_only_in_allowlisted_paths(self) -> None:
         """The invariant the commit allowlist depends on: HEAD itself is clean elsewhere.
@@ -615,3 +646,20 @@ class TestSecretScanningIsNotWeakened:
                 if pattern.search(content):
                     offenders.append(f"{path}: {name}")
         assert not offenders, f"credential-shaped literals outside the permitted fixtures: {offenders}"
+
+    def test_the_backend_job_checks_out_full_history(self) -> None:
+        """The hygiene suite verifies a historical commit, so a depth-1 checkout cannot run it.
+
+        This failed in CI before it was asserted: the default `fetch-depth: 1` left the excused
+        commit object absent, and the SHA check reported a valid configuration as broken.
+        """
+        import yaml
+
+        workflow = yaml.safe_load((REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text())
+        checkout = next(
+            s for s in workflow["jobs"]["backend"]["steps"] if "actions/checkout" in str(s.get("uses", ""))
+        )
+        assert (checkout.get("with") or {}).get("fetch-depth") == 0, (
+            "the backend job must check out full history (fetch-depth: 0), or "
+            "test_the_excused_commit_exists_in_this_repository cannot run"
+        )
