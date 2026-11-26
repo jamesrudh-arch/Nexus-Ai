@@ -34,6 +34,7 @@ from nexus.ingestion.base import (
     IngestReport,
     TickRecord,
     Transport,
+    epoch_unit,
     to_decimal,
     to_utc,
     validate_bar,
@@ -159,6 +160,11 @@ class DumpParseResult:
     first_time: datetime | None
     last_time: datetime | None
     had_header: bool
+    #: The epoch unit(s) the dump actually used, as detected from magnitude. Recorded because the
+    #: venue changed it: spot dumps moved from milliseconds to microseconds from 2025-01-01
+    #: (defect 40). Absorbing that silently would leave nobody able to say which unit a given
+    #: archive was read in, and a mixed file would be invisible.
+    timestamp_units: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -170,7 +176,22 @@ class DumpParseResult:
             "first_time": iso_utc(self.first_time) if self.first_time else None,
             "last_time": iso_utc(self.last_time) if self.last_time else None,
             "had_header": self.had_header,
+            "timestamp_units": list(self.timestamp_units),
         }
+
+
+def _note_unit(units: set[str], raw: Any) -> None:
+    """Record the epoch unit a raw dump value used, so the parse summary can report it.
+
+    Detection already scales the value correctly; this only makes the answer *visible*. A venue
+    that changes its timestamp unit under us is the kind of change that should be observable in the
+    evidence rather than quietly absorbed (defect 40).
+    """
+    text = "" if raw is None else str(raw).strip()
+    if text.lstrip("-").isdigit():
+        unit = epoch_unit(float(int(text)))
+        if unit is not None:
+            units.add(unit)
 
 
 def _unzip(payload: bytes, *, url: str) -> str:
@@ -208,6 +229,7 @@ def parse_kline_csv(
     rows_read = 0
     rejected = 0
     had_header = False
+    units: set[str] = set()
     first_time: datetime | None = None
     last_time: datetime | None = None
 
@@ -226,8 +248,10 @@ def parse_kline_csv(
             )
             continue
         record = dict(zip(KLINE_FIELDS, row, strict=False))
-        open_time = to_utc(record.get("open_time"), field_name="open_time", source=SOURCE, assume_ms=True)
-        close_time = to_utc(record.get("close_time"), field_name="close_time", source=SOURCE, assume_ms=True)
+        _note_unit(units, record.get("open_time"))
+        open_time = to_utc(record.get("open_time"), field_name="open_time", source=SOURCE)
+        _note_unit(units, record.get("close_time"))
+        close_time = to_utc(record.get("close_time"), field_name="close_time", source=SOURCE)
         if open_time is None:
             rejected += 1
             reasons["MISSING_OPEN_TIME"] = reasons.get("MISSING_OPEN_TIME", 0) + 1
@@ -278,6 +302,7 @@ def parse_kline_csv(
         first_time=first_time,
         last_time=last_time,
         had_header=had_header,
+        timestamp_units=tuple(sorted(units)),
     )
 
 
@@ -291,6 +316,7 @@ def parse_agg_trades_csv(
     rows_read = 0
     rejected = 0
     had_header = False
+    units: set[str] = set()
     first_time: datetime | None = None
     last_time: datetime | None = None
 
@@ -309,9 +335,8 @@ def parse_agg_trades_csv(
             )
             continue
         record = dict(zip(AGG_TRADE_FIELDS, row, strict=False))
-        observed = to_utc(
-            record.get("transact_time"), field_name="transact_time", source=SOURCE, assume_ms=True
-        )
+        _note_unit(units, record.get("transact_time"))
+        observed = to_utc(record.get("transact_time"), field_name="transact_time", source=SOURCE)
         price = to_decimal(record.get("price"), field_name="price", source=SOURCE)
         if observed is None or price is None:
             rejected += 1
@@ -351,6 +376,7 @@ def parse_agg_trades_csv(
         first_time=first_time,
         last_time=last_time,
         had_header=had_header,
+        timestamp_units=tuple(sorted(units)),
     )
 
 

@@ -185,7 +185,7 @@ class TestTimestampNormalisation:
     def test_epoch_milliseconds(self) -> None:
         from nexus.data.records import to_utc
 
-        result = to_utc(1764072000000, field_name="ts", source="T", assume_ms=True)
+        result = to_utc(1764072000000, field_name="ts", source="T")
         assert result is not None
         assert result.tzinfo is not None
         assert result.astimezone(UTC) == result
@@ -208,7 +208,7 @@ class TestTimestampNormalisation:
     def test_numeric_string(self) -> None:
         from nexus.data.records import to_utc
 
-        assert to_utc("1764072000000", field_name="ts", source="T", assume_ms=True) is not None
+        assert to_utc("1764072000000", field_name="ts", source="T") is not None
 
     def test_iso_with_z_suffix(self) -> None:
         from nexus.data.records import to_utc
@@ -252,6 +252,119 @@ class TestTimestampNormalisation:
 
         with pytest.raises(IngestFault):
             to_utc(True, field_name="ts", source="T")
+
+
+class TestEpochUnitIsDetectedNotAssumed:
+    """Defect 40: a venue changed its timestamp unit and a caller's assumption could not notice.
+
+    Binance Vision began publishing **microsecond** timestamps for spot dumps from 2025-01-01. The
+    parser passed `assume_ms=True`, so every value was divided by 1000 and the first real download
+    this repository ever made raised `ValueError: year 58852 is out of range`. It is worth being
+    precise about why that is the good outcome: the alternative was a bar dated tens of thousands of
+    years out, silently entering the archive and poisoning every aggregate built on it.
+
+    The fix rests on a property that must be asserted rather than trusted — the four unit windows do
+    not overlap, so detection is a measurement and never a guess.
+    """
+
+    INSTANT = datetime(2025, 11, 25, 12, 0, tzinfo=UTC)
+
+    def test_the_four_unit_windows_are_disjoint(self) -> None:
+        """The property the whole fix rests on. If this ever fails, detection becomes a guess."""
+        from nexus.data.records import _EPOCH_SCALES, _EPOCH_SECONDS_MAX, _EPOCH_SECONDS_MIN
+
+        windows = [(name, _EPOCH_SECONDS_MIN * f, _EPOCH_SECONDS_MAX * f) for f, name in _EPOCH_SCALES]
+        for i, (name_a, lo_a, hi_a) in enumerate(windows):
+            for name_b, lo_b, hi_b in windows[i + 1 :]:
+                assert hi_a < lo_b or hi_b < lo_a, (
+                    f"{name_a} [{lo_a:.3e}, {hi_a:.3e}] overlaps "
+                    f"{name_b} [{lo_b:.3e}, {hi_b:.3e}] — a magnitude would be ambiguous"
+                )
+
+    def test_each_unit_is_detected_from_magnitude_alone(self) -> None:
+        from nexus.data.records import epoch_unit, to_utc
+
+        for value, unit in (
+            (int(self.INSTANT.timestamp()), "s"),
+            (int(self.INSTANT.timestamp()) * 1_000, "ms"),
+            (int(self.INSTANT.timestamp()) * 1_000_000, "us"),
+            (int(self.INSTANT.timestamp()) * 1_000_000_000, "ns"),
+        ):
+            assert epoch_unit(value) == unit, f"{value} should read as {unit}"
+            assert to_utc(value, field_name="ts", source="T") == self.INSTANT
+
+    def test_all_four_units_denote_the_same_instant(self) -> None:
+        """The point of the fix: the unit changes, the instant must not."""
+        from nexus.data.records import to_utc
+
+        base = int(self.INSTANT.timestamp())
+        results = [
+            to_utc(base * factor, field_name="ts", source="T")
+            for factor in (1, 1_000, 1_000_000, 1_000_000_000)
+        ]
+        assert len(set(results)) == 1, f"the same instant read four ways gave {results}"
+        assert results[0] == self.INSTANT
+
+    def test_string_digits_are_detected_too(self) -> None:
+        """Dump CSVs deliver text, not ints — the same detection must apply."""
+        from nexus.data.records import to_utc
+
+        assert to_utc("1764072000000000", field_name="ts", source="T") == self.INSTANT
+
+    def test_a_value_in_no_window_is_refused_not_emitted(self) -> None:
+        """Zero and absurd magnitudes are sentinels or corruption; neither may become a date."""
+        from nexus.data.records import epoch_unit, to_utc
+
+        for bad in (0, 1, -1, 10**23):
+            assert epoch_unit(bad) is None
+            with pytest.raises(IngestFault, match="not a plausible epoch value"):
+                to_utc(bad, field_name="open_time", source="T")
+
+    def test_to_utc_no_longer_accepts_an_assumption_flag(self) -> None:
+        """`assume_ms` was removed rather than left inert.
+
+        A parameter that no longer governs is worse than no parameter: a caller passing it believes
+        it has an effect. This asserts the removal stays removed.
+        """
+        import inspect
+
+        from nexus.data.records import to_utc
+
+        assert "assume_ms" not in inspect.signature(to_utc).parameters
+
+    def test_microsecond_kline_dump_parses_to_the_right_instant(self) -> None:
+        """The real shape Binance Vision now publishes for spot klines."""
+        row = "1764072000000000,100.0,110.0,90.0,105.0,10.5,1764072059999999,1050.0,42,5.0,500.0,0"
+        bars, summary = parse_kline_csv(row, symbol="BTCUSDT", interval="1m")
+        assert summary.records_accepted == 1 and summary.records_rejected == 0
+        assert bars[0].open_time == self.INSTANT
+        assert bars[0].close_time.year == 2025
+        assert summary.timestamp_units == ("us",)
+
+    def test_millisecond_kline_dump_is_unchanged_by_the_fix(self) -> None:
+        """The pre-2025 shape must still parse, and to the same instant."""
+        row = "1764072000000,100.0,110.0,90.0,105.0,10.5,1764072059999,1050.0,42,5.0,500.0,0"
+        bars, summary = parse_kline_csv(row, symbol="BTCUSDT", interval="1m")
+        assert summary.records_accepted == 1
+        assert bars[0].open_time == self.INSTANT
+        assert summary.timestamp_units == ("ms",)
+
+    def test_a_dump_mixing_units_reports_both_rather_than_absorbing_one(self) -> None:
+        """A mixed file is a real possibility across the 2025-01-01 boundary and must be visible."""
+        rows = (
+            "1764072000000000,100.0,110.0,90.0,105.0,10.5,1764072059999999,1050.0,42,5.0,500.0,0\n"
+            "1764072000000,100.0,110.0,90.0,105.0,10.5,1764072059999,1050.0,42,5.0,500.0,0"
+        )
+        bars, summary = parse_kline_csv(rows, symbol="BTCUSDT", interval="1m")
+        assert summary.records_accepted == 2
+        assert summary.timestamp_units == ("ms", "us")
+        assert len({b.open_time for b in bars}) == 1, "both rows denote the same instant"
+
+    def test_the_unit_is_reported_in_the_parse_summary(self) -> None:
+        """Evidence, not just correctness: the archive must be able to say what it read."""
+        row = "0,100.0,0.5,1,1,1764072000000000,true,0"
+        _, summary = parse_agg_trades_csv(row, symbol="BTCUSDT")
+        assert summary.to_dict()["timestamp_units"] == ["us"]
 
 
 class TestBybitIntervalMapping:

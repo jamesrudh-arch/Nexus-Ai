@@ -481,12 +481,24 @@ class TestBinanceVisionLiveDumps:
             f"({parsed.rejection_reasons}) — the real CSV has columns or values the parser does not "
             f"accept, which is exactly what synthetic fixtures cannot reveal"
         )
+        # Defect 40 was found by this test: the dump parsed to `year 58852 is out of range` because
+        # spot dumps moved to microsecond timestamps from 2025-01-01 and the parser assumed
+        # milliseconds. Asserting the year is the regression guard, and reporting the detected unit
+        # keeps the venue's choice visible instead of quietly absorbed.
+        years = {bar.open_time.year for bar in bars}
+        assert years == {day.year}, (
+            f"bars are dated {sorted(years)} but the dump is for {day.date()} — a mis-scaled "
+            f"timestamp produces dates thousands of years out, and one that slips through poisons "
+            f"every aggregate built on it"
+        )
+        assert parsed.timestamp_units, "the parser did not report which epoch unit the dump used"
         _evidence(
             "binance-vision.parse",
             rows=parsed.rows_read,
             accepted=parsed.records_accepted,
             rejected=parsed.records_rejected,
             had_header=parsed.had_header,
+            timestamp_units=",".join(parsed.timestamp_units),
         )
 
 

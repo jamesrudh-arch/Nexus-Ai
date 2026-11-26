@@ -124,7 +124,7 @@ class BybitPublicAdapter:
                 retryable=ret_code in (10006, 10016, 10018),
             )
         result = payload.get("result")
-        server_time = to_utc(payload.get("time"), field_name="time", source=SOURCE, assume_ms=True)
+        server_time = to_utc(payload.get("time"), field_name="time", source=SOURCE)
         return result, server_time
 
     # ------------------------------------------------------------------ instruments
@@ -350,7 +350,7 @@ class BybitPublicAdapter:
         asks = _parse_levels(result.get("a"), limit=depth)
         if not bids and not asks:
             return None
-        observed = to_utc(result.get("ts"), field_name="ts", source=SOURCE, assume_ms=True) or server_time
+        observed = to_utc(result.get("ts"), field_name="ts", source=SOURCE) or server_time
         if observed is None:
             raise IngestFault(f"BYBIT orderbook for {symbol}: no timestamp", retryable=True)
         return BookRecord(
@@ -413,7 +413,7 @@ def _parse_instrument(
 
 
 def _parse_ticker(entry: dict[str, Any], symbol: str, server_time: datetime | None) -> QuoteRecord:
-    observed = to_utc(entry.get("ts"), field_name="ts", source=SOURCE, assume_ms=True) or server_time
+    observed = to_utc(entry.get("ts"), field_name="ts", source=SOURCE) or server_time
     return QuoteRecord(
         instrument_id="",  # resolved by the caller through the registry
         venue=VENUE,
@@ -436,7 +436,7 @@ def _parse_trade(entry: dict[str, Any], symbol: str, server_time: datetime | Non
         return None
     side_raw = entry.get("side")
     side = str(side_raw).upper() if side_raw in ("Buy", "Sell", "buy", "sell", "BUY", "SELL") else None
-    observed = to_utc(entry.get("time"), field_name="time", source=SOURCE, assume_ms=True) or server_time
+    observed = to_utc(entry.get("time"), field_name="time", source=SOURCE) or server_time
     if observed is None:
         return None
     return TickRecord(
@@ -461,7 +461,7 @@ def _parse_kline(row: Sequence[Any], symbol: str, canonical: str) -> BarRecord |
     that makes a degrading feed visible.
     """
     try:
-        open_time = to_utc(row[0], field_name="start", source=SOURCE, assume_ms=True)
+        open_time = to_utc(row[0], field_name="start", source=SOURCE)
     except IngestFault:
         return None
     if open_time is None:

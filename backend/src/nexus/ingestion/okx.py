@@ -183,7 +183,7 @@ class OkxPublicAdapter:
                     ),
                     qty_step=to_decimal(entry.get("lotSz"), field_name="lotSz", source=SOURCE),
                     status=str(entry.get("state") or "") or None,
-                    observed_at=to_utc(entry.get("ts"), field_name="ts", source=SOURCE, assume_ms=True),
+                    observed_at=to_utc(entry.get("ts"), field_name="ts", source=SOURCE),
                     raw={
                         "instType": entry.get("instType"),
                         "settleCcy": entry.get("settleCcy"),
@@ -213,7 +213,7 @@ class OkxPublicAdapter:
             entry = data[0]
             if not isinstance(entry, dict):
                 continue
-            observed = to_utc(entry.get("ts"), field_name="ts", source=SOURCE, assume_ms=True)
+            observed = to_utc(entry.get("ts"), field_name="ts", source=SOURCE)
             out.append(
                 QuoteRecord(
                     instrument_id="",
@@ -246,7 +246,7 @@ class OkxPublicAdapter:
             if not isinstance(entry, dict):
                 continue
             price = to_decimal(entry.get("px"), field_name="px", source=SOURCE)
-            observed = to_utc(entry.get("ts"), field_name="ts", source=SOURCE, assume_ms=True)
+            observed = to_utc(entry.get("ts"), field_name="ts", source=SOURCE)
             if price is None or observed is None:
                 continue
             side_raw = entry.get("side")
@@ -377,7 +377,7 @@ class OkxPublicAdapter:
         asks = _parse_levels(entry.get("asks"), limit=depth)
         if not bids and not asks:
             return None
-        observed = to_utc(entry.get("ts"), field_name="ts", source=SOURCE, assume_ms=True)
+        observed = to_utc(entry.get("ts"), field_name="ts", source=SOURCE)
         if observed is None:
             raise IngestFault(f"OKX book for {inst_id}: no timestamp", retryable=True)
         return BookRecord(
@@ -403,7 +403,7 @@ def _parse_candle(row: Sequence[Any], inst_id: str, canonical: str, duration: ti
     the contract-currency volume. Both are kept so nothing is silently reinterpreted.
     """
     try:
-        open_time = to_utc(row[0], field_name="ts", source=SOURCE, assume_ms=True)
+        open_time = to_utc(row[0], field_name="ts", source=SOURCE)
     except IngestFault:
         return None
     if open_time is None:

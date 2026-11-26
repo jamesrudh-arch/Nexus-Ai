@@ -107,12 +107,65 @@ def require_decimal(value: Any, *, field_name: str, source: str) -> Decimal:
     return result
 
 
-def to_utc(value: Any, *, field_name: str, source: str, assume_ms: bool = False) -> datetime | None:
+#: Epoch magnitudes are unambiguous across any plausible trading window. Seconds, milliseconds,
+#: microseconds and nanoseconds for 2010-01-01..2100-01-01 occupy **disjoint** ranges — three orders
+#: of magnitude apart — so a timestamp's unit can be read off its magnitude instead of guessed from
+#: what the caller assumed. Verified numerically: 1764072000 can only be seconds, 1764072000000 only
+#: milliseconds, 1764072000000000 only microseconds.
+_EPOCH_SECONDS_MIN = 1_262_304_000.0  # 2010-01-01T00:00:00Z
+_EPOCH_SECONDS_MAX = 4_102_444_800.0  # 2100-01-01T00:00:00Z
+_EPOCH_SCALES: tuple[tuple[float, str], ...] = ((1.0, "s"), (1e3, "ms"), (1e6, "us"), (1e9, "ns"))
+
+
+def epoch_unit(value: float) -> str | None:
+    """The unit an integer epoch is expressed in, from its magnitude alone, or ``None``.
+
+    Returns the only unit that lands the value inside the plausible window. Because those windows do
+    not overlap this is a measurement, not a preference — there is never a tie to break.
+    """
+    for scale, unit in _EPOCH_SCALES:
+        if _EPOCH_SECONDS_MIN <= value / scale <= _EPOCH_SECONDS_MAX:
+            return unit
+    return None
+
+
+def _epoch_to_utc(value: float, *, field_name: str, source: str) -> datetime:
+    """Convert a numeric epoch to aware UTC, refusing a value that fits no unit.
+
+    A mis-scaled timestamp is the dangerous kind of bug: it does not fail loudly at the venue, it
+    produces a bar dated thousands of years out that then poisons every aggregate built on it.
+    Binance Vision began publishing **microsecond** timestamps for spot dumps from 2025-01-01, and
+    reading those as milliseconds produced `year 58852 is out of range` on the first real download
+    this repository ever made (defect 40). Refusing is cheaper than that.
+    """
+    unit = epoch_unit(value)
+    if unit is None:
+        raise IngestFault(
+            f"{source}: timestamp {value!r} in {field_name!r} is not a plausible epoch value in any "
+            f"unit (s, ms, us or ns) between 2010 and 2100 — refusing rather than emitting a date "
+            f"thousands of years out",
+            retryable=False,
+            reason=RejectReason.CONFIG_INVALID,
+        )
+    scale = {name: factor for factor, name in _EPOCH_SCALES}[unit]
+    return datetime.fromtimestamp(value / scale, tz=UTC)
+
+
+def to_utc(value: Any, *, field_name: str, source: str) -> datetime | None:
     """Convert a venue timestamp to aware UTC.
 
-    Accepted forms: epoch seconds, epoch milliseconds, ISO-8601 with offset, or an
-    ISO-8601 string ending in ``Z``. A naive datetime is **rejected** — guessing the
-    venue's timezone is how backtests get silently shifted by hours.
+    Accepted forms: an integer epoch in seconds, milliseconds, microseconds or nanoseconds,
+    ISO-8601 with offset, or an ISO-8601 string ending in ``Z``. A naive datetime is **rejected** —
+    guessing the venue's timezone is how backtests get silently shifted by hours.
+
+    Numeric epochs are scaled by the unit their **magnitude** implies (:func:`epoch_unit`), not by
+    a caller's standing assumption. An earlier signature took ``assume_ms`` for that purpose and the
+    parameter has been removed rather than left inert: a venue can change its unit under us, and
+    Binance Vision did — spot dumps moved from milliseconds to microseconds from 2025-01-01, which
+    read as milliseconds produced `year 58852 is out of range` on the first real download this
+    repository ever made (defect 40). A flag that says "trust me, it's milliseconds" is precisely
+    the thing that cannot notice, and keeping it in the signature would invite callers to believe it
+    still governs.
     """
     if value is None or value == "":
         return None
@@ -125,13 +178,10 @@ def to_utc(value: Any, *, field_name: str, source: str, assume_ms: bool = False)
             )
         return value.astimezone(UTC)
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        seconds = value / 1000.0 if assume_ms or abs(value) > 1e11 else float(value)
-        return datetime.fromtimestamp(seconds, tz=UTC)
+        return _epoch_to_utc(float(value), field_name=field_name, source=source)
     text = str(value).strip()
-    if text.isdigit():
-        number = int(text)
-        seconds = number / 1000.0 if assume_ms or number > 1e11 else float(number)
-        return datetime.fromtimestamp(seconds, tz=UTC)
+    if text.lstrip("-").isdigit():
+        return _epoch_to_utc(float(int(text)), field_name=field_name, source=source)
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError as exc:
@@ -767,6 +817,7 @@ __all__ = [
     "require_decimal",
     "sort_bars",
     "to_decimal",
+    "epoch_unit",
     "to_utc",
     "validate_bar",
     "validate_quote",
