@@ -8,7 +8,7 @@ consistent and proves nothing about the world: it cannot notice that a venue ren
 changed a divisor, started returning strings where it returned numbers, or that a URL shape was
 misread. For Dukascopy the gap was wider still — the bi5 binary layout was implemented from
 documentation alone, and ``LAYOUT_VERIFIED`` stayed ``False`` until this module downloaded a real
-hour file and ``verify_layout`` passed against it (2026-11-26, six consecutive CI runs on hour
+hour file and ``verify_layout`` passed against it (eight consecutive CI runs on 2026-11-26,
 ``2026-11-24T12:00Z``; the flag is ``True`` now and cites that evidence — ``docs/14`` §1.4 F-1 and
 §2.1, ``docs/00`` O-010).
 
@@ -643,6 +643,25 @@ def _diagnose_dukascopy(baseline: str, browser: str, other_hour: str) -> tuple[s
             "none",
         )
     if baseline.startswith("network-"):
+        # "Never reached" is only true if nothing reached it. This branch used to fire first and
+        # unconditionally, so three runs published a verdict their own measurements refuted: in
+        # 45756716181 the production User-Agent on a different hour returned 25,313 bytes of valid
+        # LZMA, and in 45758610197 and 45784665370 a browser User-Agent on the *same* hour returned
+        # 25,761 - all while the verdict said the host was never reached (docs/14 F-10).
+        reached = []
+        if browser == "ok":
+            reached.append("a browser User-Agent on the same hour")
+        if other_hour == "ok":
+            reached.append("the production User-Agent on a different hour")
+        if reached:
+            return (
+                f"the production attempt got no reply ({baseline}) but the host did answer "
+                f"{' and '.join(reached)} in the same minute, so this is not an unreachable host; "
+                "one attempt per variant cannot separate a transient network fault from a rejection",
+                "re-run: a production User-Agent success on retry makes the fault transient rather "
+                "than policy; a repeat failure while a variant keeps working is an OWNER DECISION "
+                "about how this project presents itself, not an engineering fix",
+            )
         # A host that never answered is a different fact from a host that answered 503, and
         # conflating them would make a sandbox with no egress look like a finding about Dukascopy.
         return (
@@ -675,12 +694,16 @@ class TestDukascopyReachabilityDiagnostic:
     """Why does the bi5 endpoint answer 503? Measured, not guessed.
 
     History: with the corrected URL (defect 39) the host answered HTTP 503 on all four attempts in
-    run `45726585354`, so `verify_layout` had still never seen a real file. It has since — four
-    consecutive runs passed and `LAYOUT_VERIFIED` is True. What this diagnostic has *not* settled is
-    why the feed answers intermittently: across runs `45754638978`, `45756716181`, `45758610197` and
-    `45759709313` the probes produced three different patterns, including one where the browser
-    `User-Agent` succeeded and the next where the production one did, so no single variable explains
-    it (`docs/14` §1.4 F-5). Three explanations are plausible and they imply different responses:
+    run `45726585354`, so `verify_layout` had still never seen a real file. It has since — eight
+    consecutive runs on 2026-11-26 passed and `LAYOUT_VERIFIED` is True. What this diagnostic has
+    *not* settled is why the feed answers intermittently: across those eight runs the probes
+    produced four different patterns — production ok; both UAs faulted with another hour ok;
+    production faulted with a browser UA ok; and production faulted with *both* a browser UA and
+    another hour ok — while the patient layout fetch succeeded in every one, so no single
+    variable explains it (`docs/14` §1.4 F-5). Four of those runs (`45756716181`, `45758610197`,
+    `45784665370`, `45784657260`) also published the verdict "the host was never reached" next to
+    probes showing the host answering, which is `docs/14` F-10 and is why the branch order below is
+    pinned by tests. Three explanations are plausible and they imply different responses:
 
     * the feed throttles, and 503 is one of its throttle responses alongside 429 — then patience and
       a lower request rate fix it;
@@ -797,6 +820,32 @@ class TestDukascopyDiagnosisLogic:
         )
         assert "never reached" in verdict
         assert "egress" in action
+
+    def test_a_browser_success_refutes_never_reached(self) -> None:
+        """The shape runs `45758610197` and `45784665370` actually produced (docs/14 F-10).
+
+        The production attempt got no reply while a browser User-Agent fetched 25,761 bytes of valid
+        LZMA from the same URL in the same minute. Reporting "the host was never reached" there is
+        contradicted by the diagnostic's own second measurement, and it was published three times
+        before anything checked the verdict against the probes next to it.
+        """
+        verdict, action = _diagnose_dukascopy("network-IngestFault", "ok", "network-IngestFault")
+        assert "never reached" not in verdict
+        assert "browser User-Agent" in verdict
+        assert "cannot separate a transient network fault" in verdict
+        assert "OWNER DECISION" in action  # a UA change is a policy choice, never automatic
+
+    def test_another_hour_answering_also_refutes_never_reached(self) -> None:
+        """The shape run `45756716181` produced: both User-Agents faulted, a different hour answered."""
+        verdict, action = _diagnose_dukascopy("network-IngestFault", "network-IngestFault", "ok")
+        assert "never reached" not in verdict
+        assert "different hour" in verdict
+        assert "re-run" in action
+
+    def test_never_reached_still_holds_when_nothing_answered(self) -> None:
+        """The claim this branch exists to make, now scoped to the case where it is true."""
+        verdict, _ = _diagnose_dukascopy("network-IngestFault", "network-IngestFault", "network-X")
+        assert "never reached" in verdict
 
     def test_a_user_agent_block_is_escalated_not_silently_worked_around(self) -> None:
         verdict, action = _diagnose_dukascopy("http-503", "ok", "http-503")
