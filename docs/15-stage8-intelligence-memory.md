@@ -696,6 +696,11 @@ came from the venue, and carries the interval with its qualification attached.
 `test_migrations.py` 12 → 15. No live endpoint was called; nothing in this batch touches ingestion, so the
 live-check count is unchanged at 49 and no run number is published here.
 
+**Superseded after the board was built, and recorded rather than left in the annotations.** That
+sentence is true of the batch and not of its commit: the push that carried `11d6db3` triggered CI's
+own `venue-verification`, **run 30**, which is recorded in §9.9 with what it adds and what it does
+not. None of the 49 checks exercises this batch's code.
+
 ### 9.7 Limitations of this batch
 
 1. **The CHECK on `confidence` bounds nothing but "is it a number".** It accepts `'0.5abc'` (which casts
@@ -722,6 +727,10 @@ live-check count is unchanged at 49 and no run number is published here.
 
 ### 9.8 Decision requested
 
+> **Ruled 2026-11-26 — all four answered `Recommend`, recorded as D-051 (§9.9).** The four
+> questions below are the request exactly as it was put and are unchanged; §9.9 carries the ruling
+> and what each answer changes.
+
 1. **Is Stage 8.2 approved?** L-A + L-B + L-C as described, with the deviation in §9.2 (TEXT kept, CHECK
    added) and the runner change in §9.3 (F-20) disclosed above. **Recommendation: approve**, and record as
    **D-051**.
@@ -743,3 +752,53 @@ live-check count is unchanged at 49 and no run number is published here.
    global sequence. **Recommendation: continue global numbering**, as §8 recommended — a prefix scheme
    introduced halfway creates a second convention to remember, and the collision is now recorded where a
    reader will find it.
+
+### 9.9 D-051 — the four rulings, and the live run this commit's push triggered
+
+All four questions in §9.8 were answered `Recommend`, each against exactly one marked recommendation, and
+are recorded as **D-051**. §9.8 is left as it was put; this section is the ruling.
+
+| # | Question as put | Ruled | What it changes |
+|---|---|---|---|
+| 1 | Is Stage 8.2 approved? | **Approved, recorded as D-051**, with §9.2's deviation (TEXT kept, CHECK added) and §9.3's runner change (F-20) both disclosed | This batch's row in `docs/07` flips to `APPROVED`; **F-15/O-013 and F-16 close as fixed** and **F-20 as found-and-fixed**. The alternative offered — bound the CHECK's range in a follow-up before 8.3 — was **not** taken, so §9.7's limitation 1 stands exactly as published: `confidence` is constrained to "casts to a nonzero number", and `'12'`, `'-0.5'`, `'99999999'`, `'0.5abc'` and `'1e-9'` are accepted. Bounding the range belongs to whoever writes `memory_item.confidence` in stage 10 |
+| 2 | What is 8.3? | **L-D + L-E only** | L-D = the read-only `/v1/intelligence/dossiers` route; L-E = the dossier writer at `stance=ABSTAIN`. **F-18's cheap half is deferred** to the stage-10 batch that writes `memory_item`: the three `ADD COLUMN`s (`valid_from`, `valid_until`, `change_conditions`) and `evidence_ref.contradicts` are not landed now. The reason the ruling adopted is this batch's own evidence — `save_venue_mapping` writes `margin_rate=NULL` and `fees={}` for all four seeded mappings and nothing detects it, so a nullable column no writer fills is indistinguishable from one that was dropped |
+| 3 | F-14's expensive half — authorise it, and when? | **Authorised as its own batch, 8.4**, not folded into 8.3 | F-14/O-012 stays `OPEN` and is now **authorised** rather than merely re-asked: four adapters get a real receipt time, which changes what a persisted field means. **8.3 does not touch ingestion.** 8.4 gets its own gate and its own live runs, because a regression inside a batch that both writes the dossier and re-stamps four adapters could not be attributed to either half |
+| 4 | Should finding ids be scoped per stage from Stage 8 onward? | **Continue global numbering** | F-21 onward continues the sequence; no prefix scheme, so there is one convention and not two. F-19's record of the F-1…F-7 collision between two approved documents stands as the place a reader finds it. This was §8's question 4, put for the first time here and now answered |
+
+**Run 30 — the live run CI triggered on this batch's own commit, recorded rather than left in the
+annotations.** Commit `11d6db3` produced three runs and all three are `conclusion=success`:
+`45875230477` (`push`, five jobs) and `45875239151` + `45875239156` (`pull_request`). The
+`pull_request` event carries `venue-verification`, so a live run happened even though nothing in this
+batch calls a venue — §9.6's "no run number is published" was true of the batch and is superseded by CI.
+Run 30 is `45875239151`, and its annotation carries:
+
+```
+44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49 live checks
+PARTIAL - 5 geo-blocked (need a runner outside the restricted region)
+
+okx.cross_endpoint quotes_mid=60490.35 book_mid=60490.35 gap_bps=0.0 dt_observed_s=0.385
+                   dt_wall_s=0.249 bps_per_s_observed=0.0 bps_per_s_wall=0.0
+                   quoted_spread_bps=0.017 asserts_agreement=False
+okx.trades         count=50 price_min=60487 price_max=60490.4 buy=37 sell=13 unspecified=0
+dukascopy.layout   passed=True payload_bytes=25761 decompressed_bytes=101480 tick_count=5074
+dukascopy.ticks    count=5074 price_min=1.09502 price_max=1.0964 layout_flag=True
+binance-vision.parse rows=1440 accepted=1440 rejected=0 timestamp_units=us
+dukascopy.probe.*  outcome=network-IngestFault (browser_ua, production_ua, production_ua_other_hour)
+```
+
+What it adds, and what it does not. **It is the fourth measured skew and the smallest: 1.55×**
+(`dt_observed_s=0.385` against `dt_wall_s=0.249`), beside 3.95× in run 29, 2.6× in run 28 and 3.7× in
+run 27. Both rates are `0.0` because the gap is `0.000` again, so this run yields **no rate comparison**
+and adds nothing to run 29's finding that the wall-clock rate is the one that means anything. What it
+does add is the point ruling 3 rests on: **the skew factor is not a constant**, so it cannot be divided
+out after the fact — giving four adapters a real receipt time is the only way to stop dividing a market
+move by somebody else's clock. It breaks no floor either: **0 skips**, so `layout_flag=` is
+live-evidenced in run 30 as well as 24, 25, 26, 27 and 29 — six runs, with run 28 the only one that
+skipped the check — and dukascopy's three reachability probes returned `network-IngestFault` under both
+user agents, as they have since F-8.
+
+Two things this section does not claim. The annotation is truncated at `2713 escaped characters over the
+cap`, so the bybit rows sit inside the truncated tail and are **not** quoted here; naming them from a
+partial annotation is not something this document does. And run 30 says nothing about this batch's code:
+no check in the 49 exercises migration 0004, the projection or the evidence writer, all three of which
+are covered by the 1,117 offline tests instead.

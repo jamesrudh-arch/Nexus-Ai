@@ -720,11 +720,18 @@ def lever_table() -> str:
              "separate", "<b class='ok'>DONE</b> — <span class='cite'>nexus/intelligence/evidence.py</span>, "
              "27 tests"),
             ("<b>L-D</b> — read-only <span class='mono'>/v1/intelligence/dossiers</span>",
-             "<b>DEFERRED to 8.3</b> by D-050"),
+             "<b>AUTHORISED for 8.3</b> — deferred there by D-050, scoped by <b>D-051</b>"),
             ("<b>L-E</b> — the dossier writer at <span class='mono'>stance=ABSTAIN</span>",
-             "<b>DEFERRED to 8.3</b> by D-050"),
+             "<b>AUTHORISED for 8.3</b> — deferred there by D-050, scoped by <b>D-051</b>"),
             ("<b>F-20</b> — the migration runner could not tell a deferral from a bypass",
              "<b class='ok'>FOUND AND FIXED in this batch</b>, by the existing suite"),
+            ("<b>F-18</b> cheap half — three <span class='mono'>memory_item</span> columns plus "
+             "<span class='mono'>evidence_ref.contradicts</span>", "<b>DEFERRED to stage 10</b> by "
+             "<b>D-051</b>, to the batch that writes <span class='mono'>memory_item</span> — not landed "
+             "in 8.3"),
+            ("<b>F-14</b> expensive half — a real receipt time in four adapters",
+             "<b>AUTHORISED as its own batch, 8.4</b>, by <b>D-051</b> — <span class='mono'>O-012</span> "
+             "stays <b>OPEN</b>"),
         ],
     )
 
@@ -739,7 +746,7 @@ def main() -> pathlib.Path:
 {fonts_css()}
 {CSS}</style></head><body><div class='wrap'>
 <div class="lede">Nexus-AI &middot; Stage 8 of 23 &middot; sub-deliverable 8.2 &middot; authorised by
-D-050 &middot; L-A + L-B + L-C</div>
+D-050 &middot; L-A + L-B + L-C &middot; <b>approved 2026-11-26 (D-051)</b></div>
 <h1 style="font-size:var(--font-size-heading);font-weight:var(--font-weight-semibold);margin:6px 0 0">
 The two schemas now agree, the seeded master reaches the system of record, and evidence has a writer</h1>
 <div class="ribbon">This is the first batch to change <span class="mono">backend/</span> since
@@ -940,20 +947,48 @@ gated before they are used.</p>
      "regression ambiguous between three causes."),
     ("<b>What it now costs to leave open</b>", "Run 29 measured the wall-clock rate at <b>3.95&times;</b> the "
      "venue-time rate, so using <span class='mono'>observed_at</span> as a denominator biases a rate "
-     "<i>downward</i> by the skew factor rather than merely adding noise. Re-asked as its own batch in §12."),
+     "<i>downward</i> by the skew factor rather than merely adding noise. Re-asked in §12 and <b>authorised by D-051 as its own batch, 8.4</b> — its own gate, its own live runs."),
 ])}</div>
 
 <h3>11 &middot; The gate, and what this batch cannot claim<span class="tag">docs/15 §9.6, §9.7</span></h3>
 <div class="card">{gate_table()}</div>
 <p class="cap">Every number above was produced by the command beside it and re-verified before being written
 here. <b>No live endpoint was called</b> and nothing in this batch touches ingestion, so the live-check count
-is unchanged at 49 and <b>no run number is published on this board</b> — there is nothing new to re-trigger.</p>
+is unchanged at 49. <b>Superseded after this board was built, and recorded rather than left in the
+annotations:</b> the push that carried <span class="mono">11d6db3</span> triggered CI&rsquo;s own
+<span class="mono">venue-verification</span> &mdash; <b>run 30</b>, <span class="mono">45875239151</span>,
+<b>44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49</b>. No check in those 49 exercises migration 0004,
+the projection or the evidence writer, so the run says nothing about this batch&rsquo;s code; the 1,117 offline
+tests do. What it adds is the <b>fourth measurement of the clock skew and the smallest: 1.55&times;</b>
+(<span class="mono">dt_observed_s=0.385</span> against <span class="mono">dt_wall_s=0.249</span>), beside
+3.95&times; in run 29, 2.6&times; in run 28 and 3.7&times; in run 27 &mdash; <b>the skew is not a constant, so it
+cannot be divided out after the fact</b>, which is the evidence ruling 3 below rests on. Both rates are
+<span class="mono">0.0</span> because the gap is <span class="mono">0.000</span> again, so run 30 yields no rate
+comparison and adds nothing to run 29&rsquo;s finding that the wall-clock rate is the one that means anything.
+0 skips, so <span class="mono">layout_flag=</span> is live-evidenced in a sixth run (24, 25, 26, 27, 29, 30).
+The annotation truncates at <span class="mono">2713 escaped characters over the cap</span>, so the bybit rows
+are inside the tail and are not quoted here. Recorded in <span class="mono">docs/15</span> §9.9; all three runs
+of the commit are <span class="mono">success</span>.</p>
 <div class="card">{delta_table()}</div>
 <div class="card">{batch_table()}</div>
 <div class="card">{limits_table()}</div>
 
-<h3>12 &middot; Decision requested<span class="tag">docs/15 §9.8</span></h3>
+<h3>12 &middot; Decision requested &mdash; and ruled<span class="tag">docs/15 §9.8 &middot; D-051 in §9.9</span></h3>
 <div class="card">{lever_table()}</div>
+<div class="ribbon"><b>Ruled 2026-11-26 &mdash; D-051.</b> All four questions below were answered
+<span class="mono">Recommend</span>, each against exactly one marked recommendation, and the questions are left
+here exactly as they were asked. <b>(1) Stage 8.2 is approved</b>, with both disclosures standing &mdash; the
+TEXT-plus-CHECK deviation in §3 and the migration-runner change in §6 &mdash; and the offered alternative,
+bounding the CHECK&rsquo;s range before 8.3, was <b>not</b> taken, so limitation 1 stays published as written:
+the range is unguarded and that is recorded rather than quietly fixed. <b>(2) 8.3 is L-D + L-E only</b>;
+F-18&rsquo;s three <span class="mono">memory_item</span> columns and
+<span class="mono">evidence_ref.contradicts</span> are deferred to the stage-10 batch that writes
+<span class="mono">memory_item</span>, because §8 of this board is the evidence that a nullable column no
+writer fills is indistinguishable from one that was dropped. <b>(3) F-14&rsquo;s expensive half is authorised as
+its own batch, 8.4</b>, with its own gate and its own live runs, so no 8.3 regression can be ambiguous between
+two halves; <span class="mono">O-012</span> stays <b>OPEN</b> and 8.3 does not touch ingestion. <b>(4) Finding
+ids stay global</b>, so F-21 onward continues the sequence and no second convention is introduced halfway
+&mdash; this answers §8&rsquo;s fourth question, which had never been put.</div>
 <div class="ask">
 <p><b>Recommendation: approve Stage 8.2 as delivered, and authorise 8.3 as L-D + L-E only.</b> The dossier
 writer is what makes the intelligence layer observable, and the read-only route is what makes it checkable;
@@ -987,14 +1022,14 @@ reader will find it.</li>
 </ol>
 </div>
 
-<footer>Stage 8.2 &middot; L-A + L-B + L-C &middot; D-050 &middot; first batch to change
+<footer>Stage 8.2 &middot; L-A + L-B + L-C &middot; authorised by D-050, <b>approved as D-051</b> &middot; 8.3 authorised as L-D + L-E, F-14&rsquo;s expensive half authorised as 8.4 &middot; first batch to change
 <span class="mono">backend/</span> since 9e70ed3: 17 files, 2,236 insertions, gate 1,117 passed / 2 skipped /
 0 failed (+81 tests), mypy strict clean on 60, ruff + format clean on 88 &middot; F-15 and F-16 closed, F-20
 found and fixed, F-14 left open by ruling &middot; migration 0004_memory_fidelity: 15 statements, three
 earlier checksums unchanged, all four now pinned &middot; 0 schema divergences across 16 compared tables
 &middot; the seeded master projects: count 3, projected 3, four venue mappings, nothing appended on restart
 &middot; two claims this batch wrote down were falsified by execution and are corrected here in §2 and §4
-&middot; no live endpoint called, so no run number is published</footer>
+&middot; no live endpoint called by the batch; CI&rsquo;s own run 30 on the commit: 44/0/5/0 of 49, skew 1.55&times;, all three runs success</footer>
 </div></body></html>"""
     out = HERE / "stage8-2-intelligence-memory.html"
     out.write_text(html_out)
