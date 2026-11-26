@@ -1,8 +1,8 @@
 # 10 — Stage 3: Complete Dashboard Design
 
 Status: **IN PROGRESS**, split into reviewable sub-deliverables per the owner's standing order:
-**3.1 layout & information architecture** (this document §1, board
-`design/stage3-1-layout-ia.html`) → 3.2…3.5 screen batches. Started only after Stage 2 approval
+**3.1 layout & information architecture** — APPROVED 2026-11-25 (D-033; §1 below).
+Batches 3.2…3.5 draw the screen interiors inside the approved shell. Started only after Stage 2 approval
 (D-032). Stages 4–23 untouched.
 
 Binding inputs: docs/03 (page architecture §2, hierarchy §4, states §5, Command Centre §6,
