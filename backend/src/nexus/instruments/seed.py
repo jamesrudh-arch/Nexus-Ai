@@ -30,10 +30,10 @@ Three canonical instruments, four venue mappings:
 
 ``EUR/USD`` (FX_SPOT)
     ``DUKASCOPY`` at ``DATA_AVAILABLE`` — the rung the pipeline itself defines as *"the feed was
-    actually observed working"* (``ingestion/pipeline.py:47-49``), which seventeen consecutive runs
-    of a real bi5 hour satisfy. The scope is carried in the label and the notes rather than being
-    withheld from the rank: EURUSD only, one hour, 12 of 13 point divisors still unverified, and no
-    reconciliation against a second source (findings F-5, F-8).
+    actually observed working"* (``ingestion/pipeline.py:47-49``), which every venue run since
+    2026-11-25 satisfies against a real bi5 hour. The scope is carried in the label and the notes
+    rather than being withheld from the rank: EURUSD only, one hour, 12 of 13 point divisors still
+    unverified, and no reconciliation against a second source (findings F-5, F-8).
 
 No mapping is seeded at ``TRADE_ENABLED`` or ``LIVE_VERIFIED``. Those need a sandbox order
 lifecycle and a live pilot with reconciliation proven; no credential-free public data source can

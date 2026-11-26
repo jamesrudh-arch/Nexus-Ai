@@ -471,14 +471,14 @@ so `LAYOUT_VERIFIED` legitimately generalises. The *point divisor* is pair-speci
 `layout_verified_pairs` and `divisor_unverified_pairs` (`dukascopy.py:428-429`), which names the
 **twelve other pairs** — GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF, EURGBP, EURJPY, USDJPY, GBPJPY, AUDJPY, XAUUSD,
 XAGUSD. Pinned by `test_the_verified_scope_is_machine_readable`. Also unchanged: layout verification
-is not price verification (§2.5), and the feed is intermittent (§1.4 F-5, restated over twelve runs in
-the module docstring, which now records **five** distinct probe patterns rather than four).
+is not price verification (§2.5), and the feed is intermittent (§1.4 F-5, restated in the module docstring, which now records **five**
+distinct probe patterns rather than four — a count of patterns, not of runs, and therefore stable).
 
 **Stale statements corrected.** `dukascopy.py` module docstring (rewritten, including the invented
 `{BID|ASK}` URL segment that defect 39 removed), the `LAYOUT_VERIFIED` comment, `source_label()`'s
 docstring, `verify_layout()`'s docstring (kept, with the reason it survives its own flag);
 `test_adapters.py` module docstring, `test_dukascopy_layout_is_declared_unverified` →
-`..._is_declared_verified` (now citing the twelve runs), `test_source_is_labelled_unverified` →
+`..._is_declared_verified` (now citing the runs by id), `test_source_is_labelled_unverified` →
 `..._with_the_layout_state`, the fetch-report and summary assertions;
 `test_live_endpoints.py` module docstring, the layout-gate assertion message, and the reachability
 diagnostic's history paragraph; `docs/06:245-251` and `:297` (superseded in place, history kept).
@@ -766,9 +766,9 @@ done
 
 | Finding | State after 7.2 | Why |
 |---------|-----------------|-----|
-| **F-2** bybit geo-block | **OPEN** — `5 geo-blocked` in the headline of all twelve runs; the 403-from-CloudFront characterisation on public unauthenticated endpoints is run `45724918466` (`docs/06:314`), not these twelve | L-D needs the D-021 deployment VM; the `runner` dispatch input already exists |
+| **F-2** bybit geo-block | **OPEN** — `5 geo-blocked` in the headline of every run read; the 403-from-CloudFront characterisation on public unauthenticated endpoints is run `45724918466` (`docs/06:314`), not these | L-D needs the D-021 deployment VM; the `runner` dispatch input already exists |
 | **F-3** empty master | **OPEN** — `/v1/instruments/coverage` still returns `total=0 active=0` at boot | L-C deferred to 7.3 by the owner's answer. L-E removed the *definition* blocker; the *seed* is still missing |
-| **F-5** intermittent feed | **OPEN, and better evidenced** — twelve runs, **five** probe patterns, production UA worked outright in seven | No cause established; a user-agent conclusion would still be adopted on noise |
+| **F-5** intermittent feed | **OPEN, and better evidenced** — every run read, **five** probe patterns, the production UA working outright in some and faulting in others | No cause established; a user-agent conclusion would still be adopted on noise |
 | **F-6** 3 of 14 asset classes | **OPEN** — `DUKASCOPY` makes FX_SPOT recordable, not covered | The other ten must render `UNSUPPORTED` per D-019 |
 | **F-8** cross-endpoint agreement | **OPEN, now quantified** (§2.5) | Needs a stated bps tolerance + a recorded timestamp gap; both are design choices, not measurements |
 | **F-9** "both sides present" | **Documentation corrected** (`docs/06:234`, `:300` now say the run *happened* to contain both sides and that `_assert_ticks` accepts one) — **the owner ruling is still outstanding**: should a one-sided trade list ever fail? Runs 1–3 and 5–10 returned both sides; run 4 returned 50 buys and passed, correctly |
@@ -779,7 +779,7 @@ done
 
 1. **EURUSD only.** Twelve of thirteen point divisors have never met a real file, and a wrong divisor
    is a silent 100× error. `LAYOUT_VERIFIED_PAIRS` exists so no report can imply otherwise.
-2. **One hour.** All twelve runs fetched the same hour (`2026-11-24T12:00Z`, chosen by
+2. **One hour.** Every run fetched the same hour (`2026-11-24T12:00Z`, chosen by
    `_recent_weekday_hour()`), so twelve passes are twelve readings of *one file*, not twelve samples
    of the feed's shape. A weekend hour, a holiday, a month boundary and a JPY pair are all untested
    against real data.
@@ -804,9 +804,8 @@ Stage 7.2 delivered the three authorised levers. Three questions before 7.3:
    7.1 as a deliverable. Recording **D-046** for it would close the gap; leaving it open is also a
    legitimate answer.
 2. **Authorise Stage 7.3 = L-C, seed the master?** The batch that makes coverage non-zero: register
-   only instruments whose evidence exists — okx `BTC-USDT-SWAP` (twelve runs), binance vision
-   `BTCUSDT` 1m (twelve runs, 1,440 bars, 0 rejected), dukascopy `EURUSD` (twelve runs, layout
-   verified) —
+   only instruments whose evidence exists — okx `BTC-USDT-SWAP`, binance vision `BTCUSDT` 1m
+   (1,440 bars, 0 rejected), dukascopy `EURUSD` (layout verified) —
    each at the rank its evidence supports and no higher, each citing its run ids, with
    `AUTH_NOT_APPLICABLE` at `CONNECTED`. It decides what every screen shows, so it wants its own
    review. Cost $0, no new dependency, offline-testable. **Recommendation: yes, as 7.3.**
@@ -815,3 +814,270 @@ Stage 7.2 delivered the three authorised levers. Three questions before 7.3:
    **Recommendation: no — record the side distribution as evidence and never fail on it**, because a
    one-sided window is normal in a quiet market, and `_assert_book` already fails a one-sided *book*,
    which is the case that actually indicates a broken feed.
+
+---
+
+## 3. Sub-deliverable 7.3 — the master is seeded (L-C), P-7 ruled, P-8 made measurable
+
+Status: **DELIVERED, AWAITING REVIEW.** Authorised by the owner's `Proceed` on the three questions at
+the end of §2.9 (**D-046**), implemented in `c48c714`. Board:
+`design/stage7-3-master-seeded.html`.
+
+### 3.0 How `Proceed` was read, stated so it can be corrected
+
+§2.9 asked three questions. A one-word answer cannot carry three different meanings safely, so the
+reading is written down rather than assumed:
+
+| Question asked in §2.9 | Read as | What this batch therefore did |
+|---|---|---|
+| **Authorise Stage 7.3 = L-C, seed the master?** (recommendation: yes) | **Yes** | L-C implemented: three canonical instruments, four venue mappings, each at the rank its evidence supports |
+| **The P-7 ruling** — may a one-sided trade list fail? (recommendation: no, record the distribution) | **Recommendation adopted** | `_assert_ticks` still accepts one side, now pinned by tests, and records `buy=`/`sell=`/`unspecified=` counts rather than only the set of sides |
+| **P-8** — the F-8 tolerance (recommendation: not choosable today) | **Recommendation adopted** | The missing measurement was added (`observed_at` on the book evidence line). **No tolerance was chosen and none is asserted** |
+| **Is Stage 7.1 approved?** (D-046 candidate) | **Not answered** | 7.1's row in `docs/07` still reads `AWAITING REVIEW / PENDING` with no decision id. `Proceed` was read as authorising the work ahead, not as retroactively approving a deliverable behind it. **This is still owed** |
+
+Because `D-046` was floated in §2.9 as a possible id for a 7.1 approval, it is recorded here as what
+it actually is: **the owner's `Proceed`, authorising Stage 7.3 and adopting the two recommendations.**
+It is not an approval of Stage 7.1.
+
+### 3.1 L-C — what was seeded, and at what rank
+
+`nexus/instruments/seed.py` is new. It writes down what previous CI runs already proved; it contacts
+no venue, needs no credential and performs no I/O.
+
+| Canonical instrument | Class | Venue | Venue symbol | Rank seeded | What the rank cites |
+|---|---|---|---|---|---|
+| `BTC/USDT:USDT` (`INS-BTC-USDT-USDT`) | `CRYPTO_PERP` | `OKX` | `BTC-USDT-SWAP` | **`DATA_AVAILABLE`** | five public endpoints verified against live responses in every run read; economics `ctVal=0.01 tickSz=0.1 minSz=0.01` read off the instrument endpoint, not assumed |
+| `BTC/USDT:USDT` (same instrument) | `CRYPTO_PERP` | `BYBIT` | `BTCUSDT` | **`SUPPORTED`** | an adapter exists — all `SUPPORTED` claims. 403 geo-blocked from every hosted runner (F-2); never verified; needs the D-021 VM (L-D) |
+| `BTC/USDT` (`INS-BTC-USDT`) | `CRYPTO_SPOT` | `BINANCE` | `BTCUSDT` | **`DATA_AVAILABLE`** | a real 71,720-byte daily ZIP downloaded and parsed: 1,440 of 1,440 1m bars accepted, 0 rejected, `timestamp_units=us` |
+| `EUR/USD` (`INS-EUR-USD`) | `FX_SPOT` | `DUKASCOPY` | `EURUSD` | **`DATA_AVAILABLE`** | 25,761 → 101,480 bytes = 5,074 ticks × 20 exactly, prices 1.09502–1.0964 in band, layout verified — **EURUSD only, one hour** |
+
+**Ten rungs climbed, thirteen change-log entries** (3 `REGISTER` + 10 `CERTIFY`), every one
+`requested_by=STAGE-7.3-SEED`. The three `CONNECTED` rungs declare `AUTH_NOT_APPLICABLE`; no other
+rung carries a declaration, because L-E put that field on one rung only.
+
+**Why `DATA_AVAILABLE` for dukascopy and not `CONNECTED`.** This was the one judgement call in the
+batch, so its reasoning is written down. The rank is defined by the code that consumes it:
+`ingestion/pipeline.py:47-49` says *"``DATA_AVAILABLE`` means the feed was actually observed working
+— accepting ``UNKNOWN`` would archive data from a mapping nobody has verified."* Seventeen consecutive runs observed this feed working and returned real ticks that parsed
+(§2.4). Withholding the rung
+on the grounds that the prices are not reconciled against a second source would have to be applied to
+okx too (F-8 is exactly that unresolved question), which would leave the master empty and defeat
+L-C — and `DATA_AVAILABLE` is not `LIVE_VERIFIED`, which is the rank that would claim reconciliation.
+The scope limits therefore travel **in the record** rather than being expressed by withholding a rung:
+the evidence label says *"EURUSD only, one hour, unreconciled (F-8)"* and the mapping's notes name the
+twelve unverified divisors, the intermittent feed (F-5) and the absence of lot economics.
+
+**Nothing is seeded at `TRADE_ENABLED` or `LIVE_VERIFIED`.** Both need a sandbox order lifecycle and
+a live pilot with reconciliation proven; no credential-free public data source can reach either, and
+`DUKASCOPY` can never reach them at all — it is data, not a broker. `ready_for_paper` and
+`ready_for_live` stay empty, `active()` stays empty, `tradeable()` stays empty, and every mapping's
+`is_tradeable` is False (D-002: data is not permission).
+
+### 3.2 The two traps a boot-time seed has to avoid
+
+Both are pinned by tests, because both fail silently and both corrupt a record that is supposed to be
+append-only:
+
+* **`register()` overwrites.** Re-registering an instrument that already exists replaces the stored
+  record and logs `REMAP` — which would reset every certified mapping to `UNKNOWN` at each boot. So
+  an instrument already in the master is **never re-registered**.
+* **`certify()` downwards is a demotion.** Claiming a rung *below* the current one is recorded as
+  `DE_CERTIFY`. So a rung already held is **never re-claimed**.
+
+A second `seed_master()` therefore registers nothing, climbs nothing, skips all ten rungs and adds
+nothing to the change log: `13 → 13` entries, kinds `{REGISTER, CERTIFY}` only. A third and fourth
+call leave the statuses where they were. And a mapping somebody else has since certified *higher*
+(`TRADE_ENABLED` in the test) is left alone rather than restated down to the seed's own rank.
+
+`SeedMapping.__post_init__` refuses a ladder that could not be climbed — one that starts above
+`SUPPORTED`, skips a rung, is empty, puts an auth declaration on the wrong rung, omits it from
+`CONNECTED`, or carries a label longer than the audit payload's 200-character bound. A bad seed fails
+when it is declared, not halfway through a boot.
+
+### 3.3 F-3 closed — the observable, through the API and through the gate
+
+| Before 7.3 | After 7.3 |
+|---|---|
+| `/v1/instruments/coverage` → `total=0 active=0`, `ready_for_research=()` | `total=3 active=0`, `ready_for_research` = all three, `ready_for_paper`/`ready_for_live` empty |
+| `/v1/status` → `instrument_master {count: 0, active: 0}` | `{count: 3, active: 0}` |
+| `by_asset_class {}` | `{CRYPTO_PERP: 1, CRYPTO_SPOT: 1, FX_SPOT: 1}` — the three classes of §1.6 F-6, and no others invented |
+| `by_venue_status {}` | `{DATA_AVAILABLE: 3, SUPPORTED: 1}` |
+| archive gate unsatisfiable in production: no mapping anywhere could reach `DATA_AVAILABLE` | a seeded `BINANCE` bar and a seeded `DUKASCOPY` bar are accepted and resolve to real instrument ids |
+| — | `BYBIT` at `SUPPORTED` is still **refused** by the same gate: `status_refusals={"BYBIT:SUPPORTED": 1}`, nothing archived |
+
+Stage 7.2 proved the gate was reachable *in principle*, with a registry built inside a test. This
+proves it is reachable with the registry the application actually boots — and that it still refuses
+what has not been earned.
+
+`/v1/data/coverage` still reports `configured=false`, `files=0`. Seeding the master says what has been
+**proven about sources**; it does not claim that any data has been stored, and "no archive" remains a
+different fact from "archive holds nothing".
+
+**Two escape hatches, both tested.** `create_app(seed=False)` boots an empty master on purpose, and an
+**injected** registry is never seeded at all — what a caller built is what the app serves, so a test
+fixture stays a test fixture and no composition root has its registry rewritten underneath it.
+
+### 3.4 Bybit stays visible — and "visible" now means something
+
+The owner's ruling was that bybit's row stays open **and visible** rather than being dropped from
+sight. Seeding it at `SUPPORTED` keeps it in the master; the reason it goes no higher lives in the
+mapping's `notes`. But `_mapping_to_dict` did not expose `notes`, so `/v1/instruments` served
+`BYBIT … SUPPORTED` with no reason attached — and a rank on its own reads as coverage.
+
+`notes` is now serialised for both mappings and instruments. A status with no visible reason is
+visible only in the sense that it is not hidden, which is not the same thing. The payload now carries
+`GEO-BLOCKED`, the finding id `F-2`, and `D-021` — the machine that would close it — next to the rank
+it explains. No test pinned the previous key set, so nothing else moved.
+
+### 3.5 P-7 ruled and pinned; P-8 measured and still open
+
+**P-7 — accepted as recommended: one-sidedness in a trade list is never a failure.** `_assert_ticks`
+already accepted `side in (None, "BUY", "SELL")`; the ruling is now pinned by
+`TestTradeSideRuling` (five offline checks) rather than resting on an absence. Run `45759709313`'s
+real shape — 50 buys, no sells — is reproduced offline and passes. The distribution is recorded as
+**counts** (`buy=50 sell=0 unspecified=0`) and not only as the set of sides present, because
+`sides=['BUY','SELL']` is identical for a 49/1 minute and a 25/25 minute and so cannot be compared
+between runs. `side=None` is recorded as `unspecified=`, since some feeds do not say and that is a
+fact about the feed.
+
+**The asymmetry with the book is the ruling, not an inconsistency.** `_assert_book` still fails a
+one-sided book, and the test asserts that it does: a book with no asks cannot be crossed, quoted or
+traded against, so it indicates a broken feed, while a one-sided trade window indicates a quiet
+market.
+
+**P-8 — the missing measurement was added, and it immediately produced an answer.** The `.book`
+evidence line now records `observed_at`, which `.quotes` always did. That is precisely the half F-8
+named as missing: with both timestamps in one annotation, a gap between the two mids can be attributed
+to elapsed time rather than to disagreement.
+
+The first two runs to carry it, `c48c714`'s own `push` and `pull_request` pair, both
+`conclusion=success`:
+
+| Run | Id | `.quotes` `observed_at` | `.book` `observed_at` | Δt | quotes mid | book mid | `gap_bps` | trades |
+|---|---|---|---|---|---|---|---|---|
+| 18 | `45819528009` | `12:26:10.568` | `12:26:11.906` | **1.338 s** | 60606.25 | 60606.25 | **0.000** | `buy=46 sell=4` |
+| 19 | `45819539643` | `12:26:19.069` | `12:26:20.356` | **1.287 s** | 60591.25 | 60587.05 | **0.693** | `buy=2 sell=48` |
+
+*(Convention as in §2.5: `gap_bps = |mid_quotes − mid_book| / mid_quotes × 1e4`.)*
+
+**What this establishes.** The two endpoints are fetched **sequentially, about 1.3 s apart** — not
+simultaneously. So a nonzero gap is not evidence of disagreement at all; it is evidence that the
+market moved during the fetch interval. Run 19 shows the mechanism directly: the trade list's newest
+tick is `12:26:18.592` at 60591.2–60593.9, and the book read 1.764 s later sits at 60587 — a 0.693 bps
+fall, exactly the size of the "gap". Run 18 had the same Δt and a gap of precisely zero because the
+price did not move in that window.
+
+That reframes F-8: §2.5's distribution (exactly zero in 6 of 12, max 2.223, mean 0.515 bps) is not
+twelve measurements of endpoint disagreement, it is twelve measurements of **how far BTC moved in
+roughly 1.3 s**. A constant bps tolerance is therefore the wrong instrument — the honest bound is a
+rate (bps per second of Δt), and two runs cannot size a rate. **No tolerance is asserted and none is
+chosen**; §3.9 asks the owner to rule on the reframing rather than on a number.
+
+Nothing in `_assert_book` asserts agreement between the two endpoints, which is why both runs passed
+with gaps of 0.000 and 0.693 without either being judged.
+
+### 3.6 F-12 — a stale run count in source, and a docstring that lost its subject
+
+Found while writing this section, in the module the seed cites most. Two defects, both in
+`ingestion/dukascopy.py`, both surviving `62fe026` ("bound the run counts, so they cannot go stale
+again"):
+
+**1. The same file disagreed with itself about its own central evidence.** The module docstring said
+`verify_layout` had passed "twelve consecutive CI runs … four before the flip … and **eight after
+it**", while the comment attached to `LAYOUT_VERIFIED` itself — fifty lines below, about the same
+flag — said "It passed **ten** times in a row … four before the flip and **six after it**". Neither
+number was current at the time it was read, and they did not agree with each other. `LAYOUT_VERIFIED`
+is the flag that decides whether every dukascopy record is labelled `DUKASCOPY_BI5` or
+`DUKASCOPY_BI5_UNVERIFIED`, so the count of runs supporting it is not trivia.
+
+The cause is structural, not careless: two venue runs appear per commit (`push` and `pull_request`,
+the latter not suppressed by the path filter), so a total written into source is stale on the very
+push that carries it. Prose was bounded in `62fe026`; source was not.
+
+**2. Flipping the flag had deleted the subject of the sentence that states it.** The pre-7.2 text read
+"`LAYOUT_VERIFIED` is therefore ``False``". The flip replaced the old sentence and took the subject
+with it, leaving a fragment — "therefore ``True`` and every record carries `source=…`" — that never
+says *what* is true. A docstring that cannot name its own claim cannot be checked against the code
+beneath it.
+
+**Fixed structurally, not by updating the numbers.** Every run count in the module is now a floor
+("every CI run since 2026-11-25", "every venue run since 2026-11-25"), the four pre-flip run ids stay
+enumerated because they are fixed history, and the docstring now points at `docs/14` §2.1 as the only
+place the table is allowed to grow. The subject is restored.
+
+**Guarded, and the guard is negative-controlled.** `TestSourceStatesNoVenueRunCount` (3 tests) scans
+every shipped module for a run count and fails with an instruction to state a floor instead. Its
+patterns are deliberately narrow so static facts survive — "five different probe patterns", "twelve
+other pairs" and "12 of the 13 divisors" are facts about the world, not tallies of runs. Injecting
+`seventeen venue runs` into `seed.py` made the guard fail as designed; removing it made the suite
+green. A guard that has never been seen to fire proves nothing.
+
+### 3.7 Gate evidence
+
+| Gate | Result | Command |
+|---|---|---|
+| Suite | **1,036 passed, 2 skipped, 0 failed** (was 997 + 2) | `pytest` with CI's env (`NEXUS_AUDIT_BACKEND=memory NEXUS_ENVIRONMENT=DISABLED DO_NOT_TRACK=1`) |
+| New tests | **+39**: 36 in `tests/test_instrument_seed.py` (six classes — ranks claimed, idempotency, change log, ladder guard, boot path, archive gate), 3 in `tests/test_repo_hygiene.py` for F-12 | `pytest tests/test_instrument_seed.py tests/test_repo_hygiene.py` |
+| Live module collected | **41** (36 → 41); live-source checks still **11** | `NEXUS_LIVE_VERIFY=1 pytest tests/test_live_endpoints.py --collect-only -q` |
+| Live module offline subset | **25 passed** (was 20) | `… -k "DiagnosisLogic or PatienceBehaviour or TradeSideRuling"` |
+| Lint / format | clean | `ruff check src tests`, `ruff format --check src tests` (82 files) |
+| Types | **Success: no issues found in 57 source files** | `mypy` (strict, `src/nexus`) |
+| Repo hygiene | **83 passed** | `pytest tests/test_repo_hygiene.py` (after `git add -A`) |
+| Existing tests broken by boot seeding | **zero** — the only failure before staging was hygiene's untracked-file guard, which is the known trap and not a behaviour change | full suite before `git add -A` |
+| Scope | **5 production files, 3 test files** · two commits, `c48c714` and the F-12 correction | `git diff --stat 62fe026` |
+
+### 3.8 What 7.3 did not close
+
+| Finding | State after 7.3 | Why |
+|---|---|---|
+| **F-3** empty master | **CLOSED** (§3.3) | L-C. The archive gate is reachable with the registry the app boots, and still refuses what has not been earned |
+| **F-6** 3 of 14 asset classes | **OPEN, now visible** | The three classes with a verified free source are seeded; the other eleven must still render `UNSUPPORTED` per D-019. `len(AssetClass) == 14` is asserted so growth forces the scope to be re-argued |
+| **F-9 / P-7** one-sidedness | **CLOSED** (§3.5) | Ruled, implemented and pinned. `docs/06`'s wording was corrected in 7.2 |
+| **F-8 / P-8** cross-endpoint agreement | **OPEN, and reframed** | Δt is now recorded: the endpoints are fetched ~1.3 s apart, so §2.5's distribution measures how far the market moved, not whether the endpoints disagree. A constant bps tolerance is the wrong instrument; the reframing is the owner's to rule on (§3.10 item 3) |
+| **F-2** bybit geo-block | **OPEN, and now visible in the API** | Seeded at `SUPPORTED` with the reason attached (§3.4). L-D still needs the D-021 VM |
+| **F-5** intermittent feed | **OPEN** | Unchanged by this batch; five probe patterns, no cause established |
+| **F-11** half of the fix offline-evidenced | **OPEN as a limitation** | The `http-*`-beside-a-network-fault path has still not recurred in a live run (§2.8) |
+| **F-12** run counts in source | **NEW, CLOSED here** (§3.6) | Found in this batch: `dukascopy.py` stated two different counts for the same evidence, and the sentence naming `LAYOUT_VERIFIED` had lost its subject. Both fixed, both guarded |
+
+### 3.9 Limitations of this batch
+
+1. **The seed is a record, not a feed.** Nothing here fetches, streams or stores market data. It
+   changes what the system *knows it has proven*; the first writer to the archive is still to come.
+2. **Ranks are only as good as their labels.** `certify` cannot judge an evidence label, so the seed's
+   honesty rests on labels that name what was measured. That is why every label is asserted to be
+   non-trivial, over 40 characters, and within the audit payload's bound — and why a future seed must
+   be held to the same standard rather than copying the shape.
+3. **Dukascopy's rank is a judgement call**, argued in §3.1 and reversible by one line. If the owner
+   reads `DATA_AVAILABLE` as requiring reconciliation against a second source, the honest rank for
+   `DUKASCOPY` is `CONNECTED` and EUR/USD leaves `ready_for_research`.
+4. **One instrument per verified source.** Three canonical instruments is what the evidence supports,
+   not what a UI wants. Adding a fourth needs its own evidence, and the seed has no mechanism for
+   speculative rows — which is the point.
+5. **`data_status` stays `UNAVAILABLE` for all three.** No pipeline is running, so nothing is flowing.
+   Claiming `LIVE` at seed time would describe a feed that does not exist yet.
+6. **Seeding at boot is a behaviour change to `create_app`.** Every boot without an injected registry
+   now writes thirteen change-log entries. They are recorded against `STAGE-7.3-SEED` so they can be
+   told apart from anything a human or a pipeline claimed, and the registry is in-memory by default,
+   so nothing persists unless a store is configured.
+
+### 3.10 Decision requested
+
+1. **The D-046 reading.** §3.0 records how `Proceed` was read. If any part of it was wrong — in
+   particular if Stage 7.1 was meant to be approved, or if P-8's tolerance was meant to be chosen now
+   — say so and the record will be corrected rather than defended.
+2. **Is Stage 7.1 approved?** Still unanswered, still `PENDING` with no decision id in `docs/07`.
+3. **F-8's reframing.** §3.5's two runs show the okx quotes and book endpoints are fetched ~1.3 s
+   apart, so the recorded "gaps" (max 2.223 bps over twelve runs, 0.693 in run 19) are market movement
+   during the fetch interval, not endpoint disagreement. **Recommendation: drop the idea of a constant
+   bps tolerance** and instead treat `gap_bps / Δt` as the quantity of interest, accumulating runs
+   until a rate bound can be sized — or accept that the two endpoints simply are not simultaneous and
+   stop comparing their mids at all. A fixed tolerance would encode a number that measures nothing.
+4. **Dukascopy's rank (§3.9 item 3).** `DATA_AVAILABLE` as argued, or `CONNECTED` if `DATA_AVAILABLE`
+   is read as requiring cross-source reconciliation? **Recommendation: keep `DATA_AVAILABLE`**, because
+   the pipeline defines the rung as "the feed was actually observed working", and because the
+   alternative would apply equally to okx and empty the master.
+5. **What comes next.** Stage 7's mandate — retire the unverified rows market by market — is now
+   discharged for dukascopy/EURUSD and demonstrably not dischargeable for bybit from a hosted runner.
+   The remaining Stage 7 work is L-D, which needs the D-021 VM. **Recommendation: close Stage 7 with
+   bybit's row open and recorded, and take the next batch to Stage 8**, rather than hold the stage
+   open on a machine that does not exist yet.

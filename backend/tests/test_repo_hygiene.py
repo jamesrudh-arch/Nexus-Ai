@@ -1752,3 +1752,71 @@ class TestLiveEndpointVerificationIsGatedAndReadable:
             "nexuS_secret_".lower(),
         ):
             assert shape not in module, f"the live verification module mentions {shape!r}"
+
+
+class TestSourceStatesNoVenueRunCount:
+    """A count of CI runs inside a source file is stale the moment it is pushed.
+
+    Two venue runs appear per commit — `push` and `pull_request`, and `pull_request` is not
+    suppressed by the path filter — so any total written into a docstring is wrong by the next push,
+    including the push that carries the number. Stage 7.2 found this in prose and bounded the counts
+    there (`62fe026`); this is the same rule applied to source, where it matters more because source
+    is what a future reader trusts.
+
+    Finding F-12: `dukascopy.py`'s module docstring said ``verify_layout`` had passed "eight after"
+    the `LAYOUT_VERIFIED` flip while the flag's own comment three screens down said "six after it".
+    The same file disagreed with itself about the evidence for its own central claim, and neither
+    number was current. Both are now count-free and the enumerated table lives in `docs/14` §2.1,
+    which is the one place allowed to grow.
+
+    The guard matches *counts of runs*, not every number: "five different probe patterns", "twelve
+    other pairs" and "12 of the 13 divisors" are static facts about the world and must stay.
+    """
+
+    #: Number-words and digits followed by a run-counting noun. Deliberately narrow.
+    PATTERNS = (
+        re.compile(
+            r"\b(?:all |every )?(?:"
+            r"two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|"
+            r"sixteen|seventeen|eighteen|nineteen|twenty|\d+)"
+            r"\s+(?:consecutive\s+|successive\s+)?"
+            r"(?:ci\s+|venue\s+|live\s+)?"
+            r"(?:runs|run)\b",
+            re.IGNORECASE,
+        ),
+        re.compile(r"\b(?:six|seven|eight|nine|ten|eleven|twelve|\d+)\s+(?:of them\s+)?after it\b", re.I),
+        re.compile(r"\bpassed\s+\w+\s+times\s+in\s+a\s+row\b", re.IGNORECASE),
+        re.compile(r"\bthe\s+(?:sixth|seventh|eighth|ninth|tenth|twelfth|thirteenth)\s+got\b", re.I),
+    )
+
+    def test_no_source_module_states_a_run_count(self) -> None:
+        offenders: list[str] = []
+        for path in _source_modules():
+            for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+                for pattern in self.PATTERNS:
+                    if pattern.search(line):
+                        offenders.append(f"{path.name}:{lineno}: {line.strip()[:90]}")
+        assert not offenders, (
+            "a source file states a count of CI runs, which is stale on the next push. "
+            "State a floor instead ('every run since 2026-11-25') and let the enumerated table in "
+            "docs/14 §2.1 be the only place that grows:\n  " + "\n  ".join(offenders)
+        )
+
+    def test_the_dukascopy_claim_is_stated_as_a_floor(self) -> None:
+        """The positive form of the rule: the claim must be the one that cannot go stale."""
+        text = (SOURCE_ROOT / "ingestion" / "dukascopy.py").read_text()
+        assert "every CI run since 2026-11-25" in text
+        assert "every venue run since 2026-11-25" in text
+        # The four pre-flip run ids are fixed history and stay enumerated; the post-flip set does not.
+        for run_id in ("45754638978", "45756716181", "45758610197", "45759709313"):
+            assert run_id in text, f"{run_id} is pre-flip history and must remain cited"
+        assert "docs/14" in text and "§2.1" in text, "the source must point at the growing table"
+
+    def test_the_verified_sentence_still_has_a_subject(self) -> None:
+        """F-12's second half, found while fixing the first. Flipping `LAYOUT_VERIFIED` to `True`
+        replaced "`LAYOUT_VERIFIED` is therefore ``False``" with "therefore ``True``" — the subject
+        went with the old value, leaving a fragment that never says *what* is true. A docstring that
+        cannot name its own claim cannot be checked against the code beneath it."""
+        text = (SOURCE_ROOT / "ingestion" / "dukascopy.py").read_text()
+        assert "``LAYOUT_VERIFIED`` is therefore ``True``" in text
+        assert "\ntherefore ``True``" not in text, "the sentence lost its subject again"

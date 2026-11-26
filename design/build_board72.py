@@ -402,7 +402,7 @@ authorised by D-045</div>
 Three levers implemented &mdash; one honesty row retired, two boundaries closed, one rung redefined</h1>
 <div class="ribbon">IMPLEMENTATION BATCH — the first <code>backend/</code> production change since
 Stage 6.2, and scoped to the three levers the owner named. <b>L-A</b> retires the dukascopy row on
-evidence CI had already produced ten times. <b>L-B</b> makes the only free FX source representable and
+evidence CI had already produced twelve times. <b>L-B</b> makes the only free FX source representable and
 refuses out-of-vocabulary values where they arrive instead of crashing later. <b>L-E</b> redefines
 <code>CONNECTED</code> so a credential-free source can occupy it without lying. A fourth item,
 <b>F-10</b>, was found on the way: a diagnostic that published &ldquo;the host was never reached&rdquo;

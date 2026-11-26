@@ -6,31 +6,40 @@ the research plan possible at $0. It is a **bulk historical** source, not a real
 ⚠️ **Layout verification status: VERIFIED for EURUSD, 2026-11-26.** The bi5 binary layout below —
 LZMA-compressed, 20 bytes per tick, big-endian — was implemented from documentation and stayed
 UNVERIFIED through Phases 3 and 4 because this sandbox has no egress to ``datafeed.dukascopy.com``.
-It has now been checked against a real download. :func:`verify_layout` passed on a genuine
-bi5 hour in **twelve consecutive CI runs on 2026-11-26**: four before the flip
-(``45754638978``, ``45756716181``, ``45758610197``, ``45759709313``) and eight after it
-(``45782533635``, ``45782540670``, ``45784665370``, ``45784657260``, ``45786440060``,
-``45786447356``, ``45787390006``, ``45787399434``). Those eight are the flag's falsifiability
-test — it stayed green with the flag on, and every push that touches this module re-runs it.
-All twelve fetched the same hour, ``2026-11-24T12:00Z``, whose path is ``EURUSD/2026/10/24/12h_ticks.bi5`` —
-the ``10`` is November, because the month segment is 0-indexed, exactly the trap documented below.
-All twelve returned 25,761 compressed bytes, 101,480 decompressed = **5,074 ticks × 20 exactly**, no
-failed check, and parsed prices of 1.09502–1.0964 inside EURUSD's real band — the assertion that
-exists to catch a wrong point divisor, the silent 100x error warned about below.
-therefore ``True`` and every record carries ``source="DUKASCOPY_BI5"``. Evidence: ``docs/14``
-§1.4 F-1 and §2.1, and ``docs/00`` O-010.
+It has now been checked against a real download. :func:`verify_layout` passed on a genuine bi5 hour
+in **every CI run since 2026-11-25**: four before the flip (``45754638978``, ``45756716181``,
+``45758610197``, ``45759709313``) and every run after it. The runs after the flip are the flag's
+falsifiability test — it stayed green with the flag on, and every push that touches this module
+re-runs it.
+
+No count of those runs is recorded here on purpose. A ``push`` and a ``pull_request`` event each
+trigger this workflow, and the latter is not suppressed by the path filter, so runs accumulate faster
+than commits — including the commit that would carry the count — and any total written into source is
+stale the moment it is pushed. An earlier version of this docstring proved the point by disagreeing
+with the flag's own comment below about how many had passed since the flip: the same file contradicting
+itself about the evidence for its own central claim. The statement is therefore a floor that no run has
+ever broken, and the enumerated table lives in ``docs/14`` §2.1, which is the only place allowed to
+grow.
+
+Every run fetched the same hour, ``2026-11-24T12:00Z``, whose path is
+``EURUSD/2026/10/24/12h_ticks.bi5`` — the ``10`` is November, because the month segment is
+0-indexed, exactly the trap documented below. Every run returned 25,761 compressed bytes, 101,480
+decompressed = **5,074 ticks × 20 exactly**, no failed check, and parsed prices of 1.09502–1.0964
+inside EURUSD's real band — the assertion that exists to catch a wrong point divisor, the silent 100x
+error warned about below. ``LAYOUT_VERIFIED`` is therefore ``True`` and every record carries
+``source="DUKASCOPY_BI5"``. Evidence: ``docs/14`` §1.4 F-1 and §2.1, and ``docs/00`` O-010.
 
 What is still **NOT** verified, and must not be inferred from the above: only EURUSD has been
 checked, so **12 of the 13 divisors** in ``POINT_DIVISORS`` have never met a real file. The feed
-is also intermittent, and those twelve runs did not agree about why: the production
-User-Agent worked outright in seven; in the other five the single-attempt probes faulted while
-the patient fetch inside the same run still succeeded, and the probes contradicted each other in
-**five different patterns** (a browser User-Agent answered in three of them, a different hour in
-two, and the twelfth got an HTTP 503 reply from the host while both User-Agent attempts faulted).
-No single variable explains it and no cause is established (``docs/14`` F-5), so a failed hour
-says nothing about the layout. Layout verification is not price verification either: nothing here reconciles
-Dukascopy against a second source (``docs/14`` F-8). FX tick history for any pair other than
-EURUSD remains PROVISIONAL and must never be used to size a live position.
+is also intermittent, and the runs did not agree about why: the production User-Agent worked outright
+in some; in others the single-attempt probes faulted while the patient fetch inside the same run still
+succeeded, and the probes contradicted each other in **five different patterns** (a browser
+User-Agent answering, a different hour answering, and an HTTP 503 reply from the host while both
+User-Agent attempts faulted). No single variable explains it and no cause is established
+(``docs/14`` F-5), so a failed hour says nothing about the layout. Layout verification is not price
+verification either: nothing here reconciles Dukascopy against a second source (``docs/14`` F-8). FX
+tick history for any pair other than EURUSD remains PROVISIONAL and must never be used to size a live
+position.
 
 URL shape (note the **0-indexed month**, a classic off-by-one trap):
 ``/datafeed/{PAIR}/{YYYY}/{MM-1:02d}/{DD}/{HH}h_ticks.bi5`` — one file per instrument-hour holds
@@ -61,12 +70,12 @@ VENUE = "DUKASCOPY"
 SOURCE_UNVERIFIED = "DUKASCOPY_BI5_UNVERIFIED"
 SOURCE_VERIFIED = "DUKASCOPY_BI5"
 
-#: Set only after :func:`verify_layout` passes against a real download. It passed ten times in
-#: a row on 2026-11-26 — ``45754638978``, ``45756716181``, ``45758610197``, ``45759709313``
-#: before the flip and six after it (``45782533635`` … ``45786447356``; the full table is hour
-#: ``docs/14`` §2.1), against hour ``2026-11-24T12:00Z``: 25,761 bytes → 101,480 = 5,074 × 20,
-#: no failed check, prices 1.09502–1.0964. Recorded in ``docs/14`` §1.4 F-1 and §2.1,
-#: and ``docs/00`` O-010.
+#: Set only after :func:`verify_layout` passes against a real download. It has passed in every
+#: venue run since 2026-11-25 — ``45754638978``, ``45756716181``, ``45758610197``, ``45759709313``
+#: before the flip and every run since (the enumerated table grows in ``docs/14`` §2.1, never here:
+#: a count in source is stale on the next push), against hour ``2026-11-24T12:00Z``: 25,761 bytes →
+#: 101,480 = 5,074 × 20, no failed check, prices 1.09502–1.0964. Recorded in ``docs/14`` §1.4 F-1
+#: and §2.1, and ``docs/00`` O-010.
 #: Flip this back to ``False`` if a real download ever fails the check again — the honest state is
 #: worth more than the convenient one, and ``SOURCE_UNVERIFIED`` exists for exactly that.
 LAYOUT_VERIFIED = True
@@ -257,7 +266,7 @@ def verify_layout(payload: bytes) -> dict[str, Any]:
     Passing these is the evidence required to flip ``LAYOUT_VERIFIED`` to ``True``. They are
     deliberately mechanical: size divisibility, offset monotonicity, sane price range.
 
-    It passed on 2026-11-26, twelve runs in a row (four before the flag flipped and eight after),
+    It has passed in every venue run since 2026-11-25 (four before the flag flipped and all since),
     which is what ``LAYOUT_VERIFIED = True`` cites. The
     function stays for two reasons: the weekly live run keeps calling it, so an upstream change to the
     bi5 record layout is caught by the next real download instead of being assumed away; and the flag
