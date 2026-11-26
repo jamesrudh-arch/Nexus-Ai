@@ -645,7 +645,11 @@ class TestDukascopyLiveLayout:
             raw_bytes=parsed.raw_bytes,
             decompressed_bytes=parsed.decompressed_bytes,
             source=expected_source,
-            layout_verified=LAYOUT_VERIFIED,
+            # F-13: this is the CONSTANT, echoed — not a verification performed in this run. It used
+            # to be published as `layout_verified=`, so run 45822394958 printed
+            # `layout_verified=True` on this line while its own layout check sat in the skipped
+            # column, having never fetched anything. The key is now named for what it is.
+            layout_flag=LAYOUT_VERIFIED,
         )
 
 

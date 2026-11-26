@@ -7,8 +7,15 @@ the research plan possible at $0. It is a **bulk historical** source, not a real
 LZMA-compressed, 20 bytes per tick, big-endian — was implemented from documentation and stayed
 UNVERIFIED through Phases 3 and 4 because this sandbox has no egress to ``datafeed.dukascopy.com``.
 It has now been checked against a real download. :func:`verify_layout` passed on a genuine bi5 hour
-in **every CI run since 2026-11-25**: four before the flip (``45754638978``, ``45756716181``,
-``45758610197``, ``45759709313``) and every run after it. The runs after the flip are the flag's
+in **every CI run that reached the source since 2026-11-25**: four before the flip (``45754638978``,
+``45756716181``, ``45758610197``, ``45759709313``) and every run after it that got a reply.
+
+**A skip is not a pass, and this docstring used to count them as one.** The feed is intermittent
+(F-5), so in some runs this check exhausts its patience budget and *skips* — run ``45822394958`` did
+exactly that, and the same run still printed ``layout_verified=True`` on its ticks line, because that
+value is the constant below, not a measurement taken in that run. "Passed in every run" was therefore
+false the moment it was written, and the honest claim is the narrower one above. See F-13 in
+``docs/14`` §3.6. The runs after the flip are the flag's
 falsifiability test — it stayed green with the flag on, and every push that touches this module
 re-runs it.
 
@@ -71,10 +78,16 @@ SOURCE_UNVERIFIED = "DUKASCOPY_BI5_UNVERIFIED"
 SOURCE_VERIFIED = "DUKASCOPY_BI5"
 
 #: Set only after :func:`verify_layout` passes against a real download. It has passed in every
-#: venue run since 2026-11-25 — ``45754638978``, ``45756716181``, ``45758610197``, ``45759709313``
-#: before the flip and every run since (the enumerated table grows in ``docs/14`` §2.1, never here:
-#: a count in source is stale on the next push), against hour ``2026-11-24T12:00Z``: 25,761 bytes →
-#: 101,480 = 5,074 × 20, no failed check, prices 1.09502–1.0964. Recorded in ``docs/14`` §1.4 F-1
+#: venue run **that reached the source** since 2026-11-25 — ``45754638978``, ``45756716181``,
+#: ``45758610197``, ``45759709313`` before the flip and every run since that got a reply (the
+#: enumerated table grows in ``docs/14`` §2.1, never here: a count in source is stale on the next
+#: push), against hour ``2026-11-24T12:00Z``: 25,761 bytes → 101,480 = 5,074 × 20, no failed check,
+#: prices 1.09502–1.0964.
+#:
+#: Runs where the feed never answered **skip** this check rather than pass it (F-5), and a skip is
+#: not evidence for anything — so the claim above is deliberately narrower than "every run". Note
+#: also that ``FetchReport.layout_verified`` is *this constant echoed back*, not a per-run result:
+#: a run can print ``layout_verified=True`` having verified nothing (F-13). Recorded in ``docs/14`` §1.4 F-1
 #: and §2.1, and ``docs/00`` O-010.
 #: Flip this back to ``False`` if a real download ever fails the check again — the honest state is
 #: worth more than the convenient one, and ``SOURCE_UNVERIFIED`` exists for exactly that.
@@ -266,8 +279,10 @@ def verify_layout(payload: bytes) -> dict[str, Any]:
     Passing these is the evidence required to flip ``LAYOUT_VERIFIED`` to ``True``. They are
     deliberately mechanical: size divisibility, offset monotonicity, sane price range.
 
-    It has passed in every venue run since 2026-11-25 (four before the flag flipped and all since),
-    which is what ``LAYOUT_VERIFIED = True`` cites. The
+    It has passed in every venue run that reached the source since 2026-11-25 (four before the flag
+    flipped, and every run since that got a reply), which is what ``LAYOUT_VERIFIED = True`` cites.
+    Runs where the feed never answered **skip** it instead — see the caller's ``_with_patience`` —
+    and a skip is not a pass, so the claim is narrower than "every run" on purpose (F-13). The
     function stays for two reasons: the weekly live run keeps calling it, so an upstream change to the
     bi5 record layout is caught by the next real download instead of being assumed away; and the flag
     is a claim about the world rather than about this file, so it must be falsifiable by re-running

@@ -1805,8 +1805,18 @@ class TestSourceStatesNoVenueRunCount:
     def test_the_dukascopy_claim_is_stated_as_a_floor(self) -> None:
         """The positive form of the rule: the claim must be the one that cannot go stale."""
         text = (SOURCE_ROOT / "ingestion" / "dukascopy.py").read_text()
-        assert "every CI run since 2026-11-25" in text
-        assert "every venue run since 2026-11-25" in text
+        # F-13: the claim must stay narrower than "every run". A run where the feed never answered
+        # SKIPS this check, and counting a skip as a pass is what made the old wording false — so
+        # what is asserted here is the *qualification*, matched independently of how the prose wraps
+        # across comment prefixes. An exact-phrase match would fail on a line break and pass on a
+        # rewrap, which is the wrong way round for a guard.
+        assert "that reached the source" in text, "the qualifying clause is gone"
+        assert "A skip is not a pass" in text, "the reason for the qualifier is not stated"
+        for unqualified in ("every CI run since", "every venue run since"):
+            assert unqualified not in text, f"the unqualified claim crept back in: {unqualified!r}"
+        # Both the module docstring and verify_layout's own docstring must carry the qualification,
+        # not just one of them: the flag cites both.
+        assert text.count("that reached the source") >= 3
         # The four pre-flip run ids are fixed history and stay enumerated; the post-flip set does not.
         for run_id in ("45754638978", "45756716181", "45758610197", "45759709313"):
             assert run_id in text, f"{run_id} is pre-flip history and must remain cited"

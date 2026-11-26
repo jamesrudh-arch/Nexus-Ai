@@ -30,10 +30,12 @@ Three canonical instruments, four venue mappings:
 
 ``EUR/USD`` (FX_SPOT)
     ``DUKASCOPY`` at ``DATA_AVAILABLE`` — the rung the pipeline itself defines as *"the feed was
-    actually observed working"* (``ingestion/pipeline.py:47-49``), which every venue run since
-    2026-11-25 satisfies against a real bi5 hour. The scope is carried in the label and the notes
-    rather than being withheld from the rank: EURUSD only, one hour, 12 of 13 point divisors still
-    unverified, and no reconciliation against a second source (findings F-5, F-8).
+    actually observed working"* (``ingestion/pipeline.py:47-49``), which every venue run that
+    reached the source since 2026-11-25 satisfies against a real bi5 hour — a run whose feed never
+    answered *skips* the check rather than passing it, and a skip is not a pass (F-13). The scope is
+    carried in the label and the notes rather than being withheld from the rank: EURUSD only, one
+    hour, 12 of 13 point divisors still unverified, and no reconciliation against a second source
+    (findings F-5, F-8).
 
 No mapping is seeded at ``TRADE_ENABLED`` or ``LIVE_VERIFIED``. Those need a sandbox order
 lifecycle and a live pilot with reconciliation proven; no credential-free public data source can
@@ -224,7 +226,7 @@ SEED_SPECS: tuple[SeedSpec, ...] = (
                 notes=(
                     "GEO-BLOCKED and unverified: bybit v5 answers 403 from GitHub-hosted runners on "
                     "public unauthenticated endpoints (run 45724918466; F-2), and reports "
-                    "`5 geo-blocked` in every venue run since. The adapter is exercised against "
+                    "`5 geo-blocked` in every venue run read. The adapter is exercised against "
                     "public documentation only. Climbing this mapping needs the D-021 deployment VM "
                     "as a self-hosted runner (lever L-D) — no code change and no money, but nothing "
                     "that can be done from a hosted runner."
@@ -313,7 +315,8 @@ SEED_SPECS: tuple[SeedSpec, ...] = (
                     RungEvidence(
                         VenueStatus.CONNECTED,
                         "public credential-free feed: real bi5 hour 2026-11-24T12:00Z fetched and "
-                        "normalised in every venue run since 2026-11-25; layout verified for EURUSD",
+                        "normalised in every venue run that reached it since 2026-11-25; layout "
+                        "verified for EURUSD",
                         auth=AUTH_NOT_APPLICABLE,
                     ),
                     RungEvidence(

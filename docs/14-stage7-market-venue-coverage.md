@@ -673,8 +673,15 @@ dukascopy.diagnosis verdict=the production attempt got no reply (network-IngestF
 `browser_ua=ok` (25,761 bytes) and `other_hour=network-IngestFault` — a *different* combination from
 run 13 — and published the corrected verdict again, naming the one variant that answered. So the
 corrected branch has now been exercised live twice, on two different input shapes. `verify_layout`
-has passed in **every venue run since 2026-11-25** — fifteen consecutive passes were read for this
-batch, and each commit since has added two more attempts, none of which has failed.
+has passed in **every venue run that reached the source since 2026-11-25** — every run read for this
+batch passed it, and each commit since has added two more attempts, none of which has failed.
+
+> **Correction, Stage 7.3 (F-13).** The sentence above originally read "every venue run since
+> 2026-11-25", unqualified. Run `45822394958` falsified it: the feed did not answer inside the
+> patience budget, so `test_verify_layout_passes_against_a_real_file` **skipped** — and that same run
+> still published `layout_verified=True` on its ticks line, because that value is the module constant
+> echoed back, not a measurement taken in that run. The claim is now qualified, and §3.6 records why
+> the unqualified form was never safe: this check has always been able to skip.
 
 Run 13's single skip is the designed behaviour, not a regression: its ticks fetch did not answer, so
 the check skipped rather than failed (`test_live_endpoints.py:153`, *"did not answer, so nothing is
@@ -741,7 +748,7 @@ F-9 (an invariant that is not one) in the opposite direction.
 | Gate | Result | Command |
 |------|--------|---------|
 | Suite | **997 passed, 2 skipped, 0 failed** (was 976 + 2) | `pytest` with CI's env (`NEXUS_AUDIT_BACKEND=memory NEXUS_ENVIRONMENT=DISABLED DO_NOT_TRACK=1`) |
-| New tests | **+21 to the gate total**: 20 in `test_instrument_registry.py` (`TestVenueVocabularyIsEnforced` 9, `TestConnectedDeclaresItsAuthCase` 11), 1 in `test_adapters.py`. A further **7 offline checks** live in `test_live_endpoints.py` — 3 for F-10, 4 for F-11 — which the default gate skips as a module, so they move the collection count (29 → 36) and not 997 |
+| New tests | **+21 to the gate total**: 20 in `test_instrument_registry.py` (`TestVenueVocabularyIsEnforced` 9, `TestConnectedDeclaresItsAuthCase` 11), 1 in `test_adapters.py`. A further **7 offline checks** live in `test_live_endpoints.py` — 3 for F-10, 4 for F-11 — which the default gate skips as a module, so they move the collection count (29 → 36) and not 997 | `pytest` (gate tests), `NEXUS_LIVE_VERIFY=1 pytest tests/test_live_endpoints.py -k "DiagnosisLogic or PatienceBehaviour"` (offline checks) |
 | Live module offline subset | **20 passed** (was 13, then 16) | `NEXUS_LIVE_VERIFY=1 pytest tests/test_live_endpoints.py -k "DiagnosisLogic or PatienceBehaviour"` |
 | Live module collected | **36** (was 29, then 32); live-source checks still **11** | `--collect-only -q` |
 | Lint / format | clean | `ruff check src tests`, `ruff format --check src tests` (80 files) |
@@ -771,7 +778,7 @@ done
 | **F-5** intermittent feed | **OPEN, and better evidenced** — every run read, **five** probe patterns, the production UA working outright in some and faulting in others | No cause established; a user-agent conclusion would still be adopted on noise |
 | **F-6** 3 of 14 asset classes | **OPEN** — `DUKASCOPY` makes FX_SPOT recordable, not covered | The other ten must render `UNSUPPORTED` per D-019 |
 | **F-8** cross-endpoint agreement | **OPEN, now quantified** (§2.5) | Needs a stated bps tolerance + a recorded timestamp gap; both are design choices, not measurements |
-| **F-9** "both sides present" | **Documentation corrected** (`docs/06:234`, `:300` now say the run *happened* to contain both sides and that `_assert_ticks` accepts one) — **the owner ruling is still outstanding**: should a one-sided trade list ever fail? Runs 1–3 and 5–10 returned both sides; run 4 returned 50 buys and passed, correctly |
+| **F-9** "both sides present" | **Documentation corrected** (`docs/06:234`, `:300` now say the run *happened* to contain both sides and that `_assert_ticks` accepts one). *(Ruled at Stage 7.3 — see §3.5: P-7 adopted, one-sidedness is evidence and never a failure, now pinned by test.)* | **The owner ruling was outstanding when 7.2 closed**: should a one-sided trade list ever fail? Runs 1–3 and 5–10 returned both sides; run 4 returned 50 buys and passed, correctly |
 | **F-10** self-refuting verdict | **CLOSED** (§2.4) | Found, fixed and pinned in this batch |
 | **F-11** the fix refuted "never reached" only on success | **CLOSED** (§2.4) | Found in run 12, the first run to exercise the F-10 branch live; an `http-503` reply is also proof the host was reached. Pinned by all 125 combinations of the probe cross-product |
 
@@ -976,7 +983,7 @@ chosen**; §3.9 asks the owner to rule on the reframing rather than on a number.
 Nothing in `_assert_book` asserts agreement between the two endpoints, which is why both runs passed
 with gaps of 0.000 and 0.693 without either being judged.
 
-### 3.6 F-12 — a stale run count in source, and a docstring that lost its subject
+### 3.6 F-12 and F-13 — the record contradicting its own evidence
 
 Found while writing this section, in the module the seed cites most. Two defects, both in
 `ingestion/dukascopy.py`, both surviving `62fe026` ("bound the run counts, so they cannot go stale
@@ -1000,10 +1007,52 @@ with it, leaving a fragment — "therefore ``True`` and every record carries `so
 says *what* is true. A docstring that cannot name its own claim cannot be checked against the code
 beneath it.
 
-**Fixed structurally, not by updating the numbers.** Every run count in the module is now a floor
-("every CI run since 2026-11-25", "every venue run since 2026-11-25"), the four pre-flip run ids stay
-enumerated because they are fixed history, and the docstring now points at `docs/14` §2.1 as the only
-place the table is allowed to grow. The subject is restored.
+**Fixed structurally, not by updating the numbers.** Every run count in the module is now a floor,
+the four pre-flip run ids stay enumerated because they are fixed history, and the docstring now
+points at `docs/14` §2.1 as the only place the table is allowed to grow. The subject is restored.
+
+*(Those floors were first written as "every CI run since 2026-11-25" and "every venue run since
+2026-11-25". Both are corrected again immediately below by **F-13** — replacing a stale count with an
+unqualified universal is not a fix, it is a different way of being wrong.)*
+
+**F-13 — the floor claim counted a skip as a pass, and a guard test pinned it there.** Found by
+reading the two runs this batch's own first commit triggered. Both are `conclusion=success` and both
+report `1 skipped`, and in each the skipped check is a *different* one:
+
+| Run | Id | Skipped | Passed | Published anyway |
+|---|---|---|---|---|
+| 20 | `45822394958` | `verify_layout_passes_against_a_real_file` | `parsed_ticks_are_in_the_right_price_band` | `dukascopy.ticks … source=DUKASCOPY_BI5 layout_verified=True` |
+| 21 | `45822408025` | `parsed_ticks_are_in_the_right_price_band` | `verify_layout_passes_against_a_real_file` | `dukascopy.layout passed=True` |
+
+Run 20 is the defect. It performed **no layout verification at all** — its `dukascopy.layout`
+evidence line is absent — and still printed `layout_verified=True`, because
+`test_live_endpoints.py` emitted the module constant `LAYOUT_VERIFIED` under that key rather than a
+result measured in that run. A reader of run 20's annotation would conclude the layout had been
+verified there. It had not.
+
+So the claim "passed in every venue run since 2026-11-25" was false as soon as it was written, and
+not only because run 20 broke it: **the check has always been able to skip.** §2.1 already recorded
+that run 13 skipped its ticks fetch and called it designed behaviour — the unqualified universal sat
+two paragraphs above a paragraph explaining why a skip happens, and nobody reconciled them. An
+unqualified "every run" over a check that can skip is a claim waiting for its counterexample.
+
+Three corrections, all applied:
+
+1. **The claim is qualified everywhere** — "every venue run *that reached the source*", in
+   `dukascopy.py`'s docstring, its `LAYOUT_VERIFIED` comment, `verify_layout()`'s own docstring,
+   §2.1 above, `docs/07`, `docs/00`, both boards and `design/index.html`. Each states that a skip is
+   not a pass and why.
+2. **The evidence key is renamed** from `layout_verified=` to `layout_flag=` on the
+   `dukascopy.ticks` line, with a comment naming run `45822394958` as the reason. The value is the
+   constant, so the key now says so instead of implying a measurement.
+3. **The guard test is rewritten.** `test_the_dukascopy_claim_is_stated_as_a_floor` originally
+   asserted the two exact unqualified strings — it *pinned the false claim in place*, so correcting
+   the prose would have failed CI. That is the sharper lesson: a guard that asserts a stale-prone
+   exact phrase is worse than no guard, because it makes the error load-bearing. It now asserts the
+   **qualification** (`"that reached the source"` present at least three times, `"A skip is not a
+   pass"` present) and the **absence** of the unqualified forms, matching independently of how the
+   prose wraps across `#:` comment prefixes. Negative-controlled: injecting "every venue run since
+   2026-11-25" makes it fail.
 
 **Guarded, and the guard is negative-controlled.** `TestSourceStatesNoVenueRunCount` (3 tests) scans
 every shipped module for a run count and fails with an instruction to state a floor instead. Its

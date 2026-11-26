@@ -452,7 +452,7 @@ a hope:</p>
 + 10 <span class="mono">CERTIFY</span>), every one
 <span class="mono">requested_by=STAGE-7.3-SEED</span>. The three <span class="mono">CONNECTED</span>
 rungs declare <span class="mono">AUTH_NOT_APPLICABLE</span> and no other rung carries a declaration,
-because lever L-E put that field on one rung only. Longest evidence label <b>147 characters</b>
+because lever L-E put that field on one rung only. Longest evidence label <b>163 characters</b>
 against the audit payload's 200-char bound.</p>
 
 <div class="gate"><b>The one judgement call, argued rather than asserted.</b> Why
@@ -460,8 +460,8 @@ against the audit payload's 200-char bound.</p>
 Because the rank is defined by the code that consumes it &mdash;
 <span class="cite">ingestion/pipeline.py:47-49</span> says <i>&ldquo;<span class="mono">DATA_AVAILABLE</span>
 means the feed was actually observed working &mdash; accepting <span class="mono">UNKNOWN</span> would
-archive data from a mapping nobody has verified&rdquo;</i> &mdash; and every venue run since
-2026-11-25 observed this feed working and returned real ticks that parsed. Withholding the rung
+archive data from a mapping nobody has verified&rdquo;</i> &mdash; and every venue run that reached
+the source since 2026-11-25 observed this feed working and returned real ticks that parsed. Withholding the rung
 because the prices are unreconciled would have to be applied to okx too (F-8 <i>is</i> that unresolved
 question), which would leave the master empty and defeat L-C. And
 <span class="mono">DATA_AVAILABLE</span> is not <span class="mono">LIVE_VERIFIED</span>, which is the
@@ -508,7 +508,7 @@ rungs_climbed   = 10   rungs_skipped = 0
 changes         = 13  kinds = ['CERTIFY', 'REGISTER']
 requested_by    = ['STAGE-7.3-SEED']
 auth declared   = [('BINANCE', 'AUTH_NOT_APPLICABLE'), ('DUKASCOPY', 'AUTH_NOT_APPLICABLE'), ('OKX', 'AUTH_NOT_APPLICABLE')]
-longest label   = 147 chars (limit 200)
+longest label   = 163 chars (limit 200)
 
 # second call (a boot must not rewrite history)
 registered      = ()   climbed = 0   skipped = 10
@@ -616,7 +616,7 @@ pass is not a measurement. §11 asks the owner to rule on the reframing rather t
 endpoints, which is why both runs passed with gaps of 0.000 and 0.693 without either being judged.
 The measurement was added to the evidence line only &mdash; that is the whole of P-8's adopted half.</p>
 
-<h3>7 &middot; F-12 &mdash; a run count in source, and a docstring that lost its subject<span class="tag">NEW &middot; found and fixed here</span></h3>
+<h3>7 &middot; F-12 and F-13 &mdash; the record contradicting its own evidence<span class="tag">NEW &middot; both found and fixed here</span></h3>
 <p>Found while writing this board's own §1, in the module the seed cites most. Two defects, both in
 <span class="cite">ingestion/dukascopy.py</span>, both surviving <span class="cite">62fe026</span>
 (&ldquo;bound the run counts, so they cannot go stale again&rdquo;):</p>
@@ -637,6 +637,8 @@ module docstring :  "...the silent 100x error warned about below.
 flag's comment   :  "It has passed in every venue run since 2026-11-25 ... (the enumerated
                      table grows in docs/14 §2.1, never here: a count in source is stale on
                      the next push)"
+<span class="k"># ...which F-13, below, then had to correct AGAIN. Replacing a stale count with an</span>
+<span class="k"># unqualified universal is not a fix; it is a different way of being wrong.</span>
 module docstring :  "...``LAYOUT_VERIFIED`` is therefore ``True`` and every record carries
                      source="DUKASCOPY_BI5"."
 
@@ -651,6 +653,59 @@ Injecting <span class="mono">seventeen venue runs</span> into <span class="cite"
 the guard fail as designed; removing it made the suite green. <b>A guard that has never been seen to
 fire proves nothing.</b> Two further tests pin the positive form: the claim is stated as a floor, the
 four pre-flip ids remain cited, and the sentence naming the flag still has its subject.</div>
+
+<div class="ba before"><div class="hd">F-13 &mdash; THE &ldquo;FIX&rdquo; ABOVE WAS ITSELF WRONG</div><pre>The replacement floors were UNIVERSALS: "every CI run since 2026-11-25", "every venue run since
+2026-11-25". The two runs this batch's own first commit triggered falsified the second one.
+
+run 45822394958 (push)          run 45822408025 (pull request)
+  35 passed / 0 failed            35 passed / 0 failed
+  5 geo-blocked / 1 SKIPPED       5 geo-blocked / 1 SKIPPED
+  skipped: verify_layout_...      skipped: parsed_ticks_...
+  dukascopy.layout  ABSENT        dukascopy.layout  present, passed=True
+
+Run 20 performed NO layout verification at all - and still published:
+
+  dukascopy.ticks count=5074 ... source=DUKASCOPY_BI5 layout_verified=True
+                                                       ^^^^^^^^^^^^^^^^^ the CONSTANT, echoed</pre></div>
+<p>The harness emitted <span class="mono">LAYOUT_VERIFIED</span> &mdash; a module constant &mdash; under
+the key <span class="mono">layout_verified=</span>, not a result measured in that run. A reader of run
+20's annotation would conclude the layout had been verified there. It had not.</p>
+<div class="gate"><b>And the claim was never safe, even before run 20 broke it.</b> The check has
+<i>always</i> been able to skip: <span class="cite">docs/14</span> §2.1 already recorded run 13
+skipping its ticks fetch and called it designed behaviour &mdash; two paragraphs below the unqualified
+universal, unreconciled. An unqualified &ldquo;every run&rdquo; over a check that can skip is a claim
+waiting for its counterexample.</div>
+<p><b>Three corrections, all applied.</b> <b>(1)</b> The claim is qualified everywhere it appears
+&mdash; this module's docstring, its <span class="mono">LAYOUT_VERIFIED</span> comment,
+<span class="mono">verify_layout()</span>'s own docstring, <span class="cite">docs/14</span> §2.1 and
+§3.6, <span class="cite">docs/07</span>, <span class="cite">docs/00</span>, both boards and
+<span class="cite">design/index.html</span> &mdash; each stating that a skip is not a pass and why.
+<b>(2)</b> The evidence key is renamed <span class="mono">layout_verified=</span> &rarr;
+<span class="mono">layout_flag=</span> on the <span class="mono">dukascopy.ticks</span> line, with a
+comment naming run <span class="cite">45822394958</span> as the reason: the value is the constant, so
+the key now says so instead of implying a measurement. <b>(3)</b> The guard test is rewritten.</p>
+<div class="ba before"><div class="hd">THE GUARD HAD PINNED THE FALSE CLAIM IN PLACE</div><pre>test_the_dukascopy_claim_is_stated_as_a_floor originally asserted:
+
+    assert "every CI run since 2026-11-25" in text
+    assert "every venue run since 2026-11-25" in text
+
+Correcting the prose would have FAILED CI. The guard was load-bearing for the error.</pre></div>
+<div class="ba after"><div class="hd">AFTER &mdash; IT ASSERTS THE QUALIFICATION, NOT THE WRAPPING</div><pre>assert "that reached the source" in text          <span class="k"># the qualifier is present</span>
+assert "A skip is not a pass" in text             <span class="k"># and so is the reason for it</span>
+for unqualified in ("every CI run since", "every venue run since"):
+    assert unqualified not in text                <span class="k"># the false form cannot return</span>
+assert text.count("that reached the source") >= 3 <span class="k"># in all three places, not one</span>
+
+<span class="k"># Matched independently of how prose wraps across "#:" comment prefixes: an exact-phrase</span>
+<span class="k"># match fails on a line break and passes on a rewrap, which is backwards for a guard.</span></pre></div>
+<div class="gate"><b>Negative-controlled both ways.</b> Injecting
+<span class="mono">seventeen venue runs</span> fails the count rule; injecting
+<span class="mono">every venue run since 2026-11-25</span> fails the qualification rule with
+<i>&ldquo;the unqualified claim crept back in&rdquo;</i>; removing both makes the suite green.
+<b>The sharper lesson is recorded rather than smoothed over: a guard that asserts a stale-prone exact
+phrase is worse than no guard, because it makes the error load-bearing.</b> F-5 &mdash; the
+intermittent feed that causes the skips &mdash; remains open, which is what makes the qualifier
+permanent rather than temporary.</div>
 
 <h3>8 &middot; Gate evidence<span class="tag">re-run for this board</span></h3>
 <div class="card"><table><thead><tr><th>Gate</th><th>Result</th><th>Command</th></tr></thead><tbody><tr><td>Suite</td><td><b>1,036 passed, 2 skipped, 0 failed</b> <span class='cite'>(was 997 + 2)</span></td><td><span class='mono'>pytest</span> with CI's env (<span class='mono'>NEXUS_AUDIT_BACKEND=memory NEXUS_ENVIRONMENT=DISABLED DO_NOT_TRACK=1</span>)</td></tr><tr><td>New tests</td><td><b>+39</b> — 36 in <span class='cite'>test_instrument_seed.py</span>, 3 in <span class='cite'>test_repo_hygiene.py</span> for F-12</td><td><span class='mono'>pytest tests/test_instrument_seed.py</span></td></tr><tr><td>Existing tests broken by boot seeding</td><td><b>zero</b></td><td>Full suite run before staging; the only failure was hygiene's untracked-file guard, which is the known trap and not a behaviour change</td></tr><tr><td>Live module collected</td><td><b>41</b> <span class='cite'>(was 36)</span>; live-source checks still <b>11</b></td><td><span class='mono'>NEXUS_LIVE_VERIFY=1 pytest tests/test_live_endpoints.py --collect-only -q</span></td></tr><tr><td>Live module offline subset</td><td><b>25 passed</b> <span class='cite'>(was 20)</span></td><td><span class='mono'>&hellip; -k &quot;DiagnosisLogic or PatienceBehaviour or TradeSideRuling&quot;</span></td></tr><tr><td>Lint / format</td><td>clean</td><td><span class='mono'>ruff check src tests</span>, <span class='mono'>ruff format --check src tests</span> (82 files)</td></tr><tr><td>Types</td><td><b>Success: no issues found in 57 source files</b> <span class='cite'>(was 56)</span></td><td><span class='mono'>mypy</span> (strict)</td></tr><tr><td>Repo hygiene</td><td><b>83 passed</b> <span class='cite'>(was 80)</span></td><td><span class='mono'>pytest tests/test_repo_hygiene.py</span></td></tr><tr><td>CI, this batch</td><td>Runs <span class='cite'>45819528009</span> (push) and <span class='cite'>45819539643</span> (pull request), both <span class='mono'>conclusion=success</span>: <b>36 passed / 0 failed / 5 geo-blocked / 0 skipped of 41</b></td><td><span class='mono'>gh api &hellip;/check-runs/&lt;job&gt;/annotations</span></td></tr></tbody></table></div>
@@ -700,6 +755,8 @@ the F-12 correction &middot; gate 1,036 passed / 2 skipped / 0 failed, +39 tests
 format clean, mypy strict clean on 57 files, hygiene 83 &middot; CI runs 45819528009 and 45819539643
 both success, 36 passed / 0 failed / 5 geo-blocked of 41 &middot; the master now carries three
 instruments and four venue mappings, bybit among them at SUPPORTED and not omitted &middot; verify_layout
-has passed in every venue run since 2026-11-25, stated as a floor because each later commit adds two
-more attempts &middot; F-3 closed, F-12 closed, F-8 reframed as P-9, F-2 F-5 F-6 F-11 still open</footer>
+has passed in every venue run <i>that reached the source</i> since 2026-11-25, stated as a floor
+because each later commit adds two more attempts, and qualified because a run whose feed never answers
+skips rather than passes (F-13) &middot; F-3 closed, F-12 and F-13 closed, F-8 reframed as P-9, F-2 F-5
+F-6 F-11 still open</footer>
 </div></body></html>
