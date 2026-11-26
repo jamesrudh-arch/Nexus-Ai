@@ -92,3 +92,52 @@ Overview region + Opportunities screen.
 table from `design/tokens.css` (self-contained, fonts embedded); var audit clean. No screen
 interiors are drawn in 3.1 — batches 3.2–3.5 compose them inside this shell, each presented for
 review before the next.
+
+---
+
+## 2. Sub-deliverable 3.2 — Overview & Live Markets interiors (BUILT — AWAITING REVIEW)
+
+Board: `design/stage3-2-overview-markets.html`. Composes inside the approved 3.1 shell with
+approved Stage 2 tokens; var audit clean; 27 regions, 15 specimen-tagged.
+
+### 2.1 Specimen-data policy (binding on all batches)
+
+Design boards show labelled placeholder values so typography and density can be reviewed before
+any data engine exists. Every region carrying specimen numbers carries a corner `SPECIMEN` tag
+and the board opens with a ribbon stating the policy. Production renders only real or
+labelled-simulated data (mandate §26); a region without a source link or a specimen tag is a
+defect in either context.
+
+### 2.2 Overview region plan (hierarchy = layout order)
+
+P1 consolidated equity (display figure + realized/unrealized split with sign + glyph + ledger
+link) → P2 exposure by venue (gross/net/share bar) → P3 live risk (limit usage, headroom,
+fail-closed engine state) → P4 system health (per-feed freshness + latency, compromised-feed
+bar) → regime overview (each value with uncertainty band) → open positions (protective order
+state venue-reported) + high-priority opportunities (verification-gated, confidence never
+overrides a failed mandatory condition) → no-trade region (watching / would-change /
+invalidates) → side rail (intelligence activity, health, alert queue) → lower strip (recent
+decisions, research awaiting action, execution quality).
+
+### 2.3 Live Markets region plan
+
+Capability-registry navigator (unsupported asset classes greyed with registry state, never
+offered as tradable) → watchlist table (last/chg%/spread/session/freshness, tabular) → scanner
+conditions → global heatmap (configurable universe + metric; no entitlement → unavailable +
+cause) → session map on a UTC axis → context rail with the three zooms (list → quote →
+narrative) → instrument workbench chart anatomy.
+
+### 2.4 Chart anatomy (binding on every chart, Stage 3.3+ included)
+
+Mandatory chrome line: instrument · venue · timeframe · timezone (UTC + venue-local) · data
+status · delayed flag, mono caption. Axes/grid in hairline + mono tabular labels; price right,
+UTC below; session shading bands identical to the session map; crosshair with mono value chips;
+event markers ◆ intelligence / ⚠ warning, each linking to its record; overlays menu; export
+CSV/PNG; volume pane venue-reported only. Honesty rule (docs/03 §8): no synthetic depth,
+fabricated flow or invented Greeks — absent data renders unavailable + cause.
+
+### 2.5 State variants demonstrated
+
+Loading (skeleton shimmer + message), Empty (icon + "watching N instruments"), Error (negative
+badge + retry + view logs), Stale (warning badge + last-updated + new-risk-blocked) — contained
+per region; one failing feed never blanks a screen.
