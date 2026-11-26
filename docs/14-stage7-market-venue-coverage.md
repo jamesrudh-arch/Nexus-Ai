@@ -24,27 +24,27 @@ D-044 (Stage 6 closed).
 
 Board: `design/stage7-1-market-venue-coverage.html`. Method: read the live-verification run **at
 HEAD** rather than restating the last recorded one; measure the running system instead of inferring
-from source; execute the domain types instead of reasoning about them. Three of the eight findings
+from source; execute the domain types instead of reasoning about them. Three of the nine findings
 below were only findable by running something.
 
 ### 1.1 Evidence base, and what could not be read
 
 | Source | Identity | Readable here? |
 |--------|----------|----------------|
-| live venue run **on this batch's own commit** | run `45758610197`, job `139703054396`, commit `fa74748`, 2026-11-26T04:59Z, **success** | yes — check annotation |
-| the two runs before it | run `45756716181`, job `139696937355`, `b67ab39`, 04:41Z, success; run `45754638978`, job `139690278846`, `a77865e`, 04:21Z, success | yes — check annotations |
-| CI on this commit | run `45758603745`, `fa74748` — **all five jobs success** (secret scanning, compose config, backend lint/types/tests, runtime smoke in a real container, amd64+arm64 image) | yes — per-job conclusions |
+| live venue run **at HEAD** | run `45759709313`, job `139706589069`, commit `25e314e`, 2026-11-26T05:10Z, **success** | yes — check annotation |
+| the three runs before it | `45758610197` (`fa74748`, 04:59Z), `45756716181` (`b67ab39`, 04:41Z), `45754638978` (`a77865e`, 04:21Z) — all success | yes — check annotations |
+| CI on both commits of this batch | run `45759700949` (`25e314e`) and run `45758603745` (`fa74748`) — **all five jobs success** each (secret scanning, compose config, backend lint/types/tests, runtime smoke in a real container, amd64+arm64 image) | yes — per-job conclusions |
 | job logs | `gh run view --log-failed`, `gh api …/jobs/<id>/logs` | **no** — EOF against `results-receiver.actions.githubusercontent.com`, not in this sandbox's allowed hosts |
 | raw captures + report artifact | `live-verification` (`live-captures/`) | **no** — download dies against `productionresultssa14.blob.core.windows.net` |
 | annotation completeness | GitHub caps annotation text and the workflow truncates its own report | **partial** — `…truncated: 807 escaped characters over the cap`; the 5 GEO-BLOCKED rows and 2 PASS rows are past the cut |
 | in-process boot of the API | `create_app()` + `TestClient`, `NEXUS_AUDIT_BACKEND=memory` | yes — executed |
 | probe of the domain types | `Venue`, `VenueMapping`, `InstrumentRegistry.register/certify`, `coverage_report` | yes — executed |
 
-All three runs were on this branch and none was dispatched by hand: `venue-verification.yml` also runs
-on `pull_request` for changes under `backend/src/nexus/ingestion/**`, so pushing docs re-triggered
-live contact with all four sources. That is the luckiest part of this batch — three sets of fresh
-evidence, for free, the last of them on a commit that changed **no code at all**, which is what makes
-the dukascopy result below independent of anything in this batch.
+All four runs were on this branch and none was dispatched by hand: `venue-verification.yml` also runs
+on `pull_request` for changes under `backend/src/nexus/ingestion/**`, so pushing docs re-triggered live
+contact with all four sources. That is the luckiest part of this batch — four sets of fresh evidence,
+for free, the last two on commits that changed **no code at all**, which is what makes the dukascopy
+result below independent of anything in this batch.
 
 ### 1.2 The headline overstates coverage by more than half
 
@@ -66,11 +66,12 @@ The published verdict at HEAD is **24 passed / 0 failed / 5 geo-blocked / 0 skip
 venue disappeared. Any coverage claim built on "24 passed" would be wrong by more than half, so this
 document counts the 11.
 
-### 1.3 The verified numbers, per source (quoted from run `45756716181`, 04:41Z; reproduced by runs `45754638978` and `45758610197`)
+### 1.3 The verified numbers, per source (quoted from run `45756716181`, 04:41Z; reproduced by runs `45754638978`, `45758610197` and `45759709313`)
 
 * **OKX — 5/5.** `BTC-USDT-SWAP` contract size 0.01, tick size 0.1, min qty 0.01, qty step 0.01,
-  status `live`; bid 61063.2 / ask 61063.3, spread 0.016 bps, uncrossed; 50 trades with both sides,
-  61063.2–61064.8; 100 one-minute candles spanning 1.65 h; 40-level book, entitlement `LIVE`.
+  status `live`; bid 61063.2 / ask 61063.3, spread 0.016 bps, uncrossed; 50 trades, in this sample
+  carrying both sides, 61063.2–61064.8 (see F-9 — two-sidedness is not asserted, and run 4 returned 50
+  buys); 100 one-minute candles spanning 1.65 h; 40-level book, entitlement `LIVE`.
 * **Binance Vision — 2/2.** A genuine **71,720-byte ZIP** for 2026-11-19; parsed to 1,440 rows,
   **1,440 accepted, 0 rejected**, `timestamp_units=us`, 1,440 one-minute bars spanning 23.98 h,
   closes 61446.56–64080.80. The `us` field is defect 40's fix observed on real data.
@@ -82,21 +83,23 @@ document counts the 11.
 * **Bybit — 0/5, all GEO-BLOCKED.** 403 at the CloudFront edge on public unauthenticated endpoints.
   Nothing about the adapter is implicated; nothing about it is proven.
 
-Across the three runs the dukascopy layout result is **byte-identical** (`passed=True`, 25,761 →
+Across the four runs the dukascopy layout result is **byte-identical** (`passed=True`, 25,761 →
 101,480, 5,074 ticks, `reasons=-`, band 1.09502–1.0964) and so is the binance vision dump (a fixed
 historical day, 71,720 bytes, 1,440 rows, 0 rejected, `units=us`); okx prices move as they should
-(bid 60960.3 → 61063.2 → 60974.6) with identical structure each time (depth 40, entitlement `LIVE`,
-0.016 bps); bybit is 5/5 GEO-BLOCKED in all three. What does **not** repeat is the dukascopy
-reachability diagnosis — three runs, three patterns (F-5). The transport calls needed to land one bi5
-file were 1, then 16, then 1 and 4, which is the intermittency measured rather than described.
+(bid 60960.3 → 61063.2 → 60974.6 → 60925.8) with identical structure each time (depth 40, entitlement
+`LIVE`, 0.016 bps); bybit is 5/5 GEO-BLOCKED in all four. What does **not** repeat is the dukascopy
+reachability diagnosis — four runs, three patterns (F-5) — nor, as it turns out, okx's trade-side mix
+(run 4: all buys) or the agreement between its ticker and its book (F-8, F-9). The transport calls
+needed to land one bi5 file were 1, then 16, then 1 and 4, then 1, which is the intermittency measured
+rather than described.
 
 ### 1.4 Findings
 
-**F-1 — EVIDENCED, NOT RETIRED: dukascopy's layout check has passed against a real file three times
+**F-1 — EVIDENCED, NOT RETIRED: dukascopy's layout check has passed against a real file four times
 running, and the code still says no real file has ever been downloaded.** `verify_layout`'s docstring states the
 bargain — *"Passing these is the evidence required to flip `LAYOUT_VERIFIED` to `True`"*
-(`dukascopy.py:219–225`) — and it passed in three consecutive runs (`a77865e`, `b67ab39`,
-`fa74748`), the last on a commit that changed no code, so the result depends on nothing in this
+(`dukascopy.py:219–225`) — and it passed in four consecutive runs (`a77865e`, `b67ab39`, `fa74748`,
+`25e314e`), the last two on commits that changed no code, so the result depends on nothing in this
 batch. Against that, one constant and four written statements are stale: `dukascopy.py:45`
 `LAYOUT_VERIFIED = False`; `dukascopy.py:113` therefore still tags every tick
 `DUKASCOPY_BI5_UNVERIFIED`, visible in the same annotation line as the pass; `dukascopy.py:9` and
@@ -165,8 +168,8 @@ test models EUR/USD at `Venue.MT5`** (`test_instrument_registry.py:403`, `test_a
 while describing a venue the system cannot reach, and the one it can reach cannot be expressed.
 Closes with lever **L-B**.
 
-**F-5 — DO NOT OVERCLAIM THE 503: three runs produced three different dukascopy diagnoses, and the
-third points the opposite way from the first.**
+**F-5 — DO NOT OVERCLAIM THE 503: four runs produced three different dukascopy diagnoses, and the
+fourth refutes the third.**
 
 ```
 run 45754638978 (04:21Z, a77865e)  production_ua=ok bytes=25761 lzma=True
@@ -177,20 +180,22 @@ run 45756716181 (04:41Z, b67ab39)  production_ua=network-IngestFault  browser_ua
 run 45758610197 (04:59Z, fa74748)  production_ua=network-IngestFault  browser_ua=ok bytes=25761
   production_ua_other_hour=network-IngestFault
   verdict="the host was never reached (network-IngestFault), so no cause can be distinguished"
+run 45759709313 (05:10Z, 25e314e = HEAD)  production_ua=ok bytes=25761 lzma=True  <- back to run 1
+  verdict="nothing to diagnose: the production User-Agent works"
 ```
 
-Run 3 is the decisive one: the **browser** user agent succeeded where the production one failed. Read
-alone, run 1 says "the production User-Agent works"; read alone, run 3 would say "you need a browser
-User-Agent". Both readings over-fit a single sample, and adopting a browser user agent in the adapters
-on that strength would be circumvention of a host's stated preference justified by noise — a choice
-the module already refuses to make for itself and leaves to the owner. The diagnostic behaved exactly
-as designed, returning "no cause can be distinguished" twice rather than inventing one, which is what
-the seven offline logic tests require of it. So `docs/00`'s claim that the 503 was "characterised" is
+The sequence reads: production works, nothing works, browser works, production works. Run 3 pointed
+the opposite way from run 1, and run 4 reverted — eleven minutes later it falsified the only theory run
+3 could have supported. Any reading drawn from a single run is refuted by another, and adopting a
+browser user agent in the adapters on the strength of run 3 would have been circumvention of a host's
+stated preference justified by noise. The diagnostic behaved exactly as designed, returning "no cause
+can be distinguished" twice rather than inventing one, which is what the seven offline logic tests
+require of it. So `docs/00`'s claim that the 503 was "characterised" is
 only partly supported: throttling is *consistent* with the evidence (1, 16, then 4 transport calls to
 land one file; the patience helper exists because this feed answers intermittently), while no cause
-has been *established* and no user-agent conclusion survives three samples. What reproduced in all
-three runs is the layout pass — the evidence O-010 actually demands. The honest state is
-"intermittent, cause unknown".
+has been *established* and no user-agent conclusion survives four samples. What reproduced in all four
+runs is the layout pass — the evidence O-010 actually demands. The honest state is "intermittent,
+cause unknown"; four runs in 49 minutes is a start, not a characterisation.
 
 **F-6 — 3 OF 14: fourteen asset classes are declared; three have a free source, one more is
 plausible, ten have nothing.** `AssetClass` (`domain/instrument.py:19–33`) declares 14. Implemented
@@ -255,6 +260,22 @@ in bps and the timestamp gap recorded — is cheap and offline-testable against 
 with the verification module rather than the adapters. It is not required to retire either honesty row,
 and nothing here claims it is.
 
+**F-9 — A CLAIMED INVARIANT THAT IS NOT ONE: "50 trades with both sides present" was a property of
+one sample, and run 4 returned 50 buys and passed.** `docs/06:234` records okx's first live
+verification as *"50 trades with both sides present and prices inside the quoted band"*, and the same
+phrase appears in `docs/00`'s first-contact row. Reading the check: `_assert_ticks` asserts that trades
+came back, that each `observed_at` is timezone-aware, that each `source` matches, that prices and
+quantities are positive, and that each `side` is inside the vocabulary `(None, "BUY", "SELL")` — it
+never asserts that **both** sides appear; `sides=[…]` is recorded as evidence only. Run 4 makes the
+difference visible: `okx.trades count=50 price_min=60920.7 price_max=60925.9 sides=['BUY']` — all
+fifty buys — and the check **passed**, correctly, because a 50-trade window in a quiet minute can
+legitimately be one-sided. Note the asymmetry with the very next helper: `_assert_book` *does* fail a
+one-sided book (`assert book.bids and book.asks, "one-sided book"`). So two-sidedness is an invariant
+for the book and an observation for trades. No defect in the code — the assertion set is defensible —
+but the **documentation overstates what is verified**, which is the class of error this stage exists to
+correct. Closes with a wording correction in `docs/06` and `docs/00` (docs only, no authorisation
+needed) plus an owner decision on whether one-sidedness in trades should ever be a failure.
+
 Two smaller observations from the same probe, recorded rather than acted on: the generated id
 `INS-BTC-USDT-USDT` for canonical symbol `BTC/USDT:USDT` is ugly and near-ambiguous (`registry.py:656`
 replaces both `/` and `:` with `-`), and ids are the UI's primary key, so the seeding work in L-C
@@ -302,8 +323,8 @@ L-C makes coverage real, L-D waits on a machine.
    characters of the HEAD report are past the cut, including all five GEO-BLOCKED rows. The claim
    "the 5 geo-blocked checks are the 5 bybit checks" is an **inference** from the local collection
    (`TestBybitLiveEndpoints` has exactly 5) plus the headline count — not a quoted row.
-4. **Three runs gave three different dukascopy diagnoses** (F-5), so the 503 is not characterised,
-   no cause is claimed, and no user-agent conclusion is drawn from any single run.
+4. **Four runs gave three different dukascopy diagnoses** (F-5), so the 503 is not characterised, no
+   cause is claimed, and no user-agent conclusion is drawn from any single run.
 5. **okx numbers are a snapshot at 04:41Z**; bid 61063.2 will be wrong by the time this is read. The
    durable claims are structural: uncrossed book, both trade sides, contiguous candles, entitlement
    `LIVE`.
@@ -317,9 +338,12 @@ L-C makes coverage real, L-D waits on a machine.
    `NEXUS_LIVE_TRADING_ENABLED=false`.
 9. **No cross-endpoint consistency is asserted** (F-8), so okx's ticker and its book were 1.4 bps
    apart in run 3 and nothing in the suite would notice a larger disagreement.
-10. **Only three runs were observed, within 38 minutes.** That is enough to show the layout result
+10. **Only four runs were observed, within 49 minutes.** That is enough to show the layout result
     reproducing and the diagnosis not reproducing; it is not enough to characterise a feed's
     availability, which needs runs over days — the weekly schedule will accumulate them.
+11. **Two claims in `docs/05`/`docs/06` describe sample properties as if they were invariants** —
+    okx's trade sides (F-9). They are corrected in wording here; the underlying documents still carry
+    the original phrasing until the owner rules, since `docs/06` is a closed Phase 4 record.
 
 ### 1.8 Corrections made to the record in this batch
 

@@ -405,7 +405,7 @@ Market &amp; venue coverage &mdash; what is actually verified, per venue and per
 <div class="ribbon">RESEARCH BATCH — no production code is changed. Stage 7's mandate is recorded in
 <code>docs/12</code> §1.4: <i>&ldquo;Stage 7 retires the unverified rows market by market with
 evidence per market.&rdquo;</i> This board establishes, with measurements rather than restatements,
-what those rows now say. Three of the eight findings below could only be found by <b>running</b>
+what those rows now say. Three of the nine findings below could only be found by <b>running</b>
 things: booting the API, climbing the certification ladder, and handing the domain a venue its own
 enum does not contain.</div>
 
@@ -421,7 +421,7 @@ twice, at HEAD. The other cannot be solved by editing anything at all.</p>
 <h3>1 · Where every number on this board came from<span class="tag">and what could not be read</span></h3>
 <div class="card"><table>
 <tr><th>source of truth</th><th>identity</th><th>what it gave</th><th>readable here?</th></tr>
-<tr><td>live venue run <b>on this board's own commit</b></td><td><span class='mono'>run 45758610197</span> · job <span class='mono'>139703054396</span> · <span class='mono'>fa74748</span> · 2026-11-26T04:59Z · <b>success</b></td><td>24 passed / 0 failed / 5 geo-blocked / 0 skipped of 29 — the third consecutive run with the same headline, on a commit that changed <b>no code at all</b></td><td><span class='chip pos'>yes — annotation</span></td></tr><tr><td>the two runs before it</td><td><span class='mono'>run 45756716181</span> · job <span class='mono'>139696937355</span> · <span class='mono'>b67ab39</span> · 04:41Z · success<br><span class='mono'>run 45754638978</span> · job <span class='mono'>139690278846</span> · <span class='mono'>a77865e</span> · 04:21Z · success</td><td>the same dukascopy layout result three times running, and three <b>different</b> reachability diagnoses — which is what makes F-1 solid and F-5 the opposite</td><td><span class='chip pos'>yes — annotations</span></td></tr><tr><td>CI on this commit</td><td><span class='mono'>run 45758603745</span> · <span class='mono'>fa74748</span> · <b>all five jobs success</b></td><td>secret scanning · compose config · backend lint/types/tests · runtime smoke in a real container · amd64+arm64 image — the repository is green after a batch that changed only docs and design</td><td><span class='chip pos'>yes — per-job conclusions</span></td></tr><tr><td>job logs</td><td><span class='mono'>gh run view --log-failed</span> / <span class='mono'>…/jobs/&lt;id&gt;/logs</span></td><td>would give the full pytest transcript</td><td><span class='chip neg'>no — EOF against results-receiver.actions.githubusercontent.com, not in this sandbox's allowed hosts</span></td></tr><tr><td>raw captures + report artifact</td><td><span class='mono'>live-verification</span> (<span class='mono'>live-captures/</span>)</td><td>the actual JSON and bi5 bytes each adapter received</td><td><span class='chip neg'>no — download dies against productionresultssa14.blob.core.windows.net</span></td></tr><tr><td>annotation completeness</td><td>GitHub caps annotation text; the workflow truncates its own report</td><td><span class='mono'>…truncated: 807 escaped characters over the cap</span> — the 5 GEO-BLOCKED rows and 2 PASS rows are past the cut</td><td><span class='chip warn'>partial — composition measured locally instead (below)</span></td></tr><tr><td>in-process boot of the API</td><td><span class='mono'>create_app()</span> + <span class='mono'>TestClient</span>, <span class='mono'>NEXUS_AUDIT_BACKEND=memory</span></td><td>what <span class='mono'>/v1/instruments/coverage</span> and <span class='mono'>/v1/data/coverage</span> really return today</td><td><span class='chip pos'>yes — executed here</span></td></tr><tr><td>probe of the domain types</td><td><span class='mono'>Venue</span>, <span class='mono'>VenueMapping</span>, <span class='mono'>InstrumentRegistry.certify</span>, <span class='mono'>coverage_report</span></td><td>what it takes to record a verified source, and what happens to a venue the enum does not contain</td><td><span class='chip pos'>yes — executed here, transcript in F-3/F-4/F-7</span></td></tr>
+<tr><td>live venue run <b>at HEAD</b></td><td><span class='mono'>run 45759709313</span> · job <span class='mono'>139706589069</span> · <span class='mono'>25e314e</span> · 2026-11-26T05:10Z · <b>success</b></td><td>24 passed / 0 failed / 5 geo-blocked / 0 skipped of 29 — the <b>fourth</b> consecutive run with that headline</td><td><span class='chip pos'>yes — annotation</span></td></tr><tr><td>the three runs before it</td><td><span class='mono'>45758610197</span> · <span class='mono'>fa74748</span> · 04:59Z<br><span class='mono'>45756716181</span> · <span class='mono'>b67ab39</span> · 04:41Z<br><span class='mono'>45754638978</span> · <span class='mono'>a77865e</span> · 04:21Z — all success</td><td>the same dukascopy layout result four times running, but <b>three different</b> reachability patterns — which is what makes F-1 solid and F-5 the opposite</td><td><span class='chip pos'>yes — annotations</span></td></tr><tr><td>CI on both commits of this batch</td><td><span class='mono'>run 45759700949</span> · <span class='mono'>25e314e</span> · <b>all five jobs success</b><br><span class='mono'>run 45758603745</span> · <span class='mono'>fa74748</span> · <b>all five jobs success</b></td><td>secret scanning · compose config · backend lint/types/tests · runtime smoke in a real container · amd64+arm64 image — the repository is green after a batch that changed only docs and design</td><td><span class='chip pos'>yes — per-job conclusions</span></td></tr><tr><td>job logs</td><td><span class='mono'>gh run view --log-failed</span> / <span class='mono'>…/jobs/&lt;id&gt;/logs</span></td><td>would give the full pytest transcript</td><td><span class='chip neg'>no — EOF against results-receiver.actions.githubusercontent.com, not in this sandbox's allowed hosts</span></td></tr><tr><td>raw captures + report artifact</td><td><span class='mono'>live-verification</span> (<span class='mono'>live-captures/</span>)</td><td>the actual JSON and bi5 bytes each adapter received</td><td><span class='chip neg'>no — download dies against productionresultssa14.blob.core.windows.net</span></td></tr><tr><td>annotation completeness</td><td>GitHub caps annotation text; the workflow truncates its own report</td><td><span class='mono'>…truncated: 807 escaped characters over the cap</span> — the 5 GEO-BLOCKED rows and 2 PASS rows are past the cut</td><td><span class='chip warn'>partial — composition measured locally instead (below)</span></td></tr><tr><td>in-process boot of the API</td><td><span class='mono'>create_app()</span> + <span class='mono'>TestClient</span>, <span class='mono'>NEXUS_AUDIT_BACKEND=memory</span></td><td>what <span class='mono'>/v1/instruments/coverage</span> and <span class='mono'>/v1/data/coverage</span> really return today</td><td><span class='chip pos'>yes — executed here</span></td></tr><tr><td>probe of the domain types</td><td><span class='mono'>Venue</span>, <span class='mono'>VenueMapping</span>, <span class='mono'>InstrumentRegistry.certify</span>, <span class='mono'>coverage_report</span></td><td>what it takes to record a verified source, and what happens to a venue the enum does not contain</td><td><span class='chip pos'>yes — executed here, transcript in F-3/F-4/F-7</span></td></tr>
 </table></div>
 
 <h3>2 · &ldquo;24 passed of 29&rdquo; is not 24 items of coverage evidence<span class="tag">measured locally with --collect-only</span></h3>
@@ -437,7 +437,7 @@ on earth disappeared. <b>Eleven checks are live evidence about a source</b>: 5 o
 vision, 3 dukascopy, 1 dukascopy reachability. Any coverage claim built on &ldquo;24 passed&rdquo;
 would overstate what is proven by more than half.</div>
 
-<h3>3 · The verified numbers, per source<span class="tag">quoted from run 45756716181 · b67ab39 · 04:41Z; reproduced by runs 45754638978 and 45758610197</span></h3>
+<h3>3 · The verified numbers, per source<span class="tag">quoted from run 45756716181 · b67ab39 · 04:41Z; reproduced by runs 45754638978, 45758610197 and 45759709313</span></h3>
 <p><b>OKX</b> — five public endpoints, real responses, normalised. <span class="chip pos">5 / 5 PASS</span></p>
 <div class="ev"><span class="k">okx.instruments</span>  count=1 symbol=BTC-USDT-SWAP
   contract_size=0.01 tick_size=0.1 min_qty=0.01 qty_step=0.01 status=live raw_fields=6
@@ -480,30 +480,30 @@ tens of thousands of years out.</p>
 unauthenticated endpoints, from a GitHub-hosted runner. Nothing about the adapter is implicated and
 nothing about it is proven. Per D-007 venues are certified independently, so okx's five passes say
 nothing here.</p>
-<p><b>The three runs side by side</b> — what repeated exactly, and what did not:</p>
+<p><b>The four runs side by side</b> — what repeated exactly, and what did not:</p>
 <div class="card"><table>
-<tr><th>what</th><th>run 45754638978<br>a77865e · 04:21Z</th><th>run 45756716181<br>b67ab39 · 04:41Z</th>
-<th>run 45758610197<br>fa74748 · 04:59Z</th><th>reading</th></tr>
-<tr><td>headline</td><td>24 / 0 / 5 geo-blocked of 29</td><td>24 / 0 / 5 geo-blocked of 29</td><td>24 / 0 / 5 geo-blocked of 29</td><td><span class='chip pos'>identical three times</span></td></tr><tr><td>dukascopy <span class='mono'>verify_layout</span></td><td>passed=True · 25761 → 101480 · 5074 ticks · reasons=-</td><td>passed=True · 25761 → 101480 · 5074 ticks · reasons=-</td><td>passed=True · 25761 → 101480 · 5074 ticks · reasons=-</td><td><b>byte-identical</b> — the evidence O-010 demands, reproduced (F-1)</td></tr><tr><td>dukascopy parsed band</td><td>1.09502 – 1.0964</td><td>1.09502 – 1.0964</td><td>1.09502 – 1.0964</td><td>identical: the same hour file, and the divisor is right for EURUSD</td></tr><tr><td>dukascopy tag still recorded</td><td><span class='mono'>DUKASCOPY_BI5_UNVERIFIED</span></td><td><span class='mono'>DUKASCOPY_BI5_UNVERIFIED</span></td><td><span class='mono'>DUKASCOPY_BI5_UNVERIFIED</span></td><td><span class='chip warn'>stale in all three</span> — the constant never changed</td></tr><tr><td>dukascopy probes</td><td>production_ua <b>ok</b></td><td>both UAs failed; other hour ok (25313)</td><td>production_ua failed; <b>browser_ua ok</b></td><td><span class='chip neg'>three different patterns</span> — noise-dominated, no cause (F-5)</td></tr><tr><td>transport calls to land the bi5</td><td>1</td><td>16</td><td>1 then 4</td><td>intermittency is real and varies wildly run to run</td></tr><tr><td>okx bid / ask</td><td>60960.3 / 60960.4</td><td>61063.2 / 61063.3</td><td>60974.6 / 60974.7</td><td>prices move, as they should; structure identical each time</td></tr><tr><td>okx book best bid / ask</td><td>60960.3 / 60960.4</td><td>61063.2 / 61063.3</td><td><b>60965.8 / 60965.9</b></td><td>run 3's book is 8.8 USD (1.4 bps) from its own ticker — F-8</td></tr><tr><td>okx book / entitlement</td><td>depth 40 · LIVE · 0.016 bps</td><td>depth 40 · LIVE · 0.016 bps</td><td>depth 40 · LIVE · 0.016 bps</td><td>identical</td></tr><tr><td>binance vision dump</td><td>71,720-byte ZIP · 1440 rows · 0 rejected · units=us</td><td>71,720-byte ZIP · 1440 rows · 0 rejected · units=us</td><td>71,720-byte ZIP · 1440 rows · 0 rejected · units=us</td><td>identical — a fixed historical day, so it must be</td></tr><tr><td>bybit</td><td>5 GEO-BLOCKED</td><td>5 GEO-BLOCKED</td><td>5 GEO-BLOCKED</td><td><span class='chip neg'>unchanged, and unchangeable from a hosted runner</span> (F-2)</td></tr>
+<tr><th>what</th><th>1 · 45754638978<br>a77865e · 04:21Z</th><th>2 · 45756716181<br>b67ab39 · 04:41Z</th>
+<th>3 · 45758610197<br>fa74748 · 04:59Z</th><th>4 · 45759709313<br>25e314e · 05:10Z</th><th>reading</th></tr>
+<tr><td>headline</td><td>24 / 0 / 5 blocked of 29</td><td>24 / 0 / 5 blocked of 29</td><td>24 / 0 / 5 blocked of 29</td><td>24 / 0 / 5 blocked of 29</td><td><span class='chip pos'>identical four times</span></td></tr><tr><td>dukascopy <span class='mono'>verify_layout</span></td><td>passed=True · 25761 → 101480 · 5074 · reasons=-</td><td>passed=True · 25761 → 101480 · 5074 · reasons=-</td><td>passed=True · 25761 → 101480 · 5074 · reasons=-</td><td>passed=True · 25761 → 101480 · 5074 · reasons=-</td><td><b>byte-identical</b> — the evidence O-010 demands, four times (F-1)</td></tr><tr><td>dukascopy parsed band</td><td>1.09502 – 1.0964</td><td>1.09502 – 1.0964</td><td>1.09502 – 1.0964</td><td>1.09502 – 1.0964</td><td>identical: the same hour file, and EURUSD's divisor is right</td></tr><tr><td>tag still recorded</td><td><span class='mono'>…BI5_UNVERIFIED</span></td><td><span class='mono'>…BI5_UNVERIFIED</span></td><td><span class='mono'>…BI5_UNVERIFIED</span></td><td><span class='mono'>…BI5_UNVERIFIED</span></td><td><span class='chip warn'>stale in all four</span> — the constant never changed</td></tr><tr><td>dukascopy probes</td><td>production_ua <b>ok</b></td><td>both UAs failed; other hour ok (25313)</td><td>production failed; <b>browser_ua ok</b></td><td>production_ua <b>ok</b>, first call</td><td><span class='chip neg'>three patterns in four runs</span> — no cause, no UA theory (F-5)</td></tr><tr><td>transport calls for the bi5</td><td>1</td><td>16</td><td>1 then 4</td><td>1</td><td>intermittency is real and varies wildly</td></tr><tr><td>okx bid / ask</td><td>60960.3 / 60960.4</td><td>61063.2 / 61063.3</td><td>60974.6 / 60974.7</td><td>60925.8 / 60925.9</td><td>prices move, as they should</td></tr><tr><td>okx book best bid / ask</td><td>60960.3 / 60960.4</td><td>61063.2 / 61063.3</td><td><b>60965.8 / 60965.9</b></td><td>60925.8 / 60925.9</td><td>gap from its own ticker: 0.0 · 0.0 · <b>8.8 USD = 1.4 bps</b> · 0.0 (F-8)</td></tr><tr><td>okx trade sides</td><td>['BUY','SELL']</td><td>['BUY','SELL']</td><td>['BUY','SELL']</td><td><b>['BUY']</b></td><td>all four passed — two-sidedness is <b>not asserted</b> for trades (F-9)</td></tr><tr><td>okx book / entitlement</td><td>depth 40 · LIVE · 0.016 bps</td><td>depth 40 · LIVE · 0.016 bps</td><td>depth 40 · LIVE · 0.016 bps</td><td>depth 40 · LIVE · 0.016 bps</td><td>identical</td></tr><tr><td>binance vision dump</td><td>71,720 B · 1440 rows · 0 rejected · us</td><td>71,720 B · 1440 rows · 0 rejected · us</td><td>71,720 B · 1440 rows · 0 rejected · us</td><td>71,720 B · 1440 rows · 0 rejected · us</td><td>identical — a fixed historical day, so it must be</td></tr><tr><td>bybit</td><td>5 GEO-BLOCKED</td><td>5 GEO-BLOCKED</td><td>5 GEO-BLOCKED</td><td>5 GEO-BLOCKED</td><td><span class='chip neg'>unchanged, and unchangeable from a hosted runner</span> (F-2)</td></tr>
 </table></div>
-<p class="cap">The dukascopy layout result is byte-identical across all three, including the run on a
-commit that changed no code. The reachability probes differ every time, and in run 3 the
-<i>browser</i> user agent succeeded where the production one failed — the exact opposite of run 1.
-Read carelessly that would suggest a user-agent policy; read honestly it says the probe is
-noise-dominated, which is the verdict the diagnostic itself returned (F-5).</p>
+<p class="cap">The dukascopy layout result is byte-identical across all four, including two runs on
+commits that changed no code. The reachability probes gave three different patterns in four attempts,
+and run 4 reverted to run 1's — which is what settles F-5 against any user-agent theory. Two further
+differences only visible across runs: okx's ticker and book agreed exactly in run 4 and were 1.4 bps
+apart in run 3 (F-8), and run 4's 50 trades were <b>all buys</b> and still passed (F-9).</p>
 
 <h3>4 · Findings<span class="tag">F-n: research findings, not register decisions (those are D-0nn)</span></h3>
 
 <div class="finding"><div class="fid">F-1 · EVIDENCED, NOT RETIRED</div>
-<div class="ft">Dukascopy's layout check has passed against a real file twice, and the code still
-says no real file has ever been downloaded</div>
+<div class="ft">Dukascopy's layout check has passed against a real file four times running, and the
+code still says no real file has ever been downloaded</div>
 <p><span class="mono">verify_layout</span>'s own docstring states the bargain:
 <i>&ldquo;Passing these is the evidence required to flip <span class="mono">LAYOUT_VERIFIED</span> to
 <span class="mono">True</span>&rdquo;</i> <span class="cite">(dukascopy.py:219–225)</span>. It has now
 returned <span class="mono">passed=True · payload_bytes=25761 · decompressed_bytes=101480 ·
-tick_count=5074 · reasons=-</span> in <b>three consecutive runs</b> — <span class="mono">a77865e</span>,
-<span class="mono">b67ab39</span>, and <span class="mono">fa74748</span>, the last of which changed no
-code at all, so the result does not depend on any edit in this batch. 101,480 is 5,074 ×
+tick_count=5074 · reasons=-</span> in <b>four consecutive runs</b> — <span class="mono">a77865e</span>,
+<span class="mono">b67ab39</span>, <span class="mono">fa74748</span> and <span class="mono">25e314e</span>
+— the last two of which changed no code at all, so the result depends on nothing in this batch. 101,480 is 5,074 ×
 20 bytes exactly, offsets inside the hour, and the parsed prices 1.09502–1.0964 sit in EURUSD's real
 band — which is the check that would catch a wrong point divisor, the silent 100× error O-010 names.</p>
 <p>Against that, four statements and one constant are stale:
@@ -597,7 +597,7 @@ and the one venue it <i>can</i> reach cannot be expressed. <b>Closes with:</b> l
 <div class="finding"><div class="fid">F-5 · DO NOT OVERCLAIM THE 503</div>
 <div class="ft">Two runs twenty minutes apart produced different dukascopy diagnoses, so the 503 is
 still unexplained — only the layout result reproduced</div>
-<p>Three runs probed the same two hours and produced <b>three different patterns</b>:</p>
+<p>Four runs probed the same two hours and produced <b>three different patterns</b>:</p>
 <div class="ev"><span class="k">run 45754638978 (04:21Z, a77865e)</span>
   production_ua=ok bytes=25761 lzma=True
   verdict="nothing to diagnose: the production User-Agent works"
@@ -608,22 +608,28 @@ still unexplained — only the layout result reproduced</div>
 <span class="k">run 45758610197 (04:59Z, fa74748)</span>
   production_ua=network-IngestFault   browser_ua=ok bytes=25761 lzma=True
   production_ua_other_hour=network-IngestFault
-  verdict="the host was never reached (network-IngestFault), so no cause can be distinguished"</div>
-<p>Run 3 is the decisive one, and it points the opposite way from run 1: the <b>browser</b> user agent
-succeeded where the production one failed. Taken alone, run 1 says "the production User-Agent works";
-taken alone, run 3 would say "you need a browser User-Agent". Both readings would be over-fitting one
-sample. The probes are noise-dominated — which is exactly the verdict the diagnostic returned twice,
-and which seven offline logic tests require it to return rather than inventing a cause. Adopting a
-browser user agent in the adapters on the strength of run 3 would be circumvention of a host's stated
-preference justified by a single noisy sample; the module already refuses to make that choice for
-itself and leaves it to the owner.</p>
+  verdict="the host was never reached (network-IngestFault), so no cause can be distinguished"
+<span class="k">run 45759709313 (05:10Z, 25e314e = HEAD)</span>
+  production_ua=ok bytes=25761 lzma=True          &lt;- back to run 1's pattern
+  verdict="nothing to diagnose: the production User-Agent works"</div>
+<p>Run 3 pointed the opposite way from run 1 — the <b>browser</b> user agent succeeded where the
+production one failed — and then run 4 reverted to run 1's pattern, with the production user agent
+succeeding on the first call. So the sequence reads: production works, nothing works, browser works,
+production works. Any theory drawn from one run is refuted by another, and the only reading that
+survives all four is the one the diagnostic itself returned twice: <b>no cause can be
+distinguished</b>. Adopting a browser user agent in the adapters on the strength of run 3 would have
+been circumvention of a host's stated preference justified by a single noisy sample — and run 4 would
+have falsified that justification eleven minutes later. The module already refuses to make the choice
+for itself and leaves it to the owner; seven offline logic tests pin that refusal.</p>
 <p>So the ledger's claim that the 503 was &ldquo;characterised&rdquo; is only partly supported:
 throttling is <i>consistent</i> with the evidence (16 transport calls to land one 25,761-byte file in
-run 2, 4 in run 3, 1 in run 1; the patience helper exists because this feed answers intermittently),
-while no cause has been <i>established</i> and no user-agent conclusion survives three samples.
-<b>What reproduced in all three runs is the layout pass — the evidence O-010 actually demands.</b>
+run 2, 4 in run 3, 1 in runs 1 and 4; the patience helper exists because this feed answers
+intermittently), while no cause has been <i>established</i> and no user-agent conclusion survives four
+samples. <b>What reproduced in all four runs is the layout pass — the evidence O-010 actually
+demands.</b>
 <b>Closes with:</b> nothing here; the honest state is &ldquo;intermittent, cause unknown&rdquo;, and
-it stays that way until runs accumulate or the deployment host offers a stable vantage point.</p>
+it stays that way until runs accumulate or the deployment host offers a stable vantage point. Four
+runs in 49 minutes is a start, not a characterisation.</p>
 </div>
 
 <div class="finding"><div class="fid">F-8 · EACH ENDPOINT IS CHECKED ALONE</div>
@@ -637,6 +643,11 @@ passed. In a moving market that spread is entirely plausible; the point is that 
 distinguish it from a venue serving inconsistent data across endpoints</b>, because every check
 validates one endpoint in isolation: uncrossed book, both trade sides, contiguous candles, prices
 inside the quoted band.</p>
+<p>Run 4 is the counter-example that shows why such an assertion would need a tolerance rather than
+an equality: there the ticker read <span class="mono">bid=60925.8 ask=60925.9</span> and the book
+<span class="mono">best_bid=60925.8 best_ask=60925.9</span> — <b>identical</b>. So the gap between two
+endpoints sampled seconds apart ranges from 0.0 to 1.4 bps across the four runs, depending only on when
+each call landed.</p>
 <p><b>Consequence:</b> a cross-endpoint consistency assertion — ticker best bid/ask against the top of
 the book, sampled together, with a tolerance stated in bps and a timestamp gap recorded — would be the
 check that catches a venue whose feeds disagree. It is cheap, offline-testable against fixtures, and
@@ -702,6 +713,31 @@ is <span class="mono">DATA_AVAILABLE</span>. The word &ldquo;live-verified&rdquo
 means &ldquo;verified against live data&rdquo; — the same phrase, two different meanings, in the
 document that Stage 7 is told to work from. <b>Closes with:</b> lever L-E, an owner ruling.</p></div>
 
+<div class="finding"><div class="fid">F-9 · A CLAIMED INVARIANT THAT IS NOT ONE</div>
+<div class="ft">&ldquo;50 trades with both sides present&rdquo; was a property of one sample, not an
+assertion — and run 4 returned 50 buys and passed</div>
+<p><span class="cite">docs/06:234</span> records okx's first live verification as <i>&ldquo;50 trades
+with both sides present and prices inside the quoted band&rdquo;</i>, and the same phrase appears in
+<span class="cite">docs/00</span>'s first-contact row. Reading the check itself:
+<span class="mono">_assert_ticks</span> asserts that trades came back, that each
+<span class="mono">observed_at</span> is timezone-aware, that each <span class="mono">source</span>
+matches, that prices and quantities are positive, and that each <span class="mono">side</span> is
+inside the vocabulary <span class="mono">(None, "BUY", "SELL")</span> — it never asserts that
+<b>both</b> sides appear. <span class="mono">sides=[…]</span> is recorded as evidence only.</p>
+<p>Run 4 makes the difference visible: <span class="mono">okx.trades count=50 price_min=60920.7
+price_max=60925.9 sides=['BUY']</span> — all fifty buys — and the check <b>passed</b>, correctly,
+because a 50-trade window in a quiet minute can legitimately be one-sided. Note the asymmetry with the
+very next helper: <span class="mono">_assert_book</span> <i>does</i> fail a one-sided book
+(<span class="mono">assert book.bids and book.asks, "one-sided book"</span>). So two-sidedness is
+treated as an invariant for the book and as an observation for trades.</p>
+<p><b>Consequence:</b> no defect in the code — the assertion set is defensible — but the
+<b>documentation overstates what is verified</b>, which is precisely the class of error this stage
+exists to correct. Either the claim is worded as an observation (&ldquo;both sides were present in that
+sample&rdquo;), or, if the project wants it as an invariant, it needs a larger sample and a stated
+tolerance. <b>Closes with:</b> a wording correction in <span class="mono">docs/06</span> and
+<span class="mono">docs/00</span> — docs only, no authorisation needed — plus an owner decision on
+whether one-sidedness in trades should ever be a failure.</p></div>
+
 <h3>5 · Coverage matrix<span class="tag">per venue, and per asset class</span></h3>
 <div class="card"><table>
 <tr><th>venue</th><th>adapter</th><th>credential</th><th>rank recorded in the running system</th>
@@ -727,11 +763,14 @@ of the five need an authorisation this batch does not have.</p>
 gh api repos/:owner/:repo/actions/runs/45756716181/jobs --jq '.jobs[0].id'   -> 139696937355
 gh api repos/:owner/:repo/check-runs/139696937355/annotations --jq '.[].message'
 gh api repos/:owner/:repo/actions/runs/45756716181 --jq '.head_sha'          -> b67ab39… (= HEAD)
-<span class="k"># the run on this board's own commit, and the one before that</span>
+<span class="k"># the run at HEAD, and the ones before it</span>
+gh api repos/:owner/:repo/actions/runs/45759709313/jobs --jq '.jobs[0].id'   -> 139706589069
+gh api repos/:owner/:repo/check-runs/139706589069/annotations --jq '.[].message'
 gh api repos/:owner/:repo/actions/runs/45758610197/jobs --jq '.jobs[0].id'   -> 139703054396
 gh api repos/:owner/:repo/check-runs/139703054396/annotations --jq '.[].message'
 gh api repos/:owner/:repo/check-runs/139690278846/annotations --jq '.[].message'
-<span class="k"># CI on this commit</span>
+<span class="k"># CI on both commits of this batch</span>
+gh api repos/:owner/:repo/actions/runs/45759700949/jobs --jq '.jobs[].conclusion'  -> 5x success
 gh api repos/:owner/:repo/actions/runs/45758603745/jobs --jq '.jobs[].conclusion'  -> 5x success'
 <span class="k"># what the 29 checks actually are</span>
 NEXUS_LIVE_VERIFY=1 pytest tests/test_live_endpoints.py --collect-only -v    -> 29, by class
@@ -787,8 +826,8 @@ carrying a spliced fragment of the Stage 2 paragraph), the status headers of
 still said gate 975/2/0 after the verified number became 976/2/0.</p>
 </div>
 
-<footer>Stage 7.1 &middot; research &middot; no production code changed &middot; evidence: live runs
-45758610197 (fa74748, this commit), 45756716181 (b67ab39) and 45754638978 (a77865e) &middot; CI run
-45758603745 all five jobs green &middot; a real in-process boot &middot; executed probes of the
-registry and domain types</footer>
+<footer>Stage 7.1 &middot; research &middot; no production code changed &middot; evidence: four live
+runs — 45759709313 (25e314e, HEAD), 45758610197 (fa74748), 45756716181 (b67ab39), 45754638978
+(a77865e) &middot; CI runs 45759700949 and 45758603745, all five jobs green each &middot; a real
+in-process boot &middot; executed probes of the registry and domain types</footer>
 </div></body></html>
