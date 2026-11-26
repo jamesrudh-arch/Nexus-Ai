@@ -10,7 +10,7 @@ That is a real limitation and is recorded as such: correct parsing of a syntheti
 proves the normalisation logic, it does **not** prove the live endpoint still returns that
 shape. Phase 3's exit gate included a live-endpoint verification step that had to run from a host
 with egress; it runs from CI, and on 2026-11-26 it produced the evidence that flipped
-``DUKASCOPY.LAYOUT_VERIFIED`` to ``True`` (eight consecutive runs on 2026-11-26 against the
+``DUKASCOPY.LAYOUT_VERIFIED`` to ``True`` (ten consecutive runs on 2026-11-26 against the
 same real bi5 hour, ``2026-11-24T12:00Z`` — see ``docs/14`` §1.4 F-1 and §2.1). The fixtures
 so they still prove parsing and not the live shape; the live module is what proves that, and it is
 the only place a real payload appears.
@@ -149,12 +149,13 @@ class TestNoCredentialSurface:
         """The flag follows the evidence, in both directions.
 
         It was ``False`` from Phase 3 until 2026-11-26 because no real file had ever been downloaded.
-        ``verify_layout`` then passed against a genuine hour in eight consecutive CI runs on
+        ``verify_layout`` then passed against a genuine hour in ten consecutive CI runs on
         2026-11-26: hour ``2026-11-24T12:00Z``, path ``EURUSD/2026/10/24/12h_ticks.bi5`` —
         whose ``10`` is November, the 0-indexed month. Runs ``45754638978``, ``45756716181``,
         ``45758610197`` and ``45759709313`` produced the evidence before the flip;
-        ``45782533635``, ``45782540670``, ``45784665370`` and ``45784657260`` are the four
-        at ``LAYOUT_VERIFIED = True``, and all four still pass. Every one of the eight returned
+        ``45782533635``, ``45782540670``, ``45784665370``, ``45784657260``, ``45786440060`` and
+        ``45786447356`` are the six at ``LAYOUT_VERIFIED = True``, and all six still pass. Every
+        one of the ten returned
         25,761 compressed bytes → 101,480 decompressed = 5,074 ticks × 20 exactly, no failed
         check, parsed prices 1.09502–1.0964. Evidence in ``docs/14`` §1.4 F-1 / §2.1 and
         ``docs/00`` O-010.

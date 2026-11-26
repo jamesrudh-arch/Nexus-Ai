@@ -7,22 +7,22 @@ the research plan possible at $0. It is a **bulk historical** source, not a real
 LZMA-compressed, 20 bytes per tick, big-endian — was implemented from documentation and stayed
 UNVERIFIED through Phases 3 and 4 because this sandbox has no egress to ``datafeed.dukascopy.com``.
 It has now been checked against a real download. :func:`verify_layout` passed on a genuine
-bi5 hour in **eight consecutive CI runs on 2026-11-26**: four before the flip
+bi5 hour in **ten consecutive CI runs on 2026-11-26**: four before the flip
 (``45754638978``, ``45756716181``, ``45758610197``, ``45759709313``) and four after it
-(``45782533635``, ``45782540670``, ``45784665370``, ``45784657260``), the last four being the
-flag's falsifiability test — it stayed green with the flag on. All eight fetched the same hour,
-``2026-11-24T12:00Z``, whose path is ``EURUSD/2026/10/24/12h_ticks.bi5`` — the ``10`` is November, because the
-month segment is 0-indexed, exactly the trap documented below. All eight returned 25,761
-compressed bytes, 101,480 decompressed = **5,074 ticks × 20 exactly**, no failed check, and
-parsed prices of 1.09502–1.0964 inside EURUSD's real band — the assertion that exists to
-catch a wrong point divisor, the silent 100x error warned about below. ``LAYOUT_VERIFIED`` is
+(``45782533635``, ``45782540670``, ``45784665370``, ``45784657260``) and two more after that.
+The last six are the flag's falsifiability test — it stayed green with the flag on. All ten
+fetched the same hour, ``2026-11-24T12:00Z``, whose path is ``EURUSD/2026/10/24/12h_ticks.bi5`` —
+the ``10`` is November, because the month segment is 0-indexed, exactly the trap documented below.
+All ten returned 25,761 compressed bytes, 101,480 decompressed = **5,074 ticks × 20 exactly**, no
+failed check, and parsed prices of 1.09502–1.0964 inside EURUSD's real band — the assertion that
+exists to catch a wrong point divisor, the silent 100x error warned about below.
 therefore ``True`` and every record carries ``source="DUKASCOPY_BI5"``. Evidence: ``docs/14``
 §1.4 F-1 and §2.1, and ``docs/00`` O-010.
 
 What is still **NOT** verified, and must not be inferred from the above: only EURUSD has been
 checked, so **12 of the 13 divisors** in ``POINT_DIVISORS`` have never met a real file. The feed
-is also intermittent, and the eight runs above did not agree about why: the production
-User-Agent worked outright in four; in the other four the single-attempt probes faulted while
+is also intermittent, and those ten runs did not agree about why: the production
+User-Agent worked outright in six; in the other four the single-attempt probes faulted while
 the patient fetch inside the same run still succeeded, and the probes contradicted each other
 (a browser User-Agent answered in three of them, a different hour in two). No single variable
 explains it and no cause is established (``docs/14`` F-5), so a failed hour says nothing about
@@ -59,10 +59,10 @@ VENUE = "DUKASCOPY"
 SOURCE_UNVERIFIED = "DUKASCOPY_BI5_UNVERIFIED"
 SOURCE_VERIFIED = "DUKASCOPY_BI5"
 
-#: Set only after :func:`verify_layout` passes against a real download. It passed eight times in
+#: Set only after :func:`verify_layout` passes against a real download. It passed ten times in
 #: a row on 2026-11-26 — ``45754638978``, ``45756716181``, ``45758610197``, ``45759709313``
-#: before the flip, ``45782533635``, ``45782540670``, ``45784665370``, ``45784657260`` after it — against hour
-#: ``2026-11-24T12:00Z`` (``EURUSD/2026/10/24/12h_ticks.bi5``): 25,761 bytes → 101,480 = 5,074 × 20 exactly,
+#: before the flip and six after it (``45782533635`` … ``45786447356``; the full table is hour
+#: ``docs/14`` §2.1), against hour ``2026-11-24T12:00Z``: 25,761 bytes → 101,480 = 5,074 × 20,
 #: no failed check, prices 1.09502–1.0964. Recorded in ``docs/14`` §1.4 F-1 and §2.1,
 #: and ``docs/00`` O-010.
 #: Flip this back to ``False`` if a real download ever fails the check again — the honest state is
@@ -255,7 +255,8 @@ def verify_layout(payload: bytes) -> dict[str, Any]:
     Passing these is the evidence required to flip ``LAYOUT_VERIFIED`` to ``True``. They are
     deliberately mechanical: size divisibility, offset monotonicity, sane price range.
 
-    It passed on 2026-11-26, four runs in a row, which is what ``LAYOUT_VERIFIED = True`` cites. The
+    It passed on 2026-11-26, ten runs in a row (four before the flag flipped and six after),
+    which is what ``LAYOUT_VERIFIED = True`` cites. The
     function stays for two reasons: the weekly live run keeps calling it, so an upstream change to the
     bi5 record layout is caught by the next real download instead of being assumed away; and the flag
     is a claim about the world rather than about this file, so it must be falsifiable by re-running

@@ -8,7 +8,7 @@ consistent and proves nothing about the world: it cannot notice that a venue ren
 changed a divisor, started returning strings where it returned numbers, or that a URL shape was
 misread. For Dukascopy the gap was wider still — the bi5 binary layout was implemented from
 documentation alone, and ``LAYOUT_VERIFIED`` stayed ``False`` until this module downloaded a real
-hour file and ``verify_layout`` passed against it (eight consecutive CI runs on 2026-11-26,
+hour file and ``verify_layout`` passed against it (ten consecutive CI runs on 2026-11-26,
 ``2026-11-24T12:00Z``; the flag is ``True`` now and cites that evidence — ``docs/14`` §1.4 F-1 and
 §2.1, ``docs/00`` O-010).
 
@@ -694,9 +694,9 @@ class TestDukascopyReachabilityDiagnostic:
     """Why does the bi5 endpoint answer 503? Measured, not guessed.
 
     History: with the corrected URL (defect 39) the host answered HTTP 503 on all four attempts in
-    run `45726585354`, so `verify_layout` had still never seen a real file. It has since — eight
+    run `45726585354`, so `verify_layout` had still never seen a real file. It has since — ten
     consecutive runs on 2026-11-26 passed and `LAYOUT_VERIFIED` is True. What this diagnostic has
-    *not* settled is why the feed answers intermittently: across those eight runs the probes
+    *not* settled is why the feed answers intermittently: across those ten runs the probes
     produced four different patterns — production ok; both UAs faulted with another hour ok;
     production faulted with a browser UA ok; and production faulted with *both* a browser UA and
     another hour ok — while the patient layout fetch succeeded in every one, so no single
