@@ -999,8 +999,10 @@ budget), which is the check that emits the renamed `layout_flag=` key. At the ti
 F-13 correction to that evidence line was **offline-evidenced only** — the same class of limitation as
 F-11 — while `verify_layout` itself was live-evidenced in both runs.
 
-**Runs 24, 25 and 26 each had no skips at all** (§4.1), so `parsed_ticks` ran in all three and
-`layout_flag=True` is now **live-evidenced**: the limitation is closed, three runs running. It is left
+**Runs 24, 25 and 26 each had no skips at all**, so `parsed_ticks` ran in all three and
+`layout_flag=True` became **live-evidenced**. Run 27 then had one skip — but not that one: both
+dukascopy checks ran and emitted evidence, so `layout_flag=True` is live-evidenced in **four
+consecutive runs** (§4.1). The limitation is closed. It is left
 recorded here rather than deleted, because the mechanism that produced it is still live — F-5's
 intermittent feed can skip that check on any run, and a limitation that was real once is worth keeping
 visible next to the runs that discharged it.
@@ -1197,16 +1199,42 @@ denominator.
 | 24 | `45829853116` | **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** | **0.000** (mids identical, 60804.15) | 0.439 | 0.300 |
 | 25 | `45829842623` | **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** | **0.000** (mids identical, 60804.15) | 0.739 | 0.294 |
 | 26 | `45833872241` | **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** | **0.000** (mids identical, 60832.85) | **0.238** | **0.298** |
+| 27 | `45836112636` | **43 passed / 0 failed / 5 geo-blocked / 1 skipped of 49** | **0.000** (mids identical, 60867.95) | **1.089** | **0.298** |
 
 Run 26 is `ab841c7`'s only venue run: that commit changed documents and no test, so the `push` event
-ran `ci` alone and only the `pull_request` event triggered `venue-verification`. All six commits of
-this batch are green — **22 runs, 0 non-success**.
+ran `ci` alone and only the `pull_request` event triggered `venue-verification`.
 
-Fetched adjacently, the two endpoints **agreed exactly** — gap 0.000 in all three runs, at two
-different prices (60804.15, then 60832.85). That is the strongest confirmation of P-9's reframing
-available: shrink the interval and the "disagreement" disappears, which is what a market-moving
-explanation predicts and what an endpoint-disagreement explanation does not. Three samples still
-cannot bound a rate, which is why the accumulation continues rather than a tolerance being chosen.
+**Every commit of this batch is green on every run, with 0 non-success.** Stated as a property and not
+as a count, because a count here re-triggers on each push and goes stale the moment it is written —
+that is F-12, which this stage closed, and it would be poor work to reintroduce it two commits later.
+For calibration only: seven commits had produced 25 runs at the time of writing, and each push adds
+two to four more.
+
+Fetched adjacently, the two endpoints **agreed exactly** — gap 0.000 in all four runs, across three
+different prices (60804.15, 60832.85, 60867.95). That is the strongest confirmation of P-9's
+reframing available: shrink the interval and the "disagreement" disappears, which is what a
+market-moving explanation predicts and what an endpoint-disagreement explanation does not. Four
+samples still cannot bound a rate, which is why the accumulation continues rather than a tolerance
+being chosen.
+
+**Run 27 is the sharpest of the four, and it is the one that should be read carefully.** Its venue
+timestamps were **1.089 s** apart while the two responses arrived **0.298 s** apart — a 3.7× skew —
+and the mids were *still identical to the cent*. A full second of venue time passed between the two
+snapshots and BTC's mid did not move at all, so the ticker endpoint plainly does not update every
+second. That is why §2.5's twelve-run distribution (zero in 6, max 2.223, mean 0.515 bps) measured
+how stale each snapshot was relative to the other, and never measured disagreement between endpoints:
+there is no evidence of disagreement in any run, at any interval, in either direction.
+
+Run 27 also **broke the streak recorded in the previous paragraph of this section's draft**: it had
+one skip, so runs 24–26 having none was three runs and not a property. The harness reported *"1 could
+not reach their source"*, and the annotation is truncated at its cap (`3213 escaped characters over
+the cap`), so the skipped check cannot be named from it. What can be stated precisely: both dukascopy
+checks ran and emitted evidence — `dukascopy.layout passed=True` and `dukascopy.ticks …
+layout_flag=True` — so it was **not** `parsed_ticks`, and the `layout_flag=` key is live-evidenced in
+run 27 as well as 24, 25 and 26. The skip is therefore a *different* check from the one runs 22 and 23
+skipped, which is F-5 recurring on a third occasion and the reason F-13's qualifier is permanent
+rather than temporary. Naming a skip from a truncated annotation is not something this document will
+guess at.
 
 Run 26 also sharpens F-14. Its two interval readings are `dt_observed_s=0.238` against
 `dt_wall_s=0.298` — the venue-stamped interval is now *shorter* than the wall clock, where run 25 had
@@ -1218,7 +1246,8 @@ precisely the finding.
 These runs also close two things the previous batch owed. **No skips at all**, so `verify_layout` and
 `parsed_ticks` both ran and F-13's renamed `layout_flag=` key is **live-evidenced at last** (it had
 been offline-only because runs 22 and 23 both skipped the check that emits it) — and held across all
-three runs, `layout_flag=True` each time. And the trade list came back **`buy=0 sell=50`** — fully
+four consecutive runs 24–27, `layout_flag=True` each time — including run 27, which skipped a
+*different* check. And the trade list came back **`buy=0 sell=50`** — fully
 one-sided — and **passed**, which is P-7 vindicated live for the second time (run `45759709313` was 50
 buys; this is 50 sells). Run 26 returned to a two-sided list, `buy=48 sell=2`, so the one-sided shape
 is intermittent rather than the new normal — which is what makes P-7 a ruling about the check and not
@@ -1306,7 +1335,7 @@ as a pass).
 | Live module offline subset | **32 passed** |
 | CI, `7929a96` (P-9 code) | runs `45829853116` + `45829842623`, both `success`: **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** |
 | CI, `ab841c7` (this closure) | `45833872241` `success`, same result; one venue run only, because a documents-only commit runs `venue-verification` on the `pull_request` event alone |
-| CI, every commit of the batch | **22 runs across six commits, 0 non-success** |
+| CI, every commit of the batch | **every run `success`, 0 non-success** — stated as a property, not a count, because a count re-triggers on each push and goes stale the moment it is written (F-12, which this stage closed). Seven commits had produced 25 runs at the time of writing |
 | Lint / format / types | ruff + format clean (82 files); **mypy strict Success on 57 source files** |
 | Repo hygiene | **83 passed** |
 | Boards | both re-audited: 0 undefined CSS vars, 0 external refs, 0 unstyled classes, tags balanced |

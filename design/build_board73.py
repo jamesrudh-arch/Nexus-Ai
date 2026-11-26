@@ -308,6 +308,9 @@ def p9_table() -> str:
             ("26", "<span class='cite'>45833872241</span>", "<b class='ok'>0.000</b>",
              "<span class='mono'>0.238</span>", "<span class='mono'>0.298</span>",
              "0.000", "0.000", "60832.85", "60832.85"),
+            ("27", "<span class='cite'>45836112636</span>", "<b class='ok'>0.000</b>",
+             "<span class='mono'><b>1.089</b></span>", "<span class='mono'>0.298</span>",
+             "0.000", "0.000", "60867.95", "60867.95"),
         ],
     )
 
@@ -459,7 +462,11 @@ def gate_table() -> str:
              "<span class='cite'>(was 56)</span>", "<span class='mono'>mypy</span> (strict)"),
             ("Repo hygiene", "<b>83 passed</b> <span class='cite'>(was 80)</span>",
              "<span class='mono'>pytest tests/test_repo_hygiene.py</span>"),
-            ("CI, this batch", "<b>22 runs across six commits, 0 non-success.</b> Latest: "
+            ("CI, this batch", "<b>Every run <span class='mono'>success</span>, 0 non-success</b> "
+             "&mdash; a property, not a count, since a count re-triggers per push (F-12). Latest: "
+             "<span class='cite'>45836112636</span> (<span class='cite'>4fef432</span>) "
+             "<b>43 / 0 / 5 geo-blocked / 1 skipped of 49</b>, F-5 recurring on a check that is not "
+             "<span class='mono'>parsed_ticks</span> since both dukascopy checks ran; then "
              "<span class='cite'>45833872241</span> (<span class='cite'>ab841c7</span>) "
              "<b>44 / 0 / 5 geo-blocked / 0 skipped of 49</b>, and "
              "<span class='cite'>45829853116</span> + <span class='cite'>45829842623</span> "
@@ -768,10 +775,15 @@ renamed <span class="mono">layout_flag=</span> key from F-13 &mdash; so at the t
 was <b>offline-evidenced only</b>, the same class of limitation as F-11, while
 <span class="mono">verify_layout</span> itself was live-evidenced in both runs. <b>Runs 24, 25 and 26
 each had no skips at all</b> (&sect;12), so <span class="mono">parsed_ticks</span> ran in all three and
-<span class="mono">layout_flag=True</span> is now <b>live-evidenced</b>, three runs running. The box
-stays rather than being deleted, because the mechanism that produced it is still live: F-5 can skip
-that check on any run, and a limitation that was real once is worth keeping visible beside the runs
-that discharged it.</div>
+<span class="mono">layout_flag=True</span> became <b>live-evidenced</b>. <b>Run 27 then had one skip
+&mdash; but not that one:</b> both dukascopy checks ran and emitted evidence
+(<span class="mono">dukascopy.layout passed=True</span>, <span class="mono">dukascopy.ticks &hellip;
+layout_flag=True</span>), so the key is live-evidenced in <b>four consecutive runs</b>. The skip is a
+<i>different</i> check from the one runs 22 and 23 skipped, and it cannot be named: the annotation is
+truncated at its cap (<span class="mono">3213 escaped characters over the cap</span>), and this board
+will not guess at a name it cannot read. The box stays rather than being deleted, because the
+mechanism that produced it is still live &mdash; F-5 has now skipped a check on three separate
+occasions, which is what makes F-13&rsquo;s qualifier permanent rather than temporary.</div>
 
 <h3>7 &middot; F-12 and F-13 &mdash; the record contradicting its own evidence<span class="tag">NEW &middot; both found and fixed here</span></h3>
 <p>Found while writing this board's own §1, in the module the seed cites most. Two defects, both in
@@ -930,8 +942,17 @@ bps_per_s_wall=&hellip; quoted_spread_bps=&hellip; <b>asserts_agreement=False</b
 <p class="cap">Gap 0.000 in all three, at two different prices &mdash; and run 26 is
 <span class="cite">ab841c7</span>&rsquo;s only venue run, because a documents-only commit runs
 <span class="mono">venue-verification</span> on the <span class="mono">pull_request</span> event
-alone. All six commits of this batch are green: <b>22 runs, 0 non-success</b>. Three samples still
-cannot bound a rate, which is why the accumulation continues rather than a tolerance being chosen.
+alone. <b>Every commit of this batch is green on every run, 0 non-success</b> &mdash; stated as a
+property and not as a count, because a count here re-triggers on each push and goes stale the moment
+it is written, which is <b>F-12</b>: the defect this very stage closed. Four samples still cannot
+bound a rate, which is why the accumulation continues rather than a tolerance being chosen.</p>
+<p><b>Run 27 is the sharpest of the four and the one to read carefully.</b> Its venue timestamps were
+<b>1.089 s</b> apart while both responses arrived <b>0.298 s</b> apart &mdash; a 3.7&times; skew
+&mdash; and the mids were <i>still identical to the cent</i>. A full second of venue time passed
+between the two snapshots and BTC&rsquo;s mid did not move at all, so the ticker endpoint plainly does
+not update every second. That is what &sect;6&rsquo;s twelve-run distribution was measuring all along:
+how stale each snapshot was relative to the other, never disagreement between endpoints. <b>There is
+no evidence of disagreement in any run, at any interval, in either direction.</b>
 Three pure functions hold the arithmetic so it can be pinned without a venue:
 <span class="mono">_gap_bps</span> is &sect;2.5&rsquo;s convention
 <span class="mono">|qm &minus; bm| / qm &times; 1e4</span> in exactly one place, and
@@ -988,8 +1009,10 @@ ab841c7's 45833872241 all success at 44 passed / 0 failed / 5 geo-blocked / <b>0
 three consecutive runs with no skips at all, which live-evidences F-13's renamed layout_flag= key at
 last, and gap_bps 0.000 in all three at two different prices. Run 25 returned a fully one-sided trade
 list (buy=0 sell=50) that passed, P-7 vindicated live a second time, and run 26 came back two-sided
-(buy=48 sell=2), so the one-sided shape is intermittent rather than the new normal &middot; 22 runs
-across six commits, 0 non-success &middot; F-3 closed,
+(buy=48 sell=2), so the one-sided shape is intermittent rather than the new normal &middot; every run of every
+commit of the batch success, 0 non-success &mdash; stated as a property because a count re-triggers per
+push (F-12) &middot; run 27 skipped one check that is not parsed_ticks, so layout_flag= is
+live-evidenced in four consecutive runs and F-5 has now recurred three times &middot; F-3 closed,
 F-12 and F-13 closed, F-8 reframed as P-9 and now ruled and implemented, <b>F-14 found</b>, F-2 F-5
 F-6 F-11 F-14 still open</footer>
 </div></body></html>"""

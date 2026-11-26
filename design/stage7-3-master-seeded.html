@@ -637,10 +637,15 @@ renamed <span class="mono">layout_flag=</span> key from F-13 &mdash; so at the t
 was <b>offline-evidenced only</b>, the same class of limitation as F-11, while
 <span class="mono">verify_layout</span> itself was live-evidenced in both runs. <b>Runs 24, 25 and 26
 each had no skips at all</b> (&sect;12), so <span class="mono">parsed_ticks</span> ran in all three and
-<span class="mono">layout_flag=True</span> is now <b>live-evidenced</b>, three runs running. The box
-stays rather than being deleted, because the mechanism that produced it is still live: F-5 can skip
-that check on any run, and a limitation that was real once is worth keeping visible beside the runs
-that discharged it.</div>
+<span class="mono">layout_flag=True</span> became <b>live-evidenced</b>. <b>Run 27 then had one skip
+&mdash; but not that one:</b> both dukascopy checks ran and emitted evidence
+(<span class="mono">dukascopy.layout passed=True</span>, <span class="mono">dukascopy.ticks &hellip;
+layout_flag=True</span>), so the key is live-evidenced in <b>four consecutive runs</b>. The skip is a
+<i>different</i> check from the one runs 22 and 23 skipped, and it cannot be named: the annotation is
+truncated at its cap (<span class="mono">3213 escaped characters over the cap</span>), and this board
+will not guess at a name it cannot read. The box stays rather than being deleted, because the
+mechanism that produced it is still live &mdash; F-5 has now skipped a check on three separate
+occasions, which is what makes F-13&rsquo;s qualifier permanent rather than temporary.</div>
 
 <h3>7 &middot; F-12 and F-13 &mdash; the record contradicting its own evidence<span class="tag">NEW &middot; both found and fixed here</span></h3>
 <p>Found while writing this board's own §1, in the module the seed cites most. Two defects, both in
@@ -734,7 +739,7 @@ intermittent feed that causes the skips &mdash; remains open, which is what make
 permanent rather than temporary.</div>
 
 <h3>8 &middot; Gate evidence<span class="tag">re-run for this board</span></h3>
-<div class="card"><table><thead><tr><th>Gate</th><th>Result</th><th>Command</th></tr></thead><tbody><tr><td>Suite</td><td><b>1,036 passed, 2 skipped, 0 failed</b> <span class='cite'>(was 997 + 2)</span></td><td><span class='mono'>pytest</span> with CI's env (<span class='mono'>NEXUS_AUDIT_BACKEND=memory NEXUS_ENVIRONMENT=DISABLED DO_NOT_TRACK=1</span>)</td></tr><tr><td>New tests</td><td><b>+39</b> — 36 in <span class='cite'>test_instrument_seed.py</span>, 3 in <span class='cite'>test_repo_hygiene.py</span> for F-12</td><td><span class='mono'>pytest tests/test_instrument_seed.py</span></td></tr><tr><td>Existing tests broken by boot seeding</td><td><b>zero</b></td><td>Full suite run before staging; the only failure was hygiene's untracked-file guard, which is the known trap and not a behaviour change</td></tr><tr><td>Live module collected</td><td><b>41</b> <span class='cite'>(was 36)</span>; live-source checks still <b>11</b></td><td><span class='mono'>NEXUS_LIVE_VERIFY=1 pytest tests/test_live_endpoints.py --collect-only -q</span></td></tr><tr><td>Live module offline subset</td><td><b>25 passed</b> <span class='cite'>(was 20)</span></td><td><span class='mono'>&hellip; -k &quot;DiagnosisLogic or PatienceBehaviour or TradeSideRuling&quot;</span></td></tr><tr><td>Lint / format</td><td>clean</td><td><span class='mono'>ruff check src tests</span>, <span class='mono'>ruff format --check src tests</span> (82 files)</td></tr><tr><td>Types</td><td><b>Success: no issues found in 57 source files</b> <span class='cite'>(was 56)</span></td><td><span class='mono'>mypy</span> (strict)</td></tr><tr><td>Repo hygiene</td><td><b>83 passed</b> <span class='cite'>(was 80)</span></td><td><span class='mono'>pytest tests/test_repo_hygiene.py</span></td></tr><tr><td>CI, this batch</td><td><b>22 runs across six commits, 0 non-success.</b> Latest: <span class='cite'>45833872241</span> (<span class='cite'>ab841c7</span>) <b>44 / 0 / 5 geo-blocked / 0 skipped of 49</b>, and <span class='cite'>45829853116</span> + <span class='cite'>45829842623</span> (<span class='cite'>7929a96</span>) the same. At 7.3's first commit the runs were <span class='cite'>45819528009</span> + <span class='cite'>45819539643</span> at 36 / 0 / 5 / 0 of 41; collection has since gone 41 &rarr; 49</td><td><span class='mono'>gh api &hellip;/check-runs/&lt;job&gt;/annotations</span></td></tr></tbody></table></div>
+<div class="card"><table><thead><tr><th>Gate</th><th>Result</th><th>Command</th></tr></thead><tbody><tr><td>Suite</td><td><b>1,036 passed, 2 skipped, 0 failed</b> <span class='cite'>(was 997 + 2)</span></td><td><span class='mono'>pytest</span> with CI's env (<span class='mono'>NEXUS_AUDIT_BACKEND=memory NEXUS_ENVIRONMENT=DISABLED DO_NOT_TRACK=1</span>)</td></tr><tr><td>New tests</td><td><b>+39</b> — 36 in <span class='cite'>test_instrument_seed.py</span>, 3 in <span class='cite'>test_repo_hygiene.py</span> for F-12</td><td><span class='mono'>pytest tests/test_instrument_seed.py</span></td></tr><tr><td>Existing tests broken by boot seeding</td><td><b>zero</b></td><td>Full suite run before staging; the only failure was hygiene's untracked-file guard, which is the known trap and not a behaviour change</td></tr><tr><td>Live module collected</td><td><b>41</b> <span class='cite'>(was 36)</span>; live-source checks still <b>11</b></td><td><span class='mono'>NEXUS_LIVE_VERIFY=1 pytest tests/test_live_endpoints.py --collect-only -q</span></td></tr><tr><td>Live module offline subset</td><td><b>25 passed</b> <span class='cite'>(was 20)</span></td><td><span class='mono'>&hellip; -k &quot;DiagnosisLogic or PatienceBehaviour or TradeSideRuling&quot;</span></td></tr><tr><td>Lint / format</td><td>clean</td><td><span class='mono'>ruff check src tests</span>, <span class='mono'>ruff format --check src tests</span> (82 files)</td></tr><tr><td>Types</td><td><b>Success: no issues found in 57 source files</b> <span class='cite'>(was 56)</span></td><td><span class='mono'>mypy</span> (strict)</td></tr><tr><td>Repo hygiene</td><td><b>83 passed</b> <span class='cite'>(was 80)</span></td><td><span class='mono'>pytest tests/test_repo_hygiene.py</span></td></tr><tr><td>CI, this batch</td><td><b>Every run <span class='mono'>success</span>, 0 non-success</b> &mdash; a property, not a count, since a count re-triggers per push (F-12). Latest: <span class='cite'>45836112636</span> (<span class='cite'>4fef432</span>) <b>43 / 0 / 5 geo-blocked / 1 skipped of 49</b>, F-5 recurring on a check that is not <span class='mono'>parsed_ticks</span> since both dukascopy checks ran; then <span class='cite'>45833872241</span> (<span class='cite'>ab841c7</span>) <b>44 / 0 / 5 geo-blocked / 0 skipped of 49</b>, and <span class='cite'>45829853116</span> + <span class='cite'>45829842623</span> (<span class='cite'>7929a96</span>) the same. At 7.3's first commit the runs were <span class='cite'>45819528009</span> + <span class='cite'>45819539643</span> at 36 / 0 / 5 / 0 of 41; collection has since gone 41 &rarr; 49</td><td><span class='mono'>gh api &hellip;/check-runs/&lt;job&gt;/annotations</span></td></tr></tbody></table></div>
 <p class="cap">Scope of the batch: <b>5 production files, 3 test files, 3 documents, 1 board</b>.
 Every number above was produced by the command beside it and re-verified before being written here;
 anything that re-triggers per push is stated as a floor or a bound, never as a total.</p>
@@ -795,12 +800,21 @@ denominator the rate needs:</p>
 <div class="ev"><span class="mono">EVIDENCE okx.cross_endpoint quotes_mid=&hellip; book_mid=&hellip;
 gap_bps=&hellip; dt_observed_s=&hellip; dt_wall_s=&hellip; bps_per_s_observed=&hellip;
 bps_per_s_wall=&hellip; quoted_spread_bps=&hellip; <b>asserts_agreement=False</b></span></div>
-<div class="card"><table><thead><tr><th>Run</th><th>Id</th><th><span class='mono'>gap_bps</span></th><th><span class='mono'>dt_observed_s</span></th><th><span class='mono'>dt_wall_s</span></th><th><span class='mono'>bps_per_s_observed</span></th><th><span class='mono'>bps_per_s_wall</span></th><th>quotes mid</th><th>book mid</th></tr></thead><tbody><tr><td>24</td><td><span class='cite'>45829853116</span></td><td><b class='ok'>0.000</b></td><td><span class='mono'>0.439</span></td><td><span class='mono'>0.300</span></td><td>0.000</td><td>0.000</td><td>60804.15</td><td>60804.15</td></tr><tr><td>25</td><td><span class='cite'>45829842623</span></td><td><b class='ok'>0.000</b></td><td><span class='mono'>0.739</span></td><td><span class='mono'>0.294</span></td><td>0.000</td><td>0.000</td><td>60804.15</td><td>60804.15</td></tr><tr><td>26</td><td><span class='cite'>45833872241</span></td><td><b class='ok'>0.000</b></td><td><span class='mono'>0.238</span></td><td><span class='mono'>0.298</span></td><td>0.000</td><td>0.000</td><td>60832.85</td><td>60832.85</td></tr></tbody></table></div>
+<div class="card"><table><thead><tr><th>Run</th><th>Id</th><th><span class='mono'>gap_bps</span></th><th><span class='mono'>dt_observed_s</span></th><th><span class='mono'>dt_wall_s</span></th><th><span class='mono'>bps_per_s_observed</span></th><th><span class='mono'>bps_per_s_wall</span></th><th>quotes mid</th><th>book mid</th></tr></thead><tbody><tr><td>24</td><td><span class='cite'>45829853116</span></td><td><b class='ok'>0.000</b></td><td><span class='mono'>0.439</span></td><td><span class='mono'>0.300</span></td><td>0.000</td><td>0.000</td><td>60804.15</td><td>60804.15</td></tr><tr><td>25</td><td><span class='cite'>45829842623</span></td><td><b class='ok'>0.000</b></td><td><span class='mono'>0.739</span></td><td><span class='mono'>0.294</span></td><td>0.000</td><td>0.000</td><td>60804.15</td><td>60804.15</td></tr><tr><td>26</td><td><span class='cite'>45833872241</span></td><td><b class='ok'>0.000</b></td><td><span class='mono'>0.238</span></td><td><span class='mono'>0.298</span></td><td>0.000</td><td>0.000</td><td>60832.85</td><td>60832.85</td></tr><tr><td>27</td><td><span class='cite'>45836112636</span></td><td><b class='ok'>0.000</b></td><td><span class='mono'><b>1.089</b></span></td><td><span class='mono'>0.298</span></td><td>0.000</td><td>0.000</td><td>60867.95</td><td>60867.95</td></tr></tbody></table></div>
 <p class="cap">Gap 0.000 in all three, at two different prices &mdash; and run 26 is
 <span class="cite">ab841c7</span>&rsquo;s only venue run, because a documents-only commit runs
 <span class="mono">venue-verification</span> on the <span class="mono">pull_request</span> event
-alone. All six commits of this batch are green: <b>22 runs, 0 non-success</b>. Three samples still
-cannot bound a rate, which is why the accumulation continues rather than a tolerance being chosen.
+alone. <b>Every commit of this batch is green on every run, 0 non-success</b> &mdash; stated as a
+property and not as a count, because a count here re-triggers on each push and goes stale the moment
+it is written, which is <b>F-12</b>: the defect this very stage closed. Four samples still cannot
+bound a rate, which is why the accumulation continues rather than a tolerance being chosen.</p>
+<p><b>Run 27 is the sharpest of the four and the one to read carefully.</b> Its venue timestamps were
+<b>1.089 s</b> apart while both responses arrived <b>0.298 s</b> apart &mdash; a 3.7&times; skew
+&mdash; and the mids were <i>still identical to the cent</i>. A full second of venue time passed
+between the two snapshots and BTC&rsquo;s mid did not move at all, so the ticker endpoint plainly does
+not update every second. That is what &sect;6&rsquo;s twelve-run distribution was measuring all along:
+how stale each snapshot was relative to the other, never disagreement between endpoints. <b>There is
+no evidence of disagreement in any run, at any interval, in either direction.</b>
 Three pure functions hold the arithmetic so it can be pinned without a venue:
 <span class="mono">_gap_bps</span> is &sect;2.5&rsquo;s convention
 <span class="mono">|qm &minus; bm| / qm &times; 1e4</span> in exactly one place, and
@@ -857,8 +871,10 @@ ab841c7's 45833872241 all success at 44 passed / 0 failed / 5 geo-blocked / <b>0
 three consecutive runs with no skips at all, which live-evidences F-13's renamed layout_flag= key at
 last, and gap_bps 0.000 in all three at two different prices. Run 25 returned a fully one-sided trade
 list (buy=0 sell=50) that passed, P-7 vindicated live a second time, and run 26 came back two-sided
-(buy=48 sell=2), so the one-sided shape is intermittent rather than the new normal &middot; 22 runs
-across six commits, 0 non-success &middot; F-3 closed,
+(buy=48 sell=2), so the one-sided shape is intermittent rather than the new normal &middot; every run of every
+commit of the batch success, 0 non-success &mdash; stated as a property because a count re-triggers per
+push (F-12) &middot; run 27 skipped one check that is not parsed_ticks, so layout_flag= is
+live-evidenced in four consecutive runs and F-5 has now recurred three times &middot; F-3 closed,
 F-12 and F-13 closed, F-8 reframed as P-9 and now ruled and implemented, <b>F-14 found</b>, F-2 F-5
 F-6 F-11 F-14 still open</footer>
 </div></body></html>
