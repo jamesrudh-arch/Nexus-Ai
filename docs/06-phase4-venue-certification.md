@@ -31,9 +31,14 @@ approval (D-012).
 ## 2. Pre-flight defects — found before any venue work began
 
 Found while preparing the bring-up — 31 to 35 by reading what the deployment actually configures
-against what the code actually honours, and 36 and 37 by *starting the stack for the first time*.
-None is a venue defect; all would have been discovered during the bring-up at the worst possible
-moment, one would have destroyed evidence, and one made the deployment unstartable.
+against what the code actually honours, 36 and 37 by *starting the stack for the first time*, and 38
+and 39 by *contacting the venues for the first time*. None of 31 to 37 is a venue defect; all would
+have been discovered during the bring-up at the worst possible moment, one would have destroyed
+evidence, and one made the deployment unstartable.
+
+38 and 39 are a different kind: they are defects in **our** reading of a venue's published contract,
+and they are the reason §4 item 6 existed. Neither could be found offline, for a structural reason
+recorded in 39.
 
 | # | Defect | Impact if unfixed | Fix |
 |---|--------|-------------------|-----|
@@ -44,6 +49,8 @@ moment, one would have destroyed evidence, and one made the deployment unstartab
 | 35 | **A negative-control loop silently failed to restore the files it mutated** | Six deliberate mutations — including re-introducing defect 31 — were left in the working tree, and the next commit would have shipped every one of them. Two causes: the loop backed up each file *after* mutating it, and `git -C <repo> checkout -- <path>` was given paths relative to a different cwd, so git errored and the fallback restored the mutated copy | Repaired by hand and verified line by line. The lesson is recorded rather than the history rewritten: a control whose restoration is not verified is worse than no control, because it leaves the tree in a state that looks intentional. Restore by absolute path, and diff against HEAD before committing |
 | 36 | **The compose stack was unstartable: the `nats` healthcheck probed a port the service never opened.** `nats:2-alpine` ships `CMD nats-server --config /etc/nats/nats-server.conf`, and that config file is what sets `monitor_port: 8222`. compose overrode `command:` with `--jetstream --store_dir /data`, discarding the `--config` flag, so nothing listened on 8222 | The healthcheck could only ever get a connection refused, so the container was **permanently unhealthy**, and `core` — which waits on `nats: condition: service_healthy` — never started. `docker compose up` of this stack has never worked, in any environment, and nothing in the repository could say so: the config parses, the image builds, and both of those were all CI had ever checked | `command: ["--jetstream", "--store_dir", "/data", "-m", "8222"]`, with the reasoning in a comment. Restoring `--config` instead would be worse: that upstream file also opens cluster route port 6222 with a hardcoded credential (`ruser`/`T0pS3cr3t`), so enabling only the monitoring port is the tighter fix. Now guarded by a generalised test — any service that overrides `command:` and has an HTTP healthcheck must re-declare every port that healthcheck probes |
 | 37 | **`NatsEventBus` called `nats.connect()` synchronously, but it is a coroutine function.** Measured, not inferred: `asyncio.iscoroutinefunction(nats.connect)` is `True`, and calling it returns a `coroutine` object with no `jetstream` attribute | Every first publish raised `EventPublishError`, so **no event could ever have reached NATS**. The class documented itself as fail-closed and was in fact fail-always. It survived because nothing publishes in Phase 3 and both lines carried `# pragma: no cover`, so no test ever executed them — the pragma hid the defect from the only thing that could have found it | The bus now owns a dedicated event loop on a daemon thread and drives `connect`, `publish` and `close` through `run_coroutine_threadsafe`, with a bound on each so a stalled socket produces a refusal rather than a hung audit path. Tested against an injected fake async client, which covers the part that was wrong without needing a NATS server; the coroutine-function assumption itself is pinned against the real library, which is why `nats-py` joined the dev extra. **Reaching a real server is still unverified** — that is B-5 |
+| 38 | **The Binance Vision dump URLs omitted the daily-or-monthly frequency path segment.** `kline_url` built `data/{market}/klines/{symbol}/{interval}/{name}.zip`; the published layout is `data/{market}/{frequency}/{data_type}/{symbol}/{interval}/{name}.zip`. `agg_trades_url` had the same omission | Every bulk download 404s. Confirmed live: `data/spot/klines/BTCUSDT/1m/BTCUSDT-1m-2026-11-18.zip` returned 404 from a CI runner, while the same host answered normally for the corrected path | Both builders now include the segment, and `periodicity` is validated in `agg_trades_url` rather than defaulted — it selects a path segment as well as a filename stamp, so an unrecognised value would have silently requested a daily file under a monthly name. Found by live verification, not by reading |
+| 39 | **The Dukascopy bi5 URL contained an invented `BID`/`ASK` path segment.** `hour_url` built `{PAIR}/{YYYY}/{MM-1}/{DD}/{SIDE}/{HH}h_ticks.bi5`. The feed serves **one file per instrument-hour holding both sides** — every 20-byte record already carries ask points, bid points and a volume for each — so the path is `{PAIR}/{YYYY}/{MM-1}/{DD}/{HH}h_ticks.bi5` and nothing else. Confirmed live: `EURUSD/2026-10-19/BID/12h_ticks.bi5` returned 404 | Every Dukascopy hour 404s, so **no FX tick could ever have been downloaded** and `LAYOUT_VERIFIED` could never have become True. It survived 151 passing adapter tests for a structural reason worth stating plainly: those tests registered their expected responses in the recording transport under the key `hour_url(...)`, the very function under test. Code and expectation came from one source, so they always agreed, and no number of such tests could detect a wrong URL | The side segment is gone from `hour_url`, which no longer takes `side` at all; `side` is a parse-time choice and `parse_bi5` now refuses an unknown one instead of letting the two-way branch default it to ASK. The fixtures were rewritten to key off an independently transcribed `expected_bi5_url` / `expected_kline_url`, and a new `TestUrlShapesMatchThePublishedContract` pins each builder's entire output against a literal from the venue's documentation. Verified by control: reintroducing the segment now fails **five** tests including four that were previously blind to it |
 
 Defect 31 is the significant one. It is the same shape as the CI-era defects in `docs/05` §4 — a
 configuration key or code path that is silently inert while looking correct — but the payload is
@@ -217,9 +224,33 @@ marked, so the cross-references elsewhere in this document stay valid. Items 3 t
    performance. B-4 is the first ARM64-native evidence, and D-021's host is ARM64.
 5. **The Caddyfile remains completely unexercised.** It has never been parsed by Caddy, in CI or
    anywhere else.
-6. **No venue has been contacted.** O-009 and O-010 are open. The adapter tests run against a
-   `RecordingTransport` with synthetic payloads written from published API contracts, which proves
-   normalisation logic and not that the live endpoints still return those shapes.
+6. **PARTIALLY CLOSED — one venue has been contacted and answered; two were wrong and are fixed but
+   not yet re-verified; one cannot be verified from a hosted runner at all.** The first live run
+   (`45724918466`, 2026-11-25) contacted all four sources for real and returned 5 passed / 10
+   failed:
+   * **OKX — verified live, 5 of 5.** Instrument info, quotes, trades, candles and order book all
+     normalised from real responses: `BTC-USDT-SWAP` contract size 0.01, tick size 0.1; bid
+     60505.6 / ask 60505.7, spread 0.017 bps, uncrossed; 50 trades with both sides present and
+     prices inside the quoted band; 100 one-minute candles spanning 1.65 h, contiguous, each with
+     `low <= open,close <= high`; a 40-level book, ordered and uncrossed, entitlement `LIVE`. Raw
+     responses were captured. This is the first time any venue's real data has passed through this
+     code.
+   * **Binance Vision and Dukascopy — defects 38 and 39, fixed, re-verification pending.** Both
+     returned 404, which is the classifier working as designed: a 404 means our request addressed
+     nothing, so it must fail rather than skip. The hosts were reachable; the paths were wrong.
+   * **Bybit — not verifiable from a GitHub-hosted runner.** All five endpoints returned HTTP 403 at
+     the edge. Bybit geo-blocks the jurisdictions hosted runners sit in and answers 403 from
+     CloudFront on **public, unauthenticated** endpoints, so this is a property of where the check
+     runs, not of the adapter. It is now classified `GEO-BLOCKED` rather than lumped in with
+     timeouts, and reported separately so it stays visible; the workflow accepts a self-hosted runner
+     label on dispatch. **Bybit therefore remains unverified**, and per D-007 venues are certified
+     independently, so OKX's result says nothing about it. Note the tension worth recording: Bybit
+     was chosen for Nigeria (D-024), where it is not geo-blocked, but CI runs in the US, where it
+     is — so Bybit's verification has to happen on the deployment host (D-021), not in CI.
+   * What the adapter tests still cannot do is detect a wrong URL on their own, for the structural
+     reason in defect 39. That is now closed for Binance Vision and Dukascopy by independently
+     transcribed fixture keys; Bybit and OKX fixtures already keyed off literals, which is why
+     neither of them was the one that broke.
 7. **No credential of any kind exists yet**, and none is requested by anything built so far. Phase
    4 will need demo/paper credentials, which go to the secrets provider and never into chat, the
    repository, the image, or the audit log.
@@ -245,9 +276,18 @@ marked, so the cross-references elsewhere in this document stay valid. Items 3 t
 | CI green after the fixes | **All five jobs green on both events** at `91393af`: `push` run `45718271682`, `pull_request` run `45718281143` — Backend ✓ · Compose ✓ · Secret scanning ✓ · Container image (amd64 + arm64) ✓ · **Runtime smoke test ✓** | 2026-11-25 | GitHub-hosted `ubuntu-latest`, x86-64 |
 | B-1/B-2/B-3 closed | **59 checks passed** from inside a running container: the stack comes up healthy, the image `HEALTHCHECK` answers, all 34 posture checks hold against a real process, `pip` and `setuptools` are absent from the image, tzdata installed, uid 1001, `/app/data` writable with `nexus.db` on the volume, and the audit chain survives both a restart (2→3 rows) and a container recreate (3→4 rows) still verifying intact | 2026-11-25 | same, job `45718271682` |
 | Defect 37 measurement | `asyncio.iscoroutinefunction(nats.connect)` → `True`; calling it synchronously returns a `coroutine` with no `jetstream` attribute. Measured against the installed library, not inferred from documentation | 2026-11-25 | sandbox, nats-py installed |
+| Live endpoint verification | **First contact with real venues** (run `45724918466`, 2026-11-25): 5 passed / 10 failed of 15 checks. OKX answered on all five endpoints with real data; Bybit answered 403 at the edge on all five; Binance Vision and Dukascopy answered 404 because our URLs were wrong (defects 38 and 39) | 2026-11-25 | GitHub-hosted runner, `ubuntu-latest` |
+| OKX verified against live data | `BTC-USDT-SWAP`: contract size 0.01, tick size 0.1, status `live`; bid 60505.6 / ask 60505.7, spread 0.017 bps, uncrossed, entitlement `LIVE`; 50 trades, both sides, prices inside the quoted band; 100 one-minute candles spanning 1.65 h, contiguous, each with `low <= open,close <= high`; 40-level book ordered and uncrossed. Raw responses captured to an artifact | 2026-11-25 | same |
+| Bybit geo-block, measured not assumed | All five public unauthenticated endpoints returned HTTP 403 from a hosted runner. Bybit restricts certain jurisdictions at the CloudFront edge, so this is where the check runs and not what it checks. Classified `GEO-BLOCKED` and reported separately; **Bybit remains unverified** and needs the deployment host (D-021), which is in a region Bybit does not restrict | 2026-11-25 | same |
+| Defect 38/39 confirmed by response, not by inference | `data/spot/klines/BTCUSDT/1m/BTCUSDT-1m-2026-11-18.zip` → 404; `EURUSD/2026-10-19/BID/12h_ticks.bi5` → 404. Both hosts answered, so neither was a network problem; a 404 means the request addressed nothing | 2026-11-25 | same |
+| Corrected URL shapes | `data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2026-11-18.zip`, `data/spot/monthly/klines/...`, `data/spot/daily/aggTrades/...`, `datafeed/EURUSD/2026-10-19/12h_ticks.bi5`, `datafeed/EURUSD/2026-00-15/14h_ticks.bi5` — each transcribed from the venue's published layout and pinned by test | 2026-11-25 | sandbox, by direct invocation |
+| The blind-fixture hole is closed | Control: reintroducing the `BID` segment into `hour_url` now fails **5** tests, of which **4 are fetch tests that were previously blind to it** because they keyed their recording transport by `hour_url` itself. Baseline passes, mutated fails, restore verified byte-for-byte | 2026-11-25 | sandbox, local venv |
+| Full suite after the fixes | **918 tests, 0 failures, 0 errors, 2 skipped**; `ruff check` and `ruff format --check` clean (70 files); `mypy` strict clean (49 files) | 2026-11-25 | sandbox, local venv, Python 3.11 |
+| Live module behaviour with no egress | All 15 checks skip and none fail — the classifier validated against genuine network failures. With the flag unset the module collects nothing at all, so the ordinary suite never touches the network (both directions executed by a hygiene test, using `--collect-only` so it cannot make requests) | 2026-11-25 | sandbox, no egress |
 
-The 1 skip is a pre-existing `pytest.skip` for an interval outside the modelled set, not a disabled
-test. The count rises 868 → 884 → 902 as defects 31–33, the smoke wiring, and defects 36–37 each
+The skips are a pre-existing `pytest.skip` for an interval outside the modelled set plus the live
+verification module's own gate; neither is a disabled test. The count rises 868 → 884 → 902 → 918 as
+defects 31–33, the smoke wiring, defects 36–37, and the live verification work each
 added tests.
 
 The failed smoke run above is recorded as evidence rather than hidden: it is the first time this

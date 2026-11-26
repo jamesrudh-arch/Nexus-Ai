@@ -67,8 +67,10 @@ POINT_DIVISORS: dict[str, int] = {
     "XAGUSD": 1_000,
 }
 
-#: Dukascopy serves BID and ASK side files separately. Which one is "the" price depends on
-#: what the strategy models; NEXUS keeps both rather than collapsing them.
+#: One bi5 file holds **both** sides: every 20-byte record carries ask points and bid points
+#: (and a volume for each). There is no BID/ASK dimension in the URL — the path is
+#: ``{PAIR}/{YYYY}/{MM-1:02d}/{DD}/{HH}h_ticks.bi5`` and nothing else. `side` selects which of the
+#: two columns a caller treats as "the" price, at parse time only.
 SIDES = ("BID", "ASK")
 
 
@@ -85,22 +87,24 @@ def point_divisor(pair: str) -> int:
     return divisor
 
 
-def hour_url(pair: str, hour: datetime, *, side: str = "BID", base_url: str = DUKASCOPY_BASE) -> str:
+def hour_url(pair: str, hour: datetime, *, base_url: str = DUKASCOPY_BASE) -> str:
     """Build the bi5 URL for one hour of ticks.
 
     The month segment is **0-indexed** (January = ``00``). This is intentional and is the
     single most common bug when integrating this feed.
+
+    There is deliberately no `side` parameter. An earlier version put ``BID``/``ASK`` in the path,
+    which 404s: the feed serves one file per instrument-hour containing both sides, so a side
+    segment addresses nothing (defect 39, found by live verification). Which side a caller wants is
+    a question for :func:`parse_bi5`, not for the URL.
     """
     if hour.tzinfo is None:
         raise IngestFault("DUKASCOPY: hour must be timezone-aware (feed times are UTC)", retryable=False)
     local = hour.astimezone(UTC)
     pair_key = pair.strip().upper()
-    side_key = side.strip().upper()
-    if side_key not in SIDES:
-        raise IngestFault(f"DUKASCOPY: side must be one of {SIDES}, got {side!r}", retryable=False)
     return (
         f"{base_url}/{pair_key}/{local.year}/{local.month - 1:02d}/{local.day:02d}/"
-        f"{side_key}/{local.hour:02d}h_ticks.bi5"
+        f"{local.hour:02d}h_ticks.bi5"
     )
 
 
@@ -153,6 +157,11 @@ def parse_bi5(
     """
     if hour_start.tzinfo is None:
         raise IngestFault("DUKASCOPY: hour_start must be timezone-aware", retryable=False)
+    side_key = side.strip().upper()
+    if side_key not in SIDES:
+        # Refused rather than defaulted: the choice below is a two-way branch, so an unrecognised
+        # side would silently be read as ASK and every price would come from the wrong column.
+        raise IngestFault(f"DUKASCOPY: side must be one of {SIDES}, got {side!r}", retryable=False)
     base = hour_start.astimezone(UTC)
     if not payload:
         return ()
@@ -185,11 +194,11 @@ def parse_bi5(
                 retryable=False,
             )
         observed = base + timedelta(milliseconds=offset_ms)
-        price_points = bid_points if side.upper() == "BID" else ask_points
+        price_points = bid_points if side_key == "BID" else ask_points
         price = Decimal(int(price_points)) / divisor
         if price <= 0:
             continue  # Dukascopy pads with zero-price records; they carry no information
-        volume = Decimal(str(ask_volume if side.upper() == "ASK" else bid_volume))
+        volume = Decimal(str(ask_volume if side_key == "ASK" else bid_volume))
         ticks.append(
             TickRecord(
                 instrument_id="",  # resolved by the caller through the registry
@@ -266,7 +275,7 @@ class DukascopyHistorical:
         report: IngestReport | None = None,
     ) -> DukascopyHour:
         """Download and parse one hour. A 404 is recorded as a gap, never as zero ticks."""
-        url = hour_url(pair, hour, side=side, base_url=self._base)
+        url = hour_url(pair, hour, base_url=self._base)
         payload = await self._transport.get_bytes(url)
         try:
             ticks = parse_bi5(payload, pair=pair, hour_start=hour, side=side)

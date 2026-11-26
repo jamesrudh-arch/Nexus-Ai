@@ -44,10 +44,16 @@ from nexus.ingestion.binance_vision import (
     parse_agg_trades_csv,
     parse_kline_csv,
 )
-from nexus.ingestion.bybit import BybitPublicAdapter, bybit_interval, canonical_interval
+from nexus.ingestion.bybit import (
+    BYBIT_REST,
+    BybitPublicAdapter,
+    bybit_interval,
+    canonical_interval,
+)
 from nexus.ingestion.dukascopy import (
     LAYOUT_VERIFIED,
     POINT_DIVISORS,
+    SIDES,
     DukascopyHistorical,
     hour_url,
     parse_bi5,
@@ -56,7 +62,13 @@ from nexus.ingestion.dukascopy import (
     supported_pairs,
     verify_layout,
 )
-from nexus.ingestion.okx import OkxPublicAdapter, bar_duration, detect_gaps, okx_bar
+from nexus.ingestion.okx import (
+    OKX_REST,
+    OkxPublicAdapter,
+    bar_duration,
+    detect_gaps,
+    okx_bar,
+)
 
 D = Decimal
 NOW = datetime(2026, 11, 25, 12, 0, 0, tzinfo=UTC)
@@ -64,6 +76,37 @@ BYBIT_BASE = "https://api.bybit.com"
 OKX_BASE = "https://www.okx.com"
 VISION_BASE = "https://data.binance.vision"
 DUKA_BASE = "https://datafeed.dukascopy.com/datafeed"
+
+
+def expected_bi5_url(pair: str, hour: datetime, *, base: str = DUKA_BASE) -> str:
+    """Where a bi5 fixture is registered, computed **without** the function under test.
+
+    `hour_url` used to key its own fixtures, so code and expectation came from one source and could
+    never disagree — which is how a bogus ``BID`` path segment survived 151 passing tests (defect
+    39). This transcribes the contract independently: ``{PAIR}/{YYYY}/{MM-1}/{DD}/{HH}h_ticks.bi5``,
+    one file per instrument-hour holding both sides. If `hour_url` regresses the keys diverge, the
+    transport has nothing to return, and the test fails.
+    """
+    return f"{base}/{pair}/{hour.year}/{hour.month - 1:02d}/{hour.day:02d}/{hour.hour:02d}h_ticks.bi5"
+
+
+def expected_kline_url(
+    symbol: str,
+    interval: str,
+    day: datetime,
+    *,
+    market: str = "spot",
+    periodicity: str = "daily",
+    base: str = VISION_BASE,
+) -> str:
+    """Same principle for the Binance Vision dumps (defect 38): an independently transcribed key.
+
+    ``data/{market}/{frequency}/{data_type}/{symbol}/{interval}/{name}.zip`` — the frequency is a
+    path segment, not only part of the filename.
+    """
+    stamp = day.strftime("%Y-%m") if periodicity == "monthly" else day.strftime("%Y-%m-%d")
+    name = f"{symbol}-{interval}-{stamp}"
+    return f"{base}/data/{market}/{periodicity}/klines/{symbol}/{interval}/{name}.zip"
 
 
 class TestNoCredentialSurface:
@@ -764,22 +807,99 @@ def _okx_bar(at: datetime) -> object:
     )
 
 
+class TestUrlShapesMatchThePublishedContract:
+    """Pins each public URL builder's *entire* output to a literal from the venue's own docs.
+
+    Why this class exists separately from the URL tests below it, which look like they cover the
+    same ground: every adapter test registers its expected response in the recording transport under
+    the key ``hour_url(...)`` or ``kline_url(...)`` — the very function under test. Code and fixture
+    are derived from one another, so they always agree, and a wrong URL is invisible to them no
+    matter how many tests there are. That is exactly how two of them survived 151 passing tests and
+    were only caught by live verification returning 404 (defects 38 and 39).
+
+    So these assertions transcribe the paths from the published contract instead of computing them,
+    which makes the literal an independent oracle. They must not call a builder to build the
+    expected value.
+    """
+
+    def test_binance_vision_daily_klines_carry_the_frequency_segment(self) -> None:
+        # Published shape: market, then frequency, then data type, symbol, interval, filename.
+        assert kline_url("BTCUSDT", "1m", datetime(2026, 11, 18, tzinfo=UTC)) == (
+            "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2026-11-18.zip"
+        )
+
+    def test_binance_vision_monthly_klines_carry_the_frequency_segment(self) -> None:
+        assert kline_url("BTCUSDT", "1d", datetime(2026, 11, 18, tzinfo=UTC), periodicity="monthly") == (
+            "https://data.binance.vision/data/spot/monthly/klines/BTCUSDT/1d/BTCUSDT-1d-2026-11.zip"
+        )
+
+    def test_binance_vision_agg_trades_carry_the_frequency_segment(self) -> None:
+        assert agg_trades_url("BTCUSDT", datetime(2026, 11, 18, tzinfo=UTC)) == (
+            "https://data.binance.vision/data/spot/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2026-11-18.zip"
+        )
+
+    def test_dukascopy_has_no_side_segment_and_a_zero_indexed_month(self) -> None:
+        # Published shape: pair, year, zero-indexed month, day, hour. One file holds both sides.
+        assert hour_url("EURUSD", datetime(2026, 11, 19, 12, tzinfo=UTC)) == (
+            "https://datafeed.dukascopy.com/datafeed/EURUSD/2026/10/19/12h_ticks.bi5"
+        )
+
+    def test_dukascopy_january_is_month_zero(self) -> None:
+        assert hour_url("EURUSD", datetime(2026, 1, 15, 14, tzinfo=UTC)) == (
+            "https://datafeed.dukascopy.com/datafeed/EURUSD/2026/00/15/14h_ticks.bi5"
+        )
+
+    def test_bybit_and_okx_bases_are_the_published_hosts(self) -> None:
+        """OKX answered live; Bybit 403s from a hosted runner, so its host is pinned here instead."""
+        assert BYBIT_REST == BYBIT_BASE == "https://api.bybit.com"
+        assert OKX_REST == OKX_BASE == "https://www.okx.com"
+
+    def test_the_two_adapters_do_not_share_an_interval_vocabulary(self) -> None:
+        """Regression for a trap that cost a live run: same kwarg name, different vocabulary.
+
+        Bybit's `bars(interval=...)` takes the venue's own key and refuses "1m" before making any
+        HTTP call; OKX's takes the canonical key. Both normalise to the canonical name on the way
+        out, so reading the vocabulary off the returned records gives the wrong answer for one of
+        the two adapters.
+        """
+        assert canonical_interval("1") == "1m", "Bybit spells one minute as 1, not 1m"
+        assert bybit_interval("1m") == "1"
+        with pytest.raises(IngestFault, match="unsupported interval"):
+            canonical_interval("1m")
+
+        assert okx_bar("1m") == "1m", "OKX spells one minute as 1m"
+        assert bybit_interval("1m") != okx_bar("1m"), (
+            "the two adapters now agree on a spelling, so this trap has moved and the live "
+            "verification module must be re-checked against both"
+        )
+
+
 class TestBinanceVisionUrls:
     def test_daily_kline_url(self) -> None:
         url = kline_url("BTCUSDT", "1m", datetime(2026, 10, 5, tzinfo=UTC))
-        assert url == ("https://data.binance.vision/data/spot/klines/BTCUSDT/1m/BTCUSDT-1m-2026-10-05.zip")
+        assert url == (
+            "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2026-10-05.zip"
+        )
 
     def test_monthly_kline_url(self) -> None:
         url = kline_url("BTCUSDT", "1d", datetime(2026, 10, 5, tzinfo=UTC), periodicity="monthly")
         assert url.endswith("BTCUSDT-1d-2026-10.zip")
+        # periodicity is a path segment as well as a filename stamp (defect 38)
+        assert "/data/spot/monthly/klines/" in url
 
     def test_futures_market_path(self) -> None:
         url = kline_url("BTCUSDT", "1m", datetime(2026, 10, 5, tzinfo=UTC), market="futures")
-        assert "/data/futures/klines/" in url
+        assert "/data/futures/daily/klines/" in url
 
     def test_agg_trades_url(self) -> None:
         url = agg_trades_url("BTCUSDT", datetime(2026, 10, 5, tzinfo=UTC))
+        assert "/data/spot/daily/aggTrades/BTCUSDT/" in url
         assert url.endswith("BTCUSDT-aggTrades-2026-10-05.zip")
+
+    def test_agg_trades_refuses_a_bad_periodicity(self) -> None:
+        """It selects a path segment now, so an unknown value must not default to daily."""
+        with pytest.raises(IngestFault, match="periodicity"):
+            agg_trades_url("BTCUSDT", datetime(2026, 10, 5, tzinfo=UTC), periodicity="weekly")
 
     def test_bad_periodicity_refused(self) -> None:
         with pytest.raises(IngestFault, match="periodicity"):
@@ -877,7 +997,7 @@ class TestBinanceVisionParsing:
 
     async def test_fetch_klines_unzips_and_parses(self) -> None:
         text = "1764072000000,100.0,110.0,90.0,105.0,10.5,1764072059999,1050.0,42,5.0,500.0,0\n"
-        url = kline_url("BTCUSDT", "1m", datetime(2026, 10, 5, tzinfo=UTC))
+        url = expected_kline_url("BTCUSDT", "1m", datetime(2026, 10, 5, tzinfo=UTC))
         transport = RecordingTransport()
         transport.set_bytes(url, _zip_csv(text))
         source = BinanceVisionHistorical(transport=transport)
@@ -920,7 +1040,7 @@ class TestBinanceVisionParsing:
 
     async def test_html_404_page_is_not_treated_as_a_zip(self) -> None:
         """A CDN 404 often returns HTML with status 200; that is not a zip."""
-        url = kline_url("BTCUSDT", "1m", datetime(2026, 10, 5, tzinfo=UTC))
+        url = expected_kline_url("BTCUSDT", "1m", datetime(2026, 10, 5, tzinfo=UTC))
         transport = RecordingTransport()
         transport.set_bytes(url, b"<html><body>404 Not Found</body></html>")
         source = BinanceVisionHistorical(transport=transport)
@@ -933,7 +1053,7 @@ class TestDukascopyUrls:
         """The single most common bug with this feed: January is 00, not 01."""
         url = hour_url("EURUSD", datetime(2026, 1, 15, 14, 0, tzinfo=UTC))
         assert "/2026/00/15/" in url
-        assert url.endswith("/BID/14h_ticks.bi5")
+        assert url.endswith("/14h_ticks.bi5")
 
     def test_december_is_month_eleven(self) -> None:
         url = hour_url("EURUSD", datetime(2026, 12, 15, 14, 0, tzinfo=UTC))
@@ -944,13 +1064,22 @@ class TestDukascopyUrls:
         assert "/2026/02/05/" in url
         assert url.endswith("/03h_ticks.bi5")
 
-    def test_ask_side_url(self) -> None:
-        url = hour_url("EURUSD", datetime(2026, 3, 5, 3, 0, tzinfo=UTC), side="ASK")
-        assert "/ASK/" in url
+    def test_the_url_has_no_side_segment(self) -> None:
+        """Regression for defect 39: one bi5 file holds both sides, so a side segment 404s.
 
-    def test_bad_side_refused(self) -> None:
+        Found by live verification rather than by reading: the offline tests registered the same
+        invented path in the recording transport, so the code and the fixture agreed and both were
+        wrong.
+        """
+        url = hour_url("EURUSD", datetime(2026, 3, 5, 3, 0, tzinfo=UTC))
+        assert url == "https://datafeed.dukascopy.com/datafeed/EURUSD/2026/02/05/03h_ticks.bi5"
+        for side in SIDES:
+            assert f"/{side}/" not in url
+
+    def test_bad_side_refused_at_parse_time(self) -> None:
+        """`side` moved from the URL to the parser, and the refusal moved with it."""
         with pytest.raises(IngestFault, match="side must be one of"):
-            hour_url("EURUSD", datetime(2026, 3, 5, 3, 0, tzinfo=UTC), side="MID")
+            parse_bi5(b"", pair="EURUSD", hour_start=datetime(2026, 3, 5, 3, 0, tzinfo=UTC), side="MID")
 
     def test_naive_hour_refused(self) -> None:
         with pytest.raises(IngestFault, match="timezone-aware"):
@@ -1139,7 +1268,9 @@ class TestDukascopyFetch:
     async def test_fetch_hour_reports_provenance(self) -> None:
         hour = datetime(2026, 11, 25, 14, 0, tzinfo=UTC)
         transport = RecordingTransport()
-        transport.set_bytes(hour_url("EURUSD", hour), _bi5_payload([(0, 10_850_100, 10_850_000, 1.0, 2.0)]))
+        transport.set_bytes(
+            expected_bi5_url("EURUSD", hour), _bi5_payload([(0, 10_850_100, 10_850_000, 1.0, 2.0)])
+        )
         source = DukascopyHistorical(transport=transport)
         result = await source.fetch_hour("EURUSD", hour)
         assert result.pair == "EURUSD"
@@ -1153,7 +1284,7 @@ class TestDukascopyFetch:
     async def test_empty_hour_is_flagged_not_an_error(self) -> None:
         hour = datetime(2026, 11, 21, 14, 0, tzinfo=UTC)  # Saturday
         transport = RecordingTransport()
-        transport.set_bytes(hour_url("EURUSD", hour), b"")
+        transport.set_bytes(expected_bi5_url("EURUSD", hour), b"")
         source = DukascopyHistorical(transport=transport)
         result = await source.fetch_hour("EURUSD", hour)
         assert result.empty is True
@@ -1173,7 +1304,7 @@ class TestDukascopyFetch:
             datetime(2026, 11, 23, 1, 0, tzinfo=UTC),
             datetime(2026, 11, 23, 2, 0, tzinfo=UTC),
         ]:
-            transport.set_bytes(hour_url("EURUSD", cursor), b"")
+            transport.set_bytes(expected_bi5_url("EURUSD", cursor), b"")
         source = DukascopyHistorical(transport=transport)
         hours = await source.fetch_range("EURUSD", start=start, end=end)
         requested = [h.hour_start for h in hours]
@@ -1202,7 +1333,7 @@ class TestDukascopyFetch:
         start = datetime(2026, 11, 25, 14, 0, tzinfo=UTC)
         transport = RecordingTransport()
         for offset in range(3):
-            transport.set_bytes(hour_url("EURUSD", start + timedelta(hours=offset)), b"")
+            transport.set_bytes(expected_bi5_url("EURUSD", start + timedelta(hours=offset)), b"")
         source = DukascopyHistorical(transport=transport)
         seen: list[datetime] = []
         await source.fetch_range(

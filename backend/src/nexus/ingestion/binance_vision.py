@@ -114,7 +114,11 @@ def kline_url(
             f"BINANCE_VISION: periodicity must be daily or monthly, got {periodicity!r}", retryable=False
         )
     name = f"{symbol_key}-{interval}-{stamp}"
-    return f"{base_url}/data/{market}/klines/{symbol_key}/{interval}/{name}.zip"
+    # The {frequency} segment is part of the path, not only of the filename stamp: Binance lays
+    # dumps out as data/{market}/{daily|monthly}/{type}/{symbol}/{interval}/{name}.zip. Omitting it
+    # 404s on every request, and the offline tests could not notice because they registered the
+    # same wrong URL in the recording transport (defect 38, found by live verification).
+    return f"{base_url}/data/{market}/{periodicity}/klines/{symbol_key}/{interval}/{name}.zip"
 
 
 def agg_trades_url(
@@ -129,9 +133,18 @@ def agg_trades_url(
         raise IngestFault("BINANCE_VISION: period must be timezone-aware", retryable=False)
     local = period.astimezone(UTC)
     symbol_key = symbol.strip().upper()
-    stamp = local.strftime("%Y-%m") if periodicity == "monthly" else local.strftime("%Y-%m-%d")
+    # Validated rather than defaulted: periodicity now selects a path segment as well as a stamp,
+    # so an unrecognised value would silently request a daily file under a monthly name.
+    if periodicity == "monthly":
+        stamp = local.strftime("%Y-%m")
+    elif periodicity == "daily":
+        stamp = local.strftime("%Y-%m-%d")
+    else:
+        raise IngestFault(
+            f"BINANCE_VISION: periodicity must be daily or monthly, got {periodicity!r}", retryable=False
+        )
     name = f"{symbol_key}-aggTrades-{stamp}"
-    return f"{base_url}/data/{market}/aggTrades/{symbol_key}/{name}.zip"
+    return f"{base_url}/data/{market}/{periodicity}/aggTrades/{symbol_key}/{name}.zip"
 
 
 @dataclass(frozen=True, slots=True)

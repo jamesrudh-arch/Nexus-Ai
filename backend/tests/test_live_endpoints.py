@@ -94,12 +94,26 @@ EURUSD_BAND = (Decimal("0.5"), Decimal("2.5"))
 
 # --------------------------------------------------------------------- unavailable vs defect
 def _classify(exc: BaseException) -> str:
-    """``"unavailable"`` when the source did not answer; ``"defect"`` for anything else.
+    """``"unavailable"`` / ``"geo-blocked"`` when the source did not answer us; ``"defect"`` else.
 
     Deliberately narrow. ``HttpTransport`` wraps network-level errors as
     ``IngestFault("<url> failed: <repr>")`` once its retries are exhausted, and reports HTTP status
     as ``"<url> returned HTTP <code>"``; those two shapes are the only things treated as the
-    source's problem.
+    source's problem rather than ours.
+
+    A 403 is its own case, and the reasoning only holds because nothing here is authenticated —
+    every adapter under test declares ``requires_credentials = False`` and the hygiene suite
+    asserts this module mentions no credential-shaped string. So a 403 cannot mean "your key lacks
+    permission"; it means the request was refused at the edge before reaching the API. Bybit
+    geo-blocks the jurisdictions GitHub's hosted runners sit in and answers 403 from CloudFront on
+    public endpoints, which is a property of *where this check runs*, not of the code it checks.
+    Failing the build for it would leave a permanently red gate, and a permanently red gate is
+    ignored.
+
+    A 404 stays a defect. It means our request addressed nothing, which is precisely the failure
+    live verification exists to catch: the bi5 URL carried an invented ``BID`` segment and the
+    Binance Vision dumps were missing their ``daily``/``monthly`` segment (defects 38 and 39), and
+    both presented as 404s.
     """
     if not isinstance(exc, IngestFault):
         return "defect"
@@ -109,6 +123,8 @@ def _classify(exc: BaseException) -> str:
     match = re.search(r"returned HTTP (\d{3})", text)
     if match is not None:
         status = int(match.group(1))
+        if status == 403:
+            return "geo-blocked"
         if status == 429 or status >= 500:  # rate-limited or the venue is down
             return "unavailable"
     return "defect"
@@ -120,7 +136,13 @@ def _live(source: str) -> Iterator[None]:
     try:
         yield
     except Exception as exc:  # noqa: BLE001 - classified below, re-raised unless unavailable
-        if _classify(exc) == "unavailable":
+        verdict = _classify(exc)
+        if verdict == "geo-blocked":
+            pytest.skip(
+                f"GEO-BLOCKED {source}: the runner's IP is restricted, so this endpoint answered "
+                f"403 at the edge and nothing about it was verified: {exc!r}"
+            )
+        if verdict == "unavailable":
             pytest.skip(f"{source} did not answer, so nothing is verified either way: {exc!r}")
         raise
 

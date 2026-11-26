@@ -26,6 +26,14 @@ on:
   schedule:
     - cron: "40 4 * * 1"
   workflow_dispatch:
+    inputs:
+      runner:
+        description: >-
+          Runner label. Use the default for a GitHub-hosted runner; use a self-hosted label once the
+          deployment VM exists, because Bybit geo-blocks hosted runners and cannot be verified from
+          them.
+        required: false
+        default: "ubuntu-latest"
   # A change to an adapter, to the transport, or to the verification itself should be checked
   # against the live endpoints before it merges, not only on Monday mornings.
   push:
@@ -63,7 +71,9 @@ env:
 jobs:
   live:
     name: Live public endpoints (O-009 / O-010)
-    runs-on: ubuntu-latest
+    # ubuntu-latest unless a dispatch asked for a self-hosted runner. GitHub's hosted runners are in
+    # jurisdictions Bybit restricts, so its five checks can only be verified from elsewhere.
+    runs-on: ${{ github.event.inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -150,18 +160,25 @@ jobs:
               if failure is not None:
                   status, detail = "FAIL", (failure.get("message") or failure.text or "")[:400]
               elif skipped is not None:
-                  status, detail = "SKIP", (skipped.get("message") or "")[:220]
+                  message = skipped.get("message") or ""
+                  # A geo-block is not the same fact as a timeout. Bybit refuses GitHub's hosted
+                  # runners at the edge with 403 on public endpoints; nothing about our code is
+                  # wrong and nothing about their API was verified either. Reported separately so
+                  # the reader knows which endpoint still needs a runner elsewhere.
+                  status = "GEO-BLOCKED" if message.startswith("GEO-BLOCKED") else "SKIP"
+                  detail = message[:220]
               else:
                   status, detail = "PASS", ""
               rows.append((status, name, detail, evidence))
 
           passed = [r for r in rows if r[0] == "PASS"]
           failed = [r for r in rows if r[0] == "FAIL"]
+          geo = [r for r in rows if r[0] == "GEO-BLOCKED"]
           skipped = [r for r in rows if r[0] == "SKIP"]
 
           body = [
-              f"{len(passed)} passed / {len(failed)} failed / {len(skipped)} skipped "
-              f"of {len(rows)} live checks",
+              f"{len(passed)} passed / {len(failed)} failed / {len(geo)} geo-blocked / "
+              f"{len(skipped)} skipped of {len(rows)} live checks",
               "",
           ]
           for status, name, detail, evidence in rows:
@@ -184,9 +201,15 @@ jobs:
               annotation("warning", "live-verification", body)
               raise SystemExit(1)
 
-          if skipped:
-              # Partial. Honest about it rather than reporting a clean sweep.
-              body.insert(1, f"PARTIAL - {len(skipped)} checks could not reach their source")
+          if skipped or geo:
+              # Partial. Honest about it rather than reporting a clean sweep, and naming which
+              # endpoints were never reached: an unverified endpoint must stay visible.
+              parts = []
+              if geo:
+                  parts.append(f"{len(geo)} geo-blocked (need a runner outside the restricted region)")
+              if skipped:
+                  parts.append(f"{len(skipped)} could not reach their source")
+              body.insert(1, "PARTIAL - " + "; ".join(parts))
               annotation("warning", "live-verification", body)
               raise SystemExit(0)
 
