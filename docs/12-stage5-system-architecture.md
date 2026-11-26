@@ -1,9 +1,11 @@
 # 12 — Stage 5: System Architecture
 
-Status: **IN PROGRESS**, sub-deliverables: 5.1 inventory + target architecture (this document §1,
-board `design/stage5-1-target-architecture.html`) → 5.2 pipelines, deployment topology, DR.
-Design only: Stage 5 writes no production code. Started after Stage 4 stage-level approval
-(D-039). Stages 6–23 untouched.
+Status: **APPROVED at stage level 2026-11-25 (D-041)**, sub-deliverables: 5.1 inventory + target
+architecture (this document §1, board `design/stage5-1-target-architecture.html`, D-040) and
+5.2 pipelines, deployment topology, DR (this document §2, board
+`design/stage5-2-pipelines-topology-dr.html`). Design only: Stage 5 wrote no production code.
+Started after Stage 4 stage-level approval (D-039); Stage 6 followed and is now closed (D-044).
+*(Header corrected 2026-11-26: it read `IN PROGRESS` after the approval was recorded.)*
 
 Binding inputs: docs/04–06 (Phase 2–4 evidence), backend/src/nexus (14 packages, 49 modules),
 D-019 ($0 stack), D-028 (VM-first), mandate laws (fail-closed risk, verification gates,

@@ -1,9 +1,13 @@
 # 13 — Stage 6: Database & Persistent Memory
 
-Status: **IN PROGRESS**, sub-deliverables: 6.1 persistent-memory architecture + P-6 ruling (this
-document §1, board `design/stage6-1-persistent-memory.html`) → 6.2 implementation (requires the
-backend pause at `d9a83fe` to be lifted by the owner). Design only so far: Stage 6.1 changes no
-code. Started after Stage 5 stage-level approval (D-041), which carried P-6 in as the first item.
+Status: **APPROVED at stage level 2026-11-26 (D-044)**, sub-deliverables: 6.1 persistent-memory
+architecture + P-6 ruling (this document §1, board `design/stage6-1-persistent-memory.html`,
+D-042) and 6.2 implementation (this document §2, board
+`design/stage6-2-implementation-evidence.html`, D-043). The owner lifted the backend pause at
+`d9a83fe` for batch 6.2 only, so 6.2 is the only stage so far that wrote production code;
+6.1 changed none. Started after Stage 5 stage-level approval (D-041), which carried P-6 in as the
+first item. Stage 7 (market & venue coverage) is now open.
+*(Header corrected 2026-11-26: it read `IN PROGRESS` after the approval was recorded.)*
 
 Binding inputs: `backend/migrations/0001_core.sql`, `audit/log.py`, `execution/halt.py`,
 `archive/parquet_store.py`, `api/app.py`, `core/config.py`, `pyproject.toml`,

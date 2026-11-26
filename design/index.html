@@ -2,39 +2,47 @@
 <style>
 body { background:#0B0F14; color:#E6EDF3; font:15px/1.6 -apple-system,'Segoe UI',Roboto,sans-serif;
        margin:0; padding:56px 28px; }
-.wrap { max-width:640px; margin:0 auto; }
+.wrap { max-width:680px; margin:0 auto; }
 a { color:#E6EDF3; text-decoration:none; display:block; border:1px solid #1F2B3A; background:#121A24;
     border-radius:8px; padding:16px 18px; margin:12px 0; }
 a:hover { border-color:#64768C; }
+a.open { border-color:#7364D8; }
 small { color:#7A8CA4; display:block; margin-top:4px; }
 h1 { font-size:20px; } .st { color:#7364D8; font-size:12px; letter-spacing:.14em; }
+.note { color:#7A8CA4; font-size:13px; margin-top:28px; border-top:1px solid #1F2B3A; padding-top:14px; }
 </style></head><body><div class="wrap">
 <h1>NEXUS-AI · design boards</h1>
-<span class="st">STAGE 1 APPROVED · STAGE 2 APPROVED · STAGE 3 IN PROGRESS</span>
+<span class="st">STAGES 1–6 APPROVED · STAGE 7 IN PROGRESS</span>
+<a class="open" href="stage7-1-market-venue-coverage.html">Stage 7.1 — Market &amp; Venue Coverage (research)
+  <small>awaiting review · no production code changed · live evidence read at HEAD (run 45756716181) · 11 of 29 live checks are source evidence · findings F-1…F-7 · five $0 levers · dukascopy evidenced but not retired · bybit blocked on the D-021 VM</small></a>
 <a href="stage6-2-implementation-evidence.html">Stage 6.2 — Implementation Evidence (final batch)
-  <small>awaiting review · gate 976/2/0 + CI green · F-2 F-3 F-6 F-7 closed · ID-1…ID-5 defects · limitations stated</small></a>
+  <small>approved 2026-11-26 (D-043 batch, D-044 stage) · gate 976/2/0 + CI green · F-2 F-3 F-6 F-7 closed · defects ID-1…ID-5 · limitations stated</small></a>
 <a href="stage6-1-persistent-memory.html">Stage 6.1 — Database &amp; Persistent Memory
-  <small>awaiting review · findings cited to code · two safety gaps · R-1 for P-6 · laws L-1…L-6</small></a>
+  <small>approved 2026-11-26 (D-042 batch, D-044 stage) · findings cited to code · two safety gaps · R-1 for P-6 · laws L-1…L-6</small></a>
 <a href="stage5-2-pipelines-topology-dr.html">Stage 5.2 — Pipelines, Topology &amp; DR (final batch)
-  <small>awaiting review · 4 pipelines · real compose caps · DR stated plainly · stage-level approval requested after</small></a>
+  <small>approved 2026-11-25 (D-041 stage-level) · 4 pipelines · real compose caps · DR stated plainly</small></a>
 <a href="stage5-1-target-architecture.html">Stage 5.1 — Target Architecture
-  <small>awaiting review · inventory + boundaries + ADRs · honesty statuses · design only</small></a>
+  <small>approved 2026-11-25 (D-040 batch, D-041 stage) · inventory + boundaries + ADRs · honesty statuses · design only</small></a>
 <a href="stage4-2-journeys-flows.html">Stage 4.2 — Journeys &amp; Flows (final batch)
-  <small>awaiting review · 5 flows · 31 steps · measurable exits · stage-level approval requested after</small></a>
+  <small>approved 2026-11-25 (D-039 stage-level) · 5 flows · 31 steps · measurable exits</small></a>
 <a href="stage4-1-interaction-system.html">Stage 4.1 — Interaction system
-  <small>awaiting review · restate-not-ask confirmations · halt at the risk engine · P-5 recorded</small></a>
+  <small>approved 2026-11-25 (D-038 batch, D-039 stage) · restate-not-ask confirmations · halt at the risk engine · P-5 recorded</small></a>
 <a href="stage3-5-health-settings-mobile.html">Stage 3.5 — Health · Settings · Mobile (final batch)
-  <small>awaiting review · LIVE locked · halt ≤2 taps · stage-level approval requested after</small></a>
+  <small>approved 2026-11-25 (D-037 stage-level) · LIVE locked · halt ≤2 taps</small></a>
 <a href="stage3-4-trading-risk-history.html">Stage 3.4 — Positions · Laboratory · Risk · History
-  <small>awaiting review · four shells · governance regions carry rules not numbers</small></a>
+  <small>approved 2026-11-25 (D-036 batch, D-037 stage) · four shells · governance regions carry rules not numbers</small></a>
 <a href="stage3-3-intelligence-opportunities.html">Stage 3.3 — Intelligence Centre &amp; Trade Opportunities
-  <small>awaiting review · §7 chrome complete · verification-gated queue</small></a>
+  <small>approved 2026-11-25 (D-035 batch, D-037 stage) · §7 chrome complete · verification-gated queue</small></a>
 <a href="stage3-2-overview-markets.html">Stage 3.2 — Overview &amp; Live Markets interiors
-  <small>awaiting review · specimen-tagged · chart anatomy</small></a>
+  <small>approved 2026-11-25 (D-034 batch, D-037 stage) · specimen-tagged · chart anatomy</small></a>
 <a href="stage3-1-layout-ia.html">Stage 3.1 — Shell, information architecture, screen map
-  <small>awaiting review · the shell every dashboard screen builds on</small></a>
+  <small>approved 2026-11-25 (D-033 batch, D-037 stage) · the shell every dashboard screen builds on</small></a>
 <a href="stage2-specimen.html">Stage 2 — Typography & design system specimen
   <small>approved 2026-11-25 (D-032)</small></a>
 <a href="/stage1-presentation.html" onclick="return false" style="opacity:.75">Stage 1 — Brand identity presentation
   <small>approved 2026-11-25 (D-030, D-031) · served by the Stage 1 preview on port 8000</small></a>
+<div class="note">Every entry above carried the status the register actually records for it. Until this
+commit the page header still said &ldquo;STAGE 3 IN PROGRESS&rdquo; and every entry from 3.1 to 6.2 read
+&ldquo;awaiting review&rdquo;, although Stages 3 to 6 were approved by D-037, D-039, D-041 and D-044.
+Statuses are now cited to their decision ids so the page cannot drift silently again.</div>
 </div></body></html>
