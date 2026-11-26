@@ -261,6 +261,14 @@ class OperationalStore(Protocol):
 
     def decisions(self, *, limit: int = 50) -> tuple[dict[str, Any], ...]: ...
 
+    def save_dossier(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None: ...
+
+    def dossiers(
+        self, *, instrument_id: str | None = None, limit: int = 50
+    ) -> tuple[dict[str, Any], ...]: ...
+
+    def get_dossier(self, dossier_id: str) -> dict[str, Any] | None: ...
+
     def save_evidence_ref(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None: ...
 
     def evidence_refs(
@@ -986,10 +994,89 @@ class SqliteOperationalStore:
 
     # -- intelligence memory (Stage 8) -----------------------------------
     #
-    # `evidence_ref` is the first of the three intelligence-memory tables to get a writer. `dossier` and
-    # `memory_item` are still schema-only; they arrive with Stage 8.3 and stage 10 respectively, and the
-    # writer below is deliberately usable before either exists — `dossier_id` is nullable, so evidence can
-    # be recorded without a dossier to hang it on.
+    # Two of the three intelligence-memory tables now have a writer: `dossier` (Stage 8.3, audited as
+    # `dossier.opened`) and `evidence_ref` (Stage 8.2, audited as `evidence.recorded`). `memory_item` is
+    # still schema-only and arrives with stage 10, together with the three columns F-18 wants and D-051
+    # deferred to that batch. The evidence writer is deliberately usable before a dossier exists —
+    # `dossier_id` is nullable — and the dossier writer is deliberately usable before any evidence does.
+    #
+    # Both are projections, not records: `INSERT OR REPLACE` into a table the audit chain can rebuild,
+    # which is why a replayed event must carry its own timestamps rather than inherit the replay's clock.
+
+    def save_dossier(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None:
+        """Persist one research dossier.
+
+        ``created_at`` and ``updated_at`` come from the payload when it carries them, for two reasons: the
+        applied schema has no ``DEFAULT now()`` (one of the four lost defaults in ``docs/15`` §9.1), and a
+        replayed ``dossier.opened`` must reproduce the row it first wrote instead of restamping it with
+        the replay's clock — otherwise boot recovery would silently rewrite the chronology that
+        ``docs/03`` J-04 asks the dossier view to show. The defaults below are the ABSTAIN-side values the
+        schema itself declares: ``state='DRAFT'``, ``stance='ABSTAIN'``, ``sufficiency='INSUFFICIENT'``.
+
+        Note what this method does *not* check. ``dossier.instrument_id`` carries a ``REFERENCES`` clause
+        that migration ``0004_memory_fidelity`` restored, but ``PRAGMA foreign_keys`` is deliberately off
+        (``schema.py``'s module docstring), so a dangling parent is accepted here. The refusal lives in
+        ``intelligence.dossier.open_dossier``, which can see the store and name the missing instrument;
+        putting it here instead would make boot recovery depend on a read and could fail a replay.
+        """
+        dossier_id = str(payload.get("dossier_id") or "")
+        if not dossier_id:
+            raise PersistenceError("a dossier cannot be persisted without a dossier_id")
+        assert_no_secrets(dict(payload))
+        now = iso_utc(utc_now())
+        with self._transaction() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO dossier
+                   (dossier_id, instrument_id, venue, created_at, updated_at, state, summary,
+                    stance, uncertainty, sufficiency, payload, audit_ref)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    dossier_id,
+                    _text(payload.get("instrument_id")),
+                    _text(payload.get("venue")),
+                    _text(payload.get("created_at")) or now,
+                    _text(payload.get("updated_at")) or now,
+                    str(payload.get("state") or "DRAFT"),
+                    str(payload.get("summary") or ""),
+                    str(payload.get("stance") or "ABSTAIN"),
+                    str(payload.get("uncertainty") or ""),
+                    str(payload.get("sufficiency") or "INSUFFICIENT"),
+                    dumps_canonical(payload.get("payload") or {}),
+                    _text(audit_ref),
+                ),
+            )
+            self._mark(conn, audit_ref, "dossier", dossier_id)
+
+    def dossiers(self, *, instrument_id: str | None = None, limit: int = 50) -> tuple[dict[str, Any], ...]:
+        """Newest first, which is the order ``ix_dossier_created`` (``created_at DESC``) already keeps.
+
+        Filtering by ``instrument_id`` scans: ``0002_memory`` indexes ``created_at`` only, and adding an
+        index is a migration, not a query change. At the volumes Stage 8 writes that is invisible; it is
+        recorded here rather than left to be discovered by whoever hits it at stage 10's.
+        """
+        sql = "SELECT * FROM dossier"
+        args: list[Any] = []
+        if instrument_id is not None:
+            sql += " WHERE instrument_id = ?"
+            args.append(instrument_id)
+        sql += " ORDER BY created_at DESC, dossier_id ASC LIMIT ?"
+        args.append(int(limit))
+        rows = self._query(sql, tuple(args))
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = loads_json(item.get("payload")) or {}
+            out.append(item)
+        return tuple(out)
+
+    def get_dossier(self, dossier_id: str) -> dict[str, Any] | None:
+        """One dossier by id, or ``None``. The read a single-case view needs (``docs/03`` J-04 step 1)."""
+        rows = self._query("SELECT * FROM dossier WHERE dossier_id = ?", (dossier_id,))
+        if not rows:
+            return None
+        item = dict(rows[0])
+        item["payload"] = loads_json(item.get("payload")) or {}
+        return item
 
     def save_evidence_ref(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None:
         """Persist one piece of evidence and when it was seen.

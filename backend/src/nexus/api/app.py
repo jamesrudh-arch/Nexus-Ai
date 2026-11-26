@@ -28,7 +28,7 @@ import hmac
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
@@ -38,11 +38,18 @@ from nexus.core.config import Settings, get_settings
 from nexus.core.environment import EnvironmentState
 from nexus.core.errors import NexusError, RejectReason
 from nexus.core.ids import iso_utc, utc_now
+from nexus.domain.decision import DecisionVerb
 from nexus.execution.halt import HaltManager, HaltScope
 from nexus.instruments.projection import MasterProjection, project_master
 from nexus.instruments.registry import InstrumentRegistry, UnknownInstrument, coverage_report
 from nexus.instruments.seed import seed_master
 from nexus.instruments.sessions import MarketCalendar
+from nexus.intelligence.dossier import (
+    DOSSIER_EVENT_TYPE,
+    VENUE_MAPS_INSTRUMENT_KEY,
+    sufficiency_of,
+)
+from nexus.intelligence.evidence import verify_evidence_checksum
 from nexus.observability.metrics import (
     observe_api_request,
     render_metrics,
@@ -343,6 +350,61 @@ def create_app(
         )
         return session.to_dict()
 
+    @app.get("/v1/intelligence/dossiers", tags=["intelligence"])
+    def list_dossiers(
+        instrument_id: str | None = None,
+        limit: int = Query(default=50, ge=1, le=200),
+        evidence: bool = True,
+    ) -> dict[str, Any]:
+        """The research dossiers, newest first — and what the approved view asks for that cannot be served.
+
+        Read-only by construction: there is no write verb in this module. A dossier is opened by
+        :func:`nexus.intelligence.open_dossier`, audited as ``dossier.opened``; the audit chain is the
+        record and this serves its projection, so ``served_from`` says so rather than letting a reader
+        assume the row is the original.
+
+        ``view_gaps`` is part of the response, not a comment in the source. ``docs/03`` J-04 and
+        ``docs/10`` §3.1 fix what the Intelligence Centre's dossier view must show, and several of those
+        elements have no column to come from. A route that served what it can and stayed silent about the
+        rest would render as complete, which is the failure ``/v1/data/coverage`` was written to avoid
+        when it distinguished "no archive" from "archive holds nothing". The same distinction is kept
+        here: ``empty`` is not ``None`` when there are no dossiers, and it says why.
+        """
+        rows = op_store.dossiers(instrument_id=instrument_id, limit=limit)
+        dossiers = [_dossier_view(op_store, row, with_evidence=evidence) for row in rows]
+        return {
+            "count": len(dossiers),
+            "dossiers": dossiers,
+            "served_from": "operational projection of the audit chain (R-1); the chain is the record",
+            "vocabularies": DOSSIER_VOCABULARIES,
+            "empty": None if dossiers else _no_dossiers_yet(instrument_id),
+            "view_gaps": DOSSIER_VIEW_GAPS,
+            "note": (
+                "a stance is a research disposition and never a trade signal — docs/03 J-04's exit "
+                "condition is 'Research completion ≠ trade signal', and live authority is DENIED"
+            ),
+        }
+
+    @app.get("/v1/intelligence/dossiers/{dossier_id}", tags=["intelligence"])
+    def dossier_detail(dossier_id: str) -> dict[str, Any]:
+        """One case, which is what ``docs/03`` J-04 step 1 selects. 404 when the id is unknown.
+
+        A 404 and not an empty 200: an unknown id is a caller error, and answering it with a successful
+        empty body would make a typo indistinguishable from a case that was opened and holds nothing.
+        """
+        row = op_store.get_dossier(dossier_id)
+        if row is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"unknown dossier: {dossier_id}",
+            )
+        return {
+            "dossier": _dossier_view(op_store, row, with_evidence=True),
+            "served_from": "operational projection of the audit chain (R-1); the chain is the record",
+            "vocabularies": DOSSIER_VOCABULARIES,
+            "view_gaps": DOSSIER_VIEW_GAPS,
+        }
+
     @app.get("/v1/data/coverage", tags=["data"])
     def data_coverage() -> dict[str, Any]:
         """What the first-party archive actually holds — never what was requested.
@@ -380,6 +442,194 @@ def create_app(
         {"version": __version__, "phase": __phase__, "environment": cfg.environment.name},
     )
     return app
+
+
+#: What the approved dossier view asks for that this route cannot serve, and why. Each element names the
+#: document that asks for it, so the gap is a recorded fact rather than an absence nobody mentioned.
+DOSSIER_VIEW_GAPS: tuple[dict[str, Any], ...] = (
+    {
+        "element": "contradictions highlighted and linked",
+        "asked_by": "docs/10 §3.1 (dossier view); docs/03 J-04 step 4",
+        "why_not_servable": (
+            "needs evidence_ref.contradicts, and no such column exists. Nothing can be highlighted "
+            "because nothing records that two sources disagree"
+        ),
+        "deferred_by": "D-051 — F-18's cheap half deferred to the stage-10 memory_item writer",
+    },
+    {
+        "element": "counter-thesis",
+        "asked_by": "docs/03 J-04 step 1; docs/10 §3.1",
+        "why_not_servable": (
+            "no column. dossier.uncertainty is served and is the nearest thing, but 'what is unresolved' "
+            "is not 'the case against', and this route does not present one as the other"
+        ),
+        "deferred_by": None,
+    },
+    {
+        "element": "publication time in the evidence table",
+        "asked_by": "docs/03 J-04 step 2 ('source, publication time, observation time')",
+        "why_not_servable": (
+            "evidence_ref holds observed_at (the venue's stamp) and retrieved_at (our clock at receipt). "
+            "A source's own publication moment has no column, so the first of J-04's three times is not "
+            "recordable — and F-14 is still open, so observed_at is venue time in all four adapters"
+        ),
+        "deferred_by": "F-14/O-012 stays open — its expensive half is authorised as Stage 8.4 by D-051, "
+        "so no third timestamp arrives before then",
+    },
+    {
+        "element": "research depth Tier 0–4",
+        "asked_by": "docs/03 §7; docs/10 §3.1 (attention priorities)",
+        "why_not_servable": "no column, and no tier is defined anywhere in the repository",
+        "deferred_by": None,
+    },
+    {
+        "element": "freshness",
+        "asked_by": "docs/03 J-04 step 4; docs/10 §3.1",
+        "why_not_servable": (
+            "partly served, and the part that is not matters: each evidence row's data_status is what its "
+            "writer was told when the row was recorded, and nothing re-evaluates it against the current "
+            "clock. A row recorded LIVE stays LIVE in the projection forever, so serving that column as "
+            "'freshness' without this qualification would be misleading"
+        ),
+        "deferred_by": None,
+    },
+    {
+        "element": "quant result with run id",
+        "asked_by": "docs/10 §3.1",
+        "why_not_servable": (
+            "the run id is served — every dossier and every evidence row carries audit_ref, which is the "
+            "link into the audit chain. No quantitative result is computed anywhere in src/, so there is "
+            "nothing to attach it to"
+        ),
+        "deferred_by": None,
+    },
+    {
+        "element": "knowledge-sufficiency meter",
+        "asked_by": "docs/10 §3.1 (context rail: 'meter with stated basis and what it is sufficient for')",
+        "why_not_servable": (
+            "the basis and the target are served as strings; the meter is not. docs/15 §6's L-E is "
+            "explicit that sufficiency stays a string until stage 10 defines the meter, and inventing a "
+            "scale here would put a number in front of a judgement this system cannot yet make"
+        ),
+        "deferred_by": "stage 10",
+    },
+    {
+        "element": "beliefs with confidence band, validity interval and change conditions",
+        "asked_by": "docs/03 §7; docs/10 §3.1",
+        "why_not_servable": (
+            "that is memory_item, which is schema-only: it has no writer, and F-18's valid_from, "
+            "valid_until and change_conditions columns do not exist yet"
+        ),
+        "deferred_by": "D-051 — deferred to the stage-10 memory_item writer",
+    },
+    {
+        "element": "disposition with reason code",
+        "asked_by": "docs/10 §3.1",
+        "why_not_servable": (
+            "the disposition is served as stance, but dossier has no reason-code column. Reason codes "
+            "live on DecisionRecord, and a dossier is not a decision"
+        ),
+        "deferred_by": None,
+    },
+)
+
+#: Which words a dossier's fields are allowed to hold, and where each vocabulary comes from. ``None``
+#: means nothing in the repository declares one, which is itself the answer a reader needs.
+DOSSIER_VOCABULARIES: dict[str, dict[str, Any]] = {
+    "stance": {
+        "values": [member.value for member in DecisionVerb],
+        "source": "domain/decision.py DecisionVerb — the schema default 'ABSTAIN' is a member, and "
+        "docs/03 §7 with docs/10 §3.1 name this vocabulary for the intelligence layer's disposition",
+        "enforced_by": "the writer (intelligence/dossier.py); the column is TEXT and the schema does not",
+    },
+    "sufficiency": {
+        "values": None,
+        "source": "none declared anywhere. The schema says only DEFAULT 'INSUFFICIENT', and docs/15 §6's "
+        "L-E keeps it a string until stage 10 defines the meter. A numeric value is refused by the "
+        "writer, because docs/12 §1.3's law is that no gate can be satisfied by a confidence value",
+        "enforced_by": "the writer refuses a number and refuses a claim above INSUFFICIENT with no basis "
+        "or no target",
+    },
+    "state": {
+        "values": None,
+        "source": "the schema default 'DRAFT' is the only value declared anywhere",
+        "enforced_by": "nothing — free text, passed through",
+    },
+}
+
+
+def _no_dossiers_yet(instrument_id: str | None) -> dict[str, Any]:
+    """What an empty dossier list means, which is not the same as the list being empty."""
+    scope = "for this instrument" if instrument_id else "at all"
+    return {
+        "meaning": f"no dossier has been opened {scope}",
+        "writer": f"nexus.intelligence.open_dossier exists since Stage 8.3 and is audited as "
+        f"{DOSSIER_EVENT_TYPE}",
+        "callers": "none yet — nothing in src/ opens a dossier, which is the same limitation Stage 8.2 "
+        "recorded for record_evidence. The writer is built and unwired on purpose: wiring it means "
+        "deciding what the system should research, and that is not this batch's ruling",
+        "not_a_fault": "the route works and the table exists; an empty list here is an honest empty, the "
+        "distinction /v1/data/coverage draws between 'no archive' and 'archive holds nothing'",
+    }
+
+
+def _verified(evidence: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
+    """Each evidence row with its checksum recomputed. ``None`` in a stored checksum verifies False."""
+    return [{"checksum_ok": verify_evidence_checksum(item)} for item in evidence]
+
+
+def _dossier_view(store: Any, row: dict[str, Any], *, with_evidence: bool) -> dict[str, Any]:
+    """One dossier as the view serves it: the columns, the pinned payload keys lifted out, the chronology.
+
+    Evidence is ordered oldest first here even though ``store.evidence_refs`` returns newest first,
+    because ``docs/10`` §3.1 asks the dossier view for a *chronology* and a chronology runs forwards.
+    """
+    payload = row.get("payload")
+    body: dict[str, Any] = payload if isinstance(payload, dict) else {}
+    sufficiency = sufficiency_of(row)
+    evidence = store.evidence_refs(dossier_id=str(row.get("dossier_id")))
+    chronology = [
+        {
+            "evidence_id": item.get("evidence_id"),
+            "source": item.get("source"),
+            "kind": item.get("kind"),
+            "observed_at": item.get("observed_at"),
+            "retrieved_at": item.get("retrieved_at"),
+            "observed_at_source": (item.get("payload") or {}).get("observed_at_source"),
+            "apparent_latency_seconds": (item.get("payload") or {}).get("apparent_latency_seconds"),
+            "data_status": item.get("data_status"),
+            "locator": item.get("locator"),
+            "checksum": item.get("checksum"),
+            # Recomputed here from the row rather than trusted: the checksum covers nine stored fields
+            # (F-21), so this is the first place in the system where an evidence row's integrity is
+            # actually checked instead of merely recorded.
+            "checksum_ok": verify_evidence_checksum(item),
+            "audit_ref": item.get("audit_ref"),
+        }
+        for item in sorted(
+            evidence, key=lambda item: (str(item.get("retrieved_at")), str(item.get("evidence_id")))
+        )
+    ]
+    return {
+        "dossier_id": row.get("dossier_id"),
+        "instrument_id": row.get("instrument_id"),
+        "venue": row.get("venue"),
+        VENUE_MAPS_INSTRUMENT_KEY: body.get(VENUE_MAPS_INSTRUMENT_KEY),
+        "state": row.get("state"),
+        "stance": row.get("stance"),
+        "summary": row.get("summary"),
+        "uncertainty": row.get("uncertainty"),
+        **sufficiency,
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+        "audit_ref": row.get("audit_ref"),
+        "evidence_count": len(evidence),
+        "evidence_checksums_verify": (
+            None if not evidence else all(entry["checksum_ok"] for entry in _verified(evidence))
+        ),
+        "chronology": chronology if with_evidence else None,
+        "payload": body,
+    }
 
 
 def _default_operational_store(cfg: Settings, audit_log: AuditLog) -> Any:

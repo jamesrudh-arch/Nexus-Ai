@@ -969,6 +969,20 @@ comparison and adds nothing to run 29&rsquo;s finding that the wall-clock rate i
 The annotation truncates at <span class="mono">2713 escaped characters over the cap</span>, so the bybit rows
 are inside the tail and are not quoted here. Recorded in <span class="mono">docs/15</span> §9.9; all three runs
 of the commit are <span class="mono">success</span>.</p>
+<div class="blocked"><b>Corrected by Stage 8.3 &mdash; the skew claim above is wrong in two ways, and the
+paragraph is left as published because D-051 was ruled on it.</b> Run 30 is the <b>seventh</b> measured skew,
+not the fourth: seven runs have published both intervals (<span class="mono">docs/14</span> &sect;4.1 holds
+24&ndash;29, <span class="mono">docs/15</span> &sect;9.9 holds 30), and re-reading every pair from its own CI
+annotation gives <b>1.46&times;</b> (24), <b>2.51&times;</b> (25), <b>0.80&times;</b> (26),
+<b>3.65&times;</b> (27), <b>2.62&times;</b> (28), <b>3.97&times;</b> (29) and <b>1.55&times;</b> (30). So it is
+not the smallest either &mdash; runs 26 and 24 are both below it, and run 26 is below 1, which is the
+bidirectionality <span class="mono">docs/14</span> &sect;4.1 already recorded. The
+<b>3.95&times;</b> quoted for run 29 is that run&rsquo;s <i>rate</i> ratio
+(<span class="mono">bps_per_s_wall=0.557</span> against
+<span class="mono">bps_per_s_observed=0.141</span>), not its interval ratio. <b>The conclusion is unchanged
+and stronger</b>: the factor spans 0.80&times;&ndash;3.97&times;, a 5.0&times; range across seven runs, so it is
+not a constant and cannot be divided out after the fact &mdash; which is the evidence ruling 3 rests on.
+<span class="mono">docs/15</span> &sect;10.4.</div>
 <div class="card">{delta_table()}</div>
 <div class="card">{batch_table()}</div>
 <div class="card">{limits_table()}</div>

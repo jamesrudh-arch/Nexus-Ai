@@ -68,7 +68,7 @@ The command that produced each row is named in §2.4.
 | **Any construction of `DecisionRecord` in production code** | `grep -rn "DecisionRecord(" src/` → **zero hits**; the only constructions are in `tests/test_core_guarantees.py` and `tests/test_store_persistence.py` |
 | **Any real value in `evidence_refs`** | `grep -rn "evidence_refs=" src/ tests/` → one hit, `tests/test_store_persistence.py:71`, with the literals `("EV-1", "EV-2")` |
 | **Any "evidence graph"** | `grep -rn "evidence graph\|evidence_graph" src/` → one hit, and it is the *comment* on `decision.py:62`: "source ids from the evidence graph". There is no graph |
-| **Any route serving decisions, dossiers, memory or evidence** | The 11 routes are `/healthz`, `/metrics`, `/readyz`, `/v1/audit/verify`, `/v1/data/coverage`, `/v1/halt`, `/v1/halt/release`, `/v1/instruments`, `/v1/instruments/coverage`, `/v1/instruments/{id}/session`, `/v1/status`. All operational |
+| **Any route serving decisions, dossiers, memory or evidence** | The 11 routes are `/healthz`, `/metrics`, `/readyz`, `/v1/audit/verify`, `/v1/data/coverage`, `/v1/halt`, `/v1/halt/release`, `/v1/instruments`, `/v1/instruments/coverage`, `/v1/instruments/{id}/session`, `/v1/status`. All operational. *(Superseded by Stage 8.3: the count is 13, and `GET /v1/intelligence/dossiers` with `GET /v1/intelligence/dossiers/{dossier_id}` serve the `dossier` table — see §10. This row is left as the 8.1 inventory it is.)* |
 | **Any emitter of `instrument.registered`** | `writeahead.py:81` can *replay* it; nothing in `src/` ever produces it |
 
 ### 2.3 What the seeded master does and does not reach
@@ -670,6 +670,14 @@ narrow and deliberate:
   It is an **integrity** checksum over the recorded row, not an authenticity signature over the bytes the
   venue sent; nothing in this system can attest to those yet.
 
+  > **Corrected by Stage 8.3 — this is F-21 (§10.3).** The second sentence was false: the checksum
+  > covered `payload` alone and not "the recorded row", so two evidence rows differing in `source`,
+  > `observed_at`, `retrieved_at`, `locator` and `evidence_id` but sharing a payload produced the *same*
+  > value. Nine of the row's eleven stored fields could change undetected, `observed_at` among them. The
+  > text is left as published because D-051 was ruled on it; §10.3 records the probe that falsified it,
+  > the fix, the test that had pinned the wrong behaviour, and the disclosure that this changes what an
+  > approved batch stored.
+
 One defect found while testing the writer, and fixed: a naive `observed_at` raised a bare `TypeError` from
 the timestamp subtraction, because `iso_utc`'s own refusal runs *after* the arithmetic. An unclassified
 crash at a boundary names nothing — the failure mode F-4 was about — so both timestamps are gated before
@@ -788,7 +796,17 @@ dukascopy.probe.*  outcome=network-IngestFault (browser_ua, production_ua, produ
 
 What it adds, and what it does not. **It is the fourth measured skew and the smallest: 1.55×**
 (`dt_observed_s=0.385` against `dt_wall_s=0.249`), beside 3.95× in run 29, 2.6× in run 28 and 3.7× in
-run 27. Both rates are `0.0` because the gap is `0.000` again, so this run yields **no rate comparison**
+run 27.
+
+> **Corrected by Stage 8.3 (§10.4): this is the *seventh* measured skew, not the fourth, and it is not the
+> smallest.** Seven runs have published both intervals — `docs/14` §4.1's table holds runs 24–29 and this
+> section holds run 30 — and every pair was re-read from its CI annotation on 2026-11-26: 24 = **1.46x** (0.439/0.300), 25 = **2.51x** (0.739/0.294), 26 = **0.80x** (0.238/0.298), 27 = **3.65x** (1.089/0.298), 28 = **2.62x** (0.937/0.358), 29 = **3.97x** (1.170/0.295), 30 = **1.55x** (0.385/0.249).
+> Run 26's **0.80×** and run 24's **1.46×** are both below 1.55×, and run 26 is below 1, which is the
+> bidirectionality `docs/14` §4.1 already recorded. The quoted **3.95×** for run 29 is that run's *rate*
+> ratio (`bps_per_s_wall=0.557` against `bps_per_s_observed=0.141`, `docs/14` §4.1), not its interval
+> ratio, which is 3.97×. **The conclusion is unchanged and stronger**: the factor spans 0.80×–3.97×, a
+> 5.0× range across seven runs, so it is not a constant and cannot be divided out after the fact. The
+> sentence is left as published because D-051 was ruled on it. Both rates are `0.0` because the gap is `0.000` again, so this run yields **no rate comparison**
 and adds nothing to run 29's finding that the wall-clock rate is the one that means anything. What it
 does add is the point ruling 3 rests on: **the skew factor is not a constant**, so it cannot be divided
 out after the fact — giving four adapters a real receipt time is the only way to stop dividing a market
@@ -802,3 +820,452 @@ cap`, so the bybit rows sit inside the truncated tail and are **not** quoted her
 partial annotation is not something this document does. And run 30 says nothing about this batch's code:
 no check in the 49 exercises migration 0004, the projection or the evidence writer, all three of which
 are covered by the 1,117 offline tests instead.
+
+---
+
+## 10. Stage 8.3 delivered (D-051): the dossier opens, the route serves it, and one of 8.2's claims turns out to have been false
+
+**Date: 2026-11-26. Authorised by D-051 as L-D + L-E only.**
+
+### 10.0 What was ruled, and what was not
+
+D-051 scoped this batch as **L-D + L-E**: the read-only `/v1/intelligence/dossiers` route and the dossier
+writer at `stance=ABSTAIN`. It ruled *out* three plausible additions, and none of them is here:
+
+* **F-18's cheap half is not landed.** No `ADD COLUMN` on `memory_item`, no `contradicts` on
+  `evidence_ref`. `memory_item` is still schema-only and still empty, and a test pins both facts.
+* **F-14 is untouched.** No adapter changed, no third timestamp exists, O-012 stays `OPEN`. Its expensive
+  half is authorised as 8.4 and has not happened.
+* **Finding ids stay global**, so this batch's one new finding is **F-21**, not a scoped `S8-F-1`.
+
+What is here: one new module (`intelligence/dossier.py`, 357 lines), three new store members
+(`save_dossier`, `dossiers`, `get_dossier`), one new audited event type (`dossier.opened`) in
+`writeahead.PROJECTABLE`, two new routes, one correction to what 8.2 shipped (**F-21**), and **141 new
+tests**. `backend/` moved **11 files, +2,079 / −24**. Route count: 11 application routes became **13**
+(17 handler routes once FastAPI's own four are counted; the OpenAPI schema publishes 12 because
+`/metrics` is `include_in_schema=False`).
+
+### 10.1 L-E — the dossier writer, and four decisions it makes on the record's behalf
+
+A writer's defaults are its politics. Everything here defaults to the ABSTAIN side, because this
+package's own rule — written in 8.2, before a dossier existed — is that an intelligence record which can
+be created without a basis is a record that will be.
+
+```
+dossier_id: CASE-0CB572D89F5247D1-MPCJ26KZ   (prefix CASE, which core.ids.new_id has declared
+                                              for a research case since Phase 2 and nothing had spent)
+audit_ref:  AUD-19285A24053F45CA-HVBA9CPD    PROJECTABLE["dossier.opened"] = dossier
+stance: ABSTAIN | state: DRAFT | sufficiency: INSUFFICIENT | venue_maps_instrument: True
+created_at: 2026-11-26T20:59:51.934Z | updated_at: 2026-11-26T20:59:51.934Z
+stored row: {
+  "dossier_id": "CASE-0CB572D89F5247D1-MPCJ26KZ", "instrument_id": "INS-BTC-USDT-USDT",
+  "venue": "OKX", "state": "DRAFT", "stance": "ABSTAIN",
+  "summary": "Perp basis widening into the US session; watching for a funding flip.",
+  "uncertainty": "Sixty seconds of ticker data only, so the regime is unknown.",
+  "sufficiency": "INSUFFICIENT",
+  "payload": {
+    "sufficiency_basis": "one okx ticker and one order-book snapshot, both LIVE, 0.3s apart",
+    "sufficiency_target": "V1 evidence and data sufficiency for a research case, not for a trade",
+    "venue_maps_instrument": true },
+  "audit_ref": "AUD-19285A24053F45CA-HVBA9CPD" }
+```
+
+**Decision 1 — `stance` uses `DecisionVerb`, and that is not the treatment `kind` got.** The seven words
+ACCEPT/REJECT/WAIT/REDUCE/EXIT/ESCALATE/ABSTAIN are validated. Two things point at that vocabulary and
+not at free text: the schema's own default `'ABSTAIN'` is a `DecisionVerb` member and belongs to no other
+enum in the repository, and `docs/03` §7 with `docs/10` §3.1 both name exactly this list for the
+intelligence layer's disposition. Stage 8.2 left `evidence_ref.kind` as free text *because no vocabulary
+for it is declared anywhere*; where one exists and the default is in it, using it is not invention, and
+leaving the column open would invite an eighth word for ABSTAIN. The column stays `TEXT` — the writer
+enforces this, the schema does not, and a test pins that fact so nobody mistakes the two. Lower case is
+refused too: a vocabulary that silently normalises case is a vocabulary nobody has to learn.
+
+**Decision 2 — `sufficiency` stays a string, and a claim has to carry its basis and its target.**
+`docs/15` §6's L-E is explicit that sufficiency must stay a string until stage 10 defines the meter, so
+no scale is invented here. But `docs/10` §3.1's context rail asks for a *"knowledge-sufficiency meter
+with stated basis and what it is sufficient for"*, and §3.2 warns that *"a dossier that records
+sufficiency as a bare enum leaves nowhere for V1's outcome to live"*. So two payload keys are pinned —
+`sufficiency_basis` and `sufficiency_target` — and claiming anything other than `INSUFFICIENT` without
+both is refused. `INSUFFICIENT` needs neither, because it claims nothing. A **numeric** sufficiency is
+refused outright under `docs/12` §1.3's law (A-02+A-08), that no gate can be satisfied by a confidence
+value: `'0.85'` in this column is a confidence value wearing a judgement's name.
+
+**Decision 3 — a venue the instrument is not mapped on is *recorded*, not refused.** `venue_maps_instrument`
+is computed from the master at open time and pinned into the payload, because the two cases mean
+different things to a reviewer: a case about a mapped pair is about something this system can observe,
+and a case about an unmapped pair is about a gap. Refusing the second would block the research the
+Intelligence Centre exists to hold — `INS-EUR-USD` on `OANDA` is a legitimate case today and the master
+maps EUR/USD at `DUKASCOPY` only. The flag is a snapshot: nothing re-checks it if the master moves.
+
+```
+  master maps INS-BTC-USDT         on BINANCE    as BTCUSDT        DATA_AVAILABLE
+  master maps INS-BTC-USDT-USDT    on BYBIT      as BTCUSDT        SUPPORTED
+  master maps INS-BTC-USDT-USDT    on OKX        as BTC-USDT-SWAP  DATA_AVAILABLE
+  master maps INS-EUR-USD          on DUKASCOPY  as EURUSD         DATA_AVAILABLE
+  open(INS-BTC-USDT-USDT , OKX      ) -> venue_maps_instrument=True
+  open(INS-BTC-USDT-USDT , BYBIT    ) -> venue_maps_instrument=True
+  open(INS-BTC-USDT      , BINANCE  ) -> venue_maps_instrument=True
+  open(INS-BTC-USDT      , MT4      ) -> venue_maps_instrument=False
+  open(INS-EUR-USD       , DUKASCOPY) -> venue_maps_instrument=True
+  open(INS-EUR-USD       , OANDA    ) -> venue_maps_instrument=False   <- a gap, not an error
+  open(None              , OKX      ) -> venue_maps_instrument=None
+  open(INS-EUR-USD       , None     ) -> venue_maps_instrument=None
+  caller tried to forge the flag True -> False
+```
+
+**Decision 4 — opening is not editing.** A caller-supplied `dossier_id` that already exists is refused.
+The store writes with `INSERT OR REPLACE` because it is a *projection*, so a second "open" would restate
+the first row's stance and summary; the audit chain would still hold both events, so nothing is lost
+durably, but the row a reviewer reads would no longer be the row that was opened. §5.1's principle —
+memory is superseded, never edited in place — is why `memory_item.superseded_by` exists. Changing a
+stance is a later batch's verb with its own audit event, not a second call to this one. A test pins that
+the store *would* have replaced the row, so the refusal reads as a decision rather than an accident.
+
+**The parent check, and why it is in the writer rather than in the projection.** Migration
+`0004_memory_fidelity` gave `dossier.instrument_id` its `REFERENCES` clause back, but
+`PRAGMA foreign_keys` is deliberately off (`store/schema.py`'s module docstring: recovery re-projects in
+chain order, which is not always parent-first, and a hard FK failure mid-recovery would be worse than the
+inconsistency it prevents). So the database accepts a dangling parent without comment, and the writer is
+the only thing that refuses one. Demonstrated rather than asserted from the docs:
+
+```
+PRAGMA foreign_keys on a fresh connection: 0
+PRAGMA foreign_key_list(dossier): [(0, 0, 'instrument', 'instrument_id', 'instrument_id',
+                                    'NO ACTION', 'NO ACTION', 'NONE')]
+dangling parent, pragma OFF -> accepted, rows: 1
+pragma ON                   -> refused: FOREIGN KEY constraint failed
+```
+
+This is what makes 8.2's L-B load-bearing rather than decorative. Before the seeded master was
+projected there was no parent row for a dossier to point at, and the honest failure would have been
+silent:
+
+```
+instruments in store before projection: 0
+open_dossier(instrument_id="INS-BTC-USDT") ->
+  ValueError: instrument 'INS-BTC-USDT' is not in the system of record, which holds 0: [].
+  dossier.instrument_id REFERENCES instrument since migration 0004_memory_fidelity, but
+  PRAGMA foreign_keys is deliberately off, so SQLite would accept this dangling parent
+  without comment — project the instrument first (Stage 8.2's L-B) or open the case with
+  instrument_id=None
+```
+
+**The refusals, all fifteen, verbatim.** Each is a `ValueError` at an internal boundary except the last,
+which is the audit log's own guard; none spends a `RejectReason`, for the reason 8.2 recorded. Every one
+of them left the row count and the chain length unchanged.
+
+```
+  summary='' (whitespace)      -> ValueError: a dossier needs a summary: it is the thesis in one line, the 'concise rationale' docs/03 §7 permits ...
+  stance='MAYBE'               -> ValueError: stance must be one of ['ACCEPT', 'REJECT', 'WAIT', 'REDUCE', 'EXIT', 'ESCALATE', 'ABSTAIN']; got 'MAYBE' ...
+  stance='abstain' (case)      -> ValueError: stance must be one of [...]; got 'abstain' ...
+  venue='NASDAQ'               -> ValueError: venue must be one of ['BYBIT', 'BINANCE', 'OKX', 'DUKASCOPY', 'MT4', 'MT5', 'CTRADER', 'IBKR', 'OANDA', 'ALPACA'] or None ...
+  venue='okx' (case)           -> ValueError: venue must be one of [...] or None; got 'okx' ...
+  sufficiency='0.85'           -> ValueError: sufficiency must be a judgement, not a number; got '0.85'. docs/12 §1.3's law (A-02+A-08) ...
+  sufficiency='12'             -> ValueError: sufficiency must be a judgement, not a number ...
+  sufficiency='1e-9'           -> ValueError: sufficiency must be a judgement, not a number ...
+  SUFFICIENT, no basis         -> ValueError: sufficiency='SUFFICIENT_FOR_REVIEW' claims a judgement, so it needs both sufficiency_basis ... and sufficiency_target ...
+  SUFFICIENT, no target        -> ValueError: sufficiency='SUFFICIENT_FOR_REVIEW' claims a judgement, so it needs both ...
+  ABSTAIN, no uncertainty      -> ValueError: stance=ABSTAIN needs a non-empty uncertainty: the schema's comment is that ABSTAIN is the default and not a fallback ...
+  instrument_id='INS-NOPE'     -> ValueError: instrument 'INS-NOPE' is not in the system of record, which holds 3: [...] ...
+  instrument_id=''             -> ValueError: instrument_id must be a real id or None; an empty string is neither
+  re-open the same id          -> ValueError: dossier 'CASE-0CB572...' already exists, and opening is not editing ...
+  payload={'api_secret': ...}  -> SecretMaterialDetected: SECRET_UNAVAILABLE: refused to audit secret material: forbidden key at payload.api_secret
+chain length before: 10 after: 10 | dossiers: 1
+```
+
+`stance=ABSTAIN` requiring a non-empty `uncertainty` is the one that could look like over-reach, so its
+reason is on the record: the schema's own comment is *"ABSTAIN is the default, not a fallback"*, and an
+abstention that does not say what is unresolved is a fallback. `docs/03` J-04's exit condition is that
+the owner learns *"what would invalidate the thesis"*. A summary is required for the same reason — it is
+the "concise rationale" `docs/03` §7 permits and the first thing J-04 step 1 renders, and `state='DRAFT'`
+means not yet dispositioned, not not yet described. Both rules are scoped by tests that assert what they
+*permit*: the other six verbs need no uncertainty, so the gate is about ABSTAIN and not a demand for prose.
+
+**Timestamps ride inside the event.** The applied schema has no `DEFAULT now()` for `created_at` or
+`updated_at` (two of the four defaults §9.1 classifies as a house convention), so a projection that
+filled them at write time would restamp a replayed event with the replay's clock — and boot recovery
+would quietly rewrite the chronology `docs/10` §3.1 asks the view to show. Tested across a real gap:
+
+```
+after wipe: dossier = 0 evidence_ref = 0
+reapplied refs: 14
+created_at before wipe:  2026-11-26T20:59:51.934Z
+created_at after replay: 2026-11-26T20:59:51.934Z
+identical: True | payload identical: True
+evidence row restored: 1 with checksum verifying: True
+```
+
+### 10.2 L-D — the route, the honest empty, and nine gaps it names instead of hiding
+
+`docs/15` §6 scoped this lever as *"read-only, serving what exists and rendering empty honestly"*,
+because the Intelligence Centre chrome has been reserved since D-035 with nothing behind it. The
+interesting part is not that a 200 comes back. It is that an empty list explains itself, following the
+distinction `/v1/data/coverage` already draws between "no archive" and "archive holds nothing":
+
+```
+GET /v1/intelligence/dossiers -> 0 dossiers, 9 named gaps
+{ "meaning": "no dossier has been opened at all",
+  "writer": "nexus.intelligence.open_dossier exists since Stage 8.3 and is audited as dossier.opened",
+  "callers": "none yet — nothing in src/ opens a dossier, which is the same limitation Stage 8.2
+              recorded for record_evidence. The writer is built and unwired on purpose: wiring it
+              means deciding what the system should research, and that is not this batch's ruling",
+  "not_a_fault": "the route works and the table exists; an empty list here is an honest empty, the
+              distinction /v1/data/coverage draws between 'no archive' and 'archive holds nothing'" }
+served_from: operational projection of the audit chain (R-1); the chain is the record
+note: a stance is a research disposition and never a trade signal — docs/03 J-04's exit condition is
+      'Research completion ≠ trade signal', and live authority is DENIED
+vocabularies.stance.values:      ['ACCEPT', 'REJECT', 'WAIT', 'REDUCE', 'EXIT', 'ESCALATE', 'ABSTAIN']
+vocabularies.stance.enforced_by: the writer (intelligence/dossier.py); the column is TEXT and the schema does not
+vocabularies.sufficiency.values: None
+vocabularies.state.values:       None
+```
+
+The empty is scoped when the list is filtered, so a filter that matches nothing does not read as a system
+that has researched nothing: with one dossier open, `?instrument_id=INS-EUR-USD` answers `"no dossier has
+been opened for this instrument"`.
+
+**`view_gaps` is part of the response, not a comment in the source.** `docs/03` J-04 and `docs/10` §3.1
+fix what the dossier view must show, and nine of those elements have no column to come from, or only
+partly. A route that served what it can and stayed silent about the rest would render as complete:
+
+| Element the approved view asks for | Asked by | Why this route cannot serve it | Moved by |
+|---|---|---|---|
+| contradictions highlighted and linked | `docs/10` §3.1; J-04 step 4 | needs `evidence_ref.contradicts`; no such column, so nothing records that two sources disagree | **D-051** deferred F-18's columns to the stage-10 writer |
+| counter-thesis | J-04 step 1; `docs/10` §3.1 | no column. `uncertainty` is served and is the nearest thing, but "what is unresolved" is not "the case against", and the route does not present one as the other | — |
+| publication time in the evidence table | J-04 step 2 | `evidence_ref` holds `observed_at` (the venue's stamp) and `retrieved_at` (our clock at receipt); a source's own publication moment has no column, and F-14 is still open | F-14/O-012 open; its expensive half authorised as **8.4** by D-051 |
+| research depth Tier 0–4 | `docs/03` §7; `docs/10` §3.1 | no column, and no tier is defined anywhere in the repository | — |
+| freshness | J-04 step 4; `docs/10` §3.1 | partly served, and the part that is not matters: each row's `data_status` is what its writer was told at record time and nothing re-evaluates it against the current clock, so a row recorded `LIVE` stays `LIVE` in the projection forever | — |
+| quant result with run id | `docs/10` §3.1 | the run id *is* served — every dossier and evidence row carries `audit_ref` — but no quantitative result is computed anywhere in `src/`, so there is nothing to attach it to | — |
+| knowledge-sufficiency meter | `docs/10` §3.1 rail | the basis and the target are served as strings; the meter is not. §6's L-E keeps sufficiency a string until stage 10 defines the meter | stage 10 |
+| beliefs with confidence band, validity interval and change conditions | `docs/03` §7; `docs/10` §3.1 | that is `memory_item`: schema-only, no writer, and F-18's three columns do not exist | **D-051** deferred to the stage-10 writer |
+| disposition with reason code | `docs/10` §3.1 | the disposition is served as `stance`, but `dossier` has no reason-code column; reason codes live on `DecisionRecord`, and a dossier is not a decision | — |
+
+A test asserts the served dossier **invents none of them** — no `counter_thesis`, `contradictions`,
+`tier` or `publication_time` key — because naming a gap is only honest if the response does not also fake
+filling it.
+
+**The chronology runs forwards while the store returns newest first.** `store.evidence_refs` orders by
+`retrieved_at DESC`, which is right for "what did we lately rely on" and wrong for a chronology, so the
+route re-sorts:
+
+```
+store order  (evidence_refs): ['okx.ticker', 'okx.books']
+route order  (chronology)   : ['okx.books', 'okx.ticker']
+   2026-11-26T12:00:00.300Z okx.books   observed=2026-11-26T12:00:00.000Z src=VENUE latency=0.3 status=LIVE checksum_ok=True
+   2026-11-26T12:00:02.300Z okx.ticker  observed=2026-11-26T12:00:02.000Z src=VENUE latency=0.3 status=LIVE checksum_ok=True
+evidence_count: 2 | evidence_checksums_verify: True
+```
+
+`observed_at_source` and `apparent_latency_seconds` are lifted out of the evidence payload beside the
+columns, so a reader does not have to know where 8.2 put F-14's qualifications to see them.
+
+**Read-only at the router, not only by convention**, and bounded:
+
+```
+  POST   /v1/intelligence/dossiers -> 405      PUT -> 405   PATCH -> 405   DELETE -> 405
+  methods registered on both paths: ['GET']
+  GET unknown id -> 404 {'detail': 'unknown dossier: CASE-NOPE'}
+  GET known id   -> 200
+  limit=   1 -> 200     limit= 200 -> 200     limit=   0 -> 422     limit= 201 -> 422
+  openapi paths: ['/v1/intelligence/dossiers', '/v1/intelligence/dossiers/{dossier_id}']
+```
+
+The unknown id is a 404 and not a successful empty body, because a typo and a case that holds nothing
+must not look the same. A detail route exists at all because J-04 step 1 is *"selects case"*.
+
+**`/v1/status` gained no key.** `counts()` has listed `dossier` since Stage 6, so an empty Intelligence
+Centre was always observable there; this batch added a view, not another status key — which matters
+because §9.7 recorded the one key 8.2 *did* add as a limitation.
+
+```
+  top-level keys (14): unchanged
+  any key mentioning intelligence or dossier: none
+  persistence.counts.dossier      = 1
+  persistence.counts.evidence_ref = 2
+  persistence.counts.memory_item  = 0
+  instrument_master               = {'count': 3, 'active': 0, 'projected': 3}
+```
+
+### 10.3 F-21 — the evidence checksum covered the payload, not the row (NEW, found and fixed here)
+
+**Found by this batch's own route probe, and it falsifies a claim 8.2 published.** §9.5 says the
+checksum *"is computed by the writer over exactly what is stored"* and is *"an **integrity** checksum
+over the recorded row"*. It was not. `record_evidence` hashed `body` — the caller's payload plus the two
+provenance keys the writer adds — and nothing else. So two evidence rows recorded with different
+`source`, `observed_at`, `retrieved_at`, `locator` and `evidence_id` values but no caller payload
+produced the *same* checksum:
+
+```
+two rows, no caller payload:
+  EV-F34AF48F352 source=okx.books   observed_at=2026-11-26T12:00:00.000Z retrieved_at=...T12:00:00.300Z locator=.../books
+  EV-BE947D99BD4 source=okx.ticker  observed_at=2026-11-26T12:00:02.000Z retrieved_at=...T12:00:02.300Z locator=.../ticker
+  payload of both: {'apparent_latency_seconds': 0.3, 'observed_at_source': 'VENUE'}
+  what 8.2 hashed  sha256(dumps_canonical(payload)):
+     row A: 4e3f2bafa9e22a8a429f4a33b07d6bdf
+     row B: 4e3f2bafa9e22a8a429f4a33b07d6bdf
+     IDENTICAL: True <- the defect: different rows, one checksum
+  what 8.3 hashes  evidence_checksum(row), covering 9 fields:
+     row A: dab6a4e92c70a081a6583b2e5711d6c5
+     row B: 98403ebaf87436adb41dc331f3605e8d
+     DIFFER: True
+```
+
+Nine of the row's eleven stored fields could change undetected, and `observed_at` was one of them — the
+field F-14 exists because of. The 8.2 test that pinned the behaviour was named
+`test_the_checksum_is_over_exactly_what_was_stored` and its docstring said *"An integrity checksum over
+the recorded row"* while its assertion read `sha256_hex(dumps_canonical(row["payload"]))`: the defect was
+enshrined rather than caught, which is the same shape as the `ORDER BY confidence` claim §9.2 corrected —
+a plausible sentence published before anything executed it.
+
+**The fix.** `CHECKSUMMED_FIELDS` names the nine covered fields once, `evidence_checksum(row)` recomputes
+the value from a row, and `verify_evidence_checksum(row)` compares. The writer uses the same function it
+asks readers to use, so the two cannot drift. `audit_ref` is excluded deliberately and the reason is
+recorded in the code: it does not exist yet when the writer hashes (L-2 writes the audit entry first and
+the ref comes back from it), and the link into the chain is protected by the chain's own hash linkage —
+`audit/chain.py` — rather than by this value. A test pins that exclusion so it reads as a decision.
+
+Tampering, written straight into SQLite past every writer, is now detected in all nine fields and
+survives restoration; a `NULL` or empty checksum verifies **False**, because an absence of evidence of
+tampering is not evidence of integrity; and a reader adding a top-level key cannot change the value while
+a reader changing the payload can.
+
+```
+    altered observed_at   -> verify=False      altered kind          -> verify=False
+    altered source        -> verify=False      altered dossier_id    -> verify=False
+    altered retrieved_at  -> verify=False      altered evidence_id   -> verify=False
+    altered data_status   -> verify=False      altered payload       -> verify=False
+    altered locator       -> verify=False      restored              -> verify=True
+    checksum set NULL     -> verify=False
+```
+
+**And the route is the first reader that checks.** `_dossier_view` recomputes each row's checksum on the
+way out and serves `checksum_ok` per row plus `evidence_checksums_verify` per dossier — `None` when the
+dossier holds no evidence, because `all(())` is `True` and a case with no evidence must not report itself
+verified. Until this batch the checksum was written and never read, so the value was a decoration; now a
+tampered row is reported rather than served. A test tampers with `observed_at` through SQLite and asserts
+the *response* says `checksum_ok: false`.
+
+**Disclosure.** This changes what an approved batch stored. Both tables are empty in production — §9.7's
+limitation 7 records that the rebuild was proven against rows the tables do not yet hold — so there is
+nothing to backfill and no stored value changes meaning under a reader. It is disclosed here rather than
+applied quietly, in the same way §9.2 disclosed the `NUMERIC(6,5)` deviation, and it is put to the owner
+in §10.6.
+
+### 10.4 Stale numbers: three copies of one count, and a skew series missing three of its seven runs
+
+Writing this section required the numeric-as-TEXT count again, so it was re-derived from both DDLs rather
+than copied: **26 columns across 8 tables are TEXT today, and 19 across 7 were before `0004` added
+`venue_instrument_mapping`'s seven**. That confirms §9.1's correction and exposes three places still
+carrying the wrong pairing of "19" with "8 tables" — `migrations/0002_memory.sql`'s header and two
+comments in `tests/test_schema_fidelity.py`, all three written in 8.2. All three now state both numbers,
+and the `TYPE_TRANSLATIONS` comment points at the comparison that re-derives the count instead of trusting
+a comment, because a total in a comment is a total nobody re-measures.
+
+```
+  target NUMERIC/DECIMAL columns      : 26 across 8 tables
+  of those TEXT in the applied schema : 26 across 8 tables     not TEXT: none
+  per table: {'decision': 1, 'fills': 3, 'instrument': 1, 'memory_item': 1, 'orders': 4,
+              'risk_limit_change': 2, 'trade_intent': 7, 'venue_instrument_mapping': 7}
+  without venue_instrument_mapping    : 19 across 7 tables
+```
+
+Also corrected, because 8.3 falsified them: §2's inventory row that lists *"the 11 routes"* and says
+nothing serves dossiers now carries a pointer to this section, and `docs/13` §2.5's *"tables have no
+writers"* is superseded for a second of the three. Both are annotated, not rewritten.
+
+**And one published number turned out to be wrong in a section D-051 was ruled on.** Re-reading the CI
+annotations for this batch's board showed that §9.9's *"the fourth measured skew and the smallest: 1.55×"*
+is false twice over. Seven runs have published both intervals, not four, and two of them are smaller than
+1.55×:
+
+| Run | Commit | `dt_observed_s` | `dt_wall_s` | skew |
+|---|---|---|---|---|
+| 24 | `7929a96` | 0.439 | 0.300 | **1.46×** |
+| 25 | `7929a96` | 0.739 | 0.294 | **2.51×** |
+| 26 | `ab841c7` | 0.238 | 0.298 | **0.80×** — the smallest, and below 1 |
+| 27 | `4fef432` | 1.089 | 0.298 | **3.65×** |
+| 28 | `f5e6201` | 0.937 | 0.358 | **2.62×** |
+| 29 | `9e70ed3` | 1.170 | 0.295 | **3.97×** — the largest |
+| 30 | `11d6db3` | 0.385 | 0.249 | **1.55×** |
+
+Every pair was re-read from the run's own check annotation on 2026-11-26 (`gh api
+repos/{owner}/{repo}/check-runs/<job>/annotations`), and the ratios recomputed rather than copied. Two
+further details the published sentence conflated: the **3.95×** it attributes to run 29 is that run's
+*rate* ratio (`bps_per_s_wall=0.557` against `bps_per_s_observed=0.141`, recorded in `docs/14` §4.1), not
+its interval ratio; and `docs/14` publishes run 27 as "a 3.7× skew" where 1.089/0.298 = 3.65.
+
+**What survives is the conclusion, strengthened.** The factor spans **0.80×–3.97×**, a 5.0× range across
+seven runs, and one run sits below 1, so it is bidirectional as well as non-constant: it cannot be divided
+out after the fact, which is exactly the evidence D-051's ruling 3 rests on. A smaller series would have
+supported that conclusion less well, so the correction does not weaken the ruling — but the number was
+wrong, and the wrong number is what §9.9 published. A correction pointer is inserted there and the ruled-on
+text is left intact. The same sentence is repeated in `docs/07`'s 8.2 register row and on board 8.2, and
+both now carry the correction too.
+
+### 10.5 The gate
+
+| Check | Command | Result |
+|---|---|---|
+| Full suite | `.venv/bin/python -m pytest -p no:warnings` | **1,258 passed / 2 skipped / 0 failed** (+141) |
+| New: dossier writer | `pytest tests/test_dossier_writer.py` | **87 tests** |
+| New: intelligence routes | `pytest tests/test_intelligence_routes.py` | **39 tests** |
+| Changed: evidence writer (F-21) | `pytest tests/test_evidence_writer.py` | **42 tests** (was 27, +15) |
+| Unchanged: fidelity | `pytest tests/test_schema_fidelity.py` | **35 tests** — no DDL moved, so no checksum moved |
+| Repository hygiene | `pytest tests/test_repo_hygiene.py` | **83 passed** |
+| Live checks collect | `NEXUS_LIVE_VERIFY=1 pytest tests/test_live_endpoints.py --collect-only -q` | **49** — unchanged, nothing here touches ingestion |
+| Offline live subset | `pytest tests/test_live_endpoints.py -k "DiagnosisLogic or PatienceBehaviour or TradeSideRuling or CrossEndpoint"` | **32 passed / 17 deselected** |
+| Lint + format | `ruff check src tests` · `ruff format --check src tests` | clean · **91 files already formatted** (was 88) |
+| Types | `mypy` (strict) | **Success: no issues found in 61 source files** (was 60) |
+| Diff | `git diff --stat HEAD -- backend/` | **11 files, +2,079 / −24** |
+| Size | source / tests | **14,938** / **16,074** lines |
+
+No live endpoint was called by this batch. CI's own `venue-verification` will run on the commit that
+carries it, as it did for 8.2 (run 30, §9.9); that run is CI's and not this batch's evidence, and no
+check in it exercises the dossier writer or the route.
+
+### 10.6 Limitations of this batch
+
+1. **Nothing calls `open_dossier`.** The writer exists, is audited, is projectable and is tested; no
+   production code opens a case, because deciding *what* the system should research was not this batch's
+   ruling. The route therefore serves an honest empty in every environment, and says so. This is the same
+   limitation §9.7 recorded for `record_evidence`, which still has no caller either.
+2. **A stance is recorded, never produced.** Nothing in the repository derives a stance from evidence.
+   `DecisionRecord` is still never constructed in `src/` (F-17), and a dossier's `stance` is whatever a
+   caller passed, validated against a vocabulary and nothing more.
+3. **`sufficiency` is a string with no meter.** The basis and the target are pinned and required for a
+   claim above `INSUFFICIENT`, but the value itself is not validated against any list, because no list
+   exists. Stage 10 defines the meter; until then a caller can write `SUFFICIENT_FOR_ANYTHING`.
+4. **`venue_maps_instrument` is a snapshot taken at open.** If the master later maps that venue, the row
+   still says `False`. Nothing re-checks it, and a dossier is not re-projected when an instrument is.
+5. **Foreign keys are still declared and still not enforced.** The writer refuses a dangling parent and
+   the database would not; with the pragma off, a row written by anything other than this writer can
+   still point at an instrument that does not exist. §9.7's limitation 2 is unchanged.
+6. **The checksum proves integrity, not authenticity, and nothing verifies it on a schedule.** F-21's fix
+   makes the value cover the row and gives the route a recomputation, but there is no periodic audit, no
+   alert on a `False`, and no signature over the bytes a venue actually sent.
+7. **The route reads the projection, not the chain.** A row the projection lost and recovery has not yet
+   restored is invisible here; `served_from` says so, and `reproject_missing` is what closes the gap.
+8. **The dossier view's nine gaps are named, not filled.** Two of them (contradictions, beliefs with
+   validity intervals) are deferred by D-051 to stage 10; one (publication time) waits on 8.4; the other
+   six have no ruling behind them at all and no column, and this batch added none.
+
+### 10.7 Decision requested
+
+1. **Is Stage 8.3 approved?** L-D + L-E as described, with the **F-21 correction to an approved batch**
+   disclosed in §10.3 — the evidence checksum now covers nine stored fields instead of the payload alone,
+   which changes what `record_evidence` stores. **Recommendation: approve**, and record as **D-052**.
+2. **What is 8.4?** D-051 authorised F-14's expensive half as its own batch: a real receipt time in
+   `okx`, `bybit`, `binance_vision` and `dukascopy`, which changes what `observed_at` means in every
+   record type and every test asserting on it. **Recommendation: 8.4 = F-14's expensive half alone** —
+   no dossier work, no new tables — because its whole value is that a regression can be attributed to it
+   and to nothing else. Its evidence is the seven measured skews — **0.80×, 1.46×, 1.55×, 2.51×, 2.62×,
+   3.65×, 3.97×** across runs 24–30 (§10.4) — and it needs its own live runs before and after.
+3. **Should anything open a dossier yet?** §10.6's first limitation is that nothing calls the writer.
+   Wiring it means deciding what the system researches, which no ruling has covered.
+   **Recommendation: not yet** — leave both writers unwired until the verification stages exist (stage 11
+   defines V1–V3), and let stage 10's `memory_item` writer be the next thing built, since a dossier with
+   no beliefs beside it is a case file with no conclusions in it.
+4. **F-21's verification: should it run anywhere other than on a read?** Today `verify_evidence_checksum`
+   runs when the route serves a row. **Recommendation: no periodic audit yet**, but record the gap as a
+   finding so it is not discovered later as an absence — an integrity check that only runs when somebody
+   looks cannot catch a change nobody looks at.

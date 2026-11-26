@@ -4,14 +4,17 @@
 -- provenance mandatory rather than optional — an evidence row that cannot say where it came from,
 -- when it was observed, and what its data status was, cannot support a decision anyone can audit.
 --
--- Stage 8.2 delivered the first writer: evidence_ref, in nexus/intelligence/evidence.py, audited as
--- `evidence.recorded`. dossier and memory_item still have none; they arrive with 8.3 and stage 10.
+-- Stage 8.2 delivered the first writer (`evidence_ref`, in nexus/intelligence/evidence.py, audited as
+-- `evidence.recorded`) and Stage 8.3 the second (`dossier`, in nexus/intelligence/dossier.py, audited as
+-- `dossier.opened`, served read-only by GET /v1/intelligence/dossiers). memory_item still has none; it
+-- arrives with stage 10, together with the three columns F-18 wants and D-051 deferred to that batch.
 --
 -- All timestamps are TIMESTAMPTZ in UTC. Confidence uses NUMERIC, never FLOAT — here. The SQLite side
 -- keeps memory_item.confidence as TEXT and constrains it with a CHECK instead, because SQLite's NUMERIC
 -- affinity would store a REAL, i.e. a float, and this schema's rule is that Decimals travel as strings:
--- 19 numeric columns across 8 tables are TEXT for that reason. Migration 0004 considered changing the
--- type and rejected it; the CHECK is what it added.
+-- 26 numeric columns across 8 tables are TEXT for that reason today, and 19 across 7 were before 0004
+-- added venue_instrument_mapping's seven. Migration 0004 considered changing the type and rejected it;
+-- the CHECK is what it added. tests/test_schema_fidelity.py re-derives that count from both DDLs.
 
 BEGIN;
 

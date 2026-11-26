@@ -34,6 +34,7 @@ PROJECTABLE: dict[str, str] = {
     "approval.granted": "approval",
     "instrument.registered": "instrument",
     "evidence.recorded": "evidence_ref",
+    "dossier.opened": "dossier",
     "fill.recorded": "fills",
     "order.state": "orders",
     "risk.limit_change": "risk_limit_change",
@@ -83,6 +84,8 @@ def project(
         _project_instrument(store, payload, audit_ref=audit_ref)
     elif event_type == "evidence.recorded":
         store.save_evidence_ref(payload, audit_ref=audit_ref)
+    elif event_type == "dossier.opened":
+        store.save_dossier(payload, audit_ref=audit_ref)
     elif event_type == "fill.recorded":
         store.save_fill(payload, audit_ref=audit_ref)
     elif event_type == "risk.limit_change":

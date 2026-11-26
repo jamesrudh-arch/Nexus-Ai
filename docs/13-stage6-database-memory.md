@@ -201,9 +201,11 @@ Foreign keys declared but not enforced (`PRAGMA foreign_keys` off: recovery re-p
 order, which is not always parent-first, and a hard FK failure mid-recovery would be worse than the
 inconsistency it prevents). No PostgreSQL store implementation and no driver installed. Triggers
 T-1…T-4 unmeasured — no claim that SQLite is sufficient at any particular scale. Vector recall still
-undecided. Intelligence-memory tables have no writers *(superseded for one of the three: Stage 8.2 gave
-`evidence_ref` a writer in `nexus/intelligence/evidence.py`, audited as `evidence.recorded`; `dossier` and
-`memory_item` are still writer-less — see `docs/15` §9.5)*. The FK sentence above is now accurate for
+undecided. Intelligence-memory tables have no writers *(superseded for two of the three: Stage 8.2 gave
+`evidence_ref` a writer in `nexus/intelligence/evidence.py`, audited as `evidence.recorded`, and Stage 8.3
+gave `dossier` one in `nexus/intelligence/dossier.py`, audited as `dossier.opened` and served read-only by
+`GET /v1/intelligence/dossiers` — see `docs/15` §9.5 and §10. `memory_item` is still writer-less, and
+D-051 deferred F-18's three columns to the stage-10 batch that writes it)*. The FK sentence above is now accurate for
 `dossier.instrument_id` too, which migration `0004_memory_fidelity` gave a `REFERENCES` clause: declared,
 and still not enforced at runtime for the reason given here (`docs/15` §9.7). Off-VM backup remains untested: recovery here
 means restart on the same host, and the 5.2 DR rows are unchanged. The compose change was validated

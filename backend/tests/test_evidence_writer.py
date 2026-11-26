@@ -11,6 +11,7 @@ actually conflates.
 from __future__ import annotations
 
 import inspect
+import sqlite3
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -23,11 +24,14 @@ from nexus.audit.log import AuditLog, SqliteAuditStore
 from nexus.core.errors import RejectReason
 from nexus.data.freshness import DataStatus, MarketSnapshot
 from nexus.intelligence.evidence import (
+    CHECKSUMMED_FIELDS,
     EVENT_TYPE,
     ObservedAtSource,
+    evidence_checksum,
     record_evidence,
     record_snapshot,
     snapshot_payload,
+    verify_evidence_checksum,
 )
 from nexus.store.operational import PersistenceError, SqliteOperationalStore
 from nexus.store.serialise import dumps_canonical
@@ -41,6 +45,38 @@ def _durable(tmp_path: Path) -> tuple[AuditLog, SqliteOperationalStore]:
     path = tmp_path / "nexus.db"
     audit = AuditLog(SqliteAuditStore(path))
     return audit, SqliteOperationalStore(path, audit=audit)
+
+
+def _pragma(tmp_path: Path, what: str) -> list[tuple[Any, ...]]:
+    conn = sqlite3.connect(tmp_path / "nexus.db")
+    try:
+        return list(conn.execute(f"PRAGMA {what}"))
+    finally:
+        conn.close()
+
+
+def _rowid(tmp_path: Path, evidence_id: str) -> int:
+    """The row's rowid, so a tampered primary key cannot orphan the write that restores it."""
+    conn = sqlite3.connect(tmp_path / "nexus.db")
+    try:
+        rows = list(conn.execute("SELECT rowid FROM evidence_ref WHERE evidence_id = ?", (evidence_id,)))
+    finally:
+        conn.close()
+    assert len(rows) == 1, rows
+    return int(rows[0][0])
+
+
+def _update(tmp_path: Path, column: str, value: Any, rowid: int) -> None:
+    """Write past every writer, which is the only way a stored row gets altered."""
+    conn = sqlite3.connect(tmp_path / "nexus.db")
+    try:
+        # The column name comes from CHECKSUMMED_FIELDS or a literal in the test, never from a caller;
+        # the value is still bound.
+        sql = f"UPDATE evidence_ref SET {column} = ? WHERE rowid = ?"  # noqa: S608
+        conn.execute(sql, (value, rowid))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _snapshot(**overrides: Any) -> MarketSnapshot:
@@ -265,11 +301,24 @@ class TestVocabularyAndDefaults:
         store.close()
 
 
-class TestIntegrityAndProvenance:
-    def test_the_checksum_is_over_exactly_what_was_stored(self, tmp_path: Path) -> None:
-        """An integrity checksum over the recorded row, computed by the writer so it cannot disagree
-        with the payload. Not an authenticity signature over the venue's bytes — nothing here can
-        attest to those yet."""
+class TestTheChecksumCoversTheRow:
+    """F-21 — found by Stage 8.3's route probe, fixed here.
+
+    Stage 8.2 hashed ``payload`` alone and documented the result as "an integrity checksum over the
+    recorded row". The test that pinned it asserted the payload-only behaviour while its own name and
+    docstring said row, so the defect was enshrined rather than caught. Two evidence rows recorded with
+    different ``source``, ``observed_at``, ``retrieved_at`` and ``locator`` values but no caller payload
+    produced the *same* checksum, because the only material hashed was the two provenance keys the writer
+    adds. Eleven of the row's stored fields could change undetected — ``observed_at`` among them, the
+    field F-14 is about.
+
+    What is asserted now: the checksum is recomputable from the row, it differs when any covered field
+    differs, the covered set is derived from the live table so a new column cannot join the row
+    uncovered, and ``audit_ref`` is excluded on purpose because the chain's own hash linkage covers that
+    link and because the ref does not exist yet when the writer hashes (L-2 writes the audit entry first).
+    """
+
+    def test_the_checksum_is_recomputable_from_the_stored_row(self, tmp_path: Path) -> None:
         audit, store = _durable(tmp_path)
         receipt = record_evidence(
             audit=audit,
@@ -281,9 +330,125 @@ class TestIntegrityAndProvenance:
         )
         row = store.evidence_refs()[0]
         assert row["checksum"] == receipt.checksum
-        assert row["checksum"] == sha256_hex(dumps_canonical(row["payload"]))
+        assert evidence_checksum(row) == row["checksum"], "a reader can recompute it from the row alone"
+        assert verify_evidence_checksum(row)
         store.close()
 
+    def test_two_rows_differing_only_in_their_columns_do_not_share_a_checksum(self, tmp_path: Path) -> None:
+        """The exact case the probe hit: same payload, different everything else."""
+        audit, store = _durable(tmp_path)
+        first = record_evidence(
+            audit=audit,
+            store=store,
+            source="okx.books",
+            observed_at=OBSERVED,
+            retrieved_at=RETRIEVED,
+            locator="https://www.okx.com/api/v5/market/books",
+        )
+        second = record_evidence(
+            audit=audit,
+            store=store,
+            source="okx.ticker",
+            observed_at=OBSERVED + timedelta(seconds=2),
+            retrieved_at=RETRIEVED + timedelta(seconds=2),
+            locator="https://www.okx.com/api/v5/market/ticker",
+        )
+        rows = {row["evidence_id"]: row for row in store.evidence_refs()}
+        assert rows[first.evidence_id]["payload"] == rows[second.evidence_id]["payload"]
+        assert first.checksum != second.checksum, "F-21: equal payloads are not equal rows"
+        # What Stage 8.2 hashed would have been identical for both, which is the defect stated plainly.
+        assert sha256_hex(dumps_canonical(rows[first.evidence_id]["payload"])) == sha256_hex(
+            dumps_canonical(rows[second.evidence_id]["payload"])
+        )
+        store.close()
+
+    @pytest.mark.parametrize("field", sorted(CHECKSUMMED_FIELDS))
+    def test_altering_any_covered_field_is_detected(self, tmp_path: Path, field: str) -> None:
+        """Tampering is written straight into SQLite, past every writer, which is the only way it happens."""
+        audit, store = _durable(tmp_path)
+        receipt = record_evidence(
+            audit=audit,
+            store=store,
+            source="okx",
+            observed_at=OBSERVED,
+            retrieved_at=RETRIEVED,
+            payload={"bid": "60736.2"},
+        )
+        original = store.evidence_refs()[0]
+        rowid = _rowid(tmp_path, receipt.evidence_id)
+        tampered = {"payload": '{"bid": "1.0"}', "kind": "RUMOUR", "dossier_id": "CASE-FORGED"}.get(
+            field, "TAMPERED"
+        )
+        _update(tmp_path, field, tampered, rowid)
+        assert not verify_evidence_checksum(store.evidence_refs()[0]), field
+        # The payload is stored as canonical TEXT and read back as a dict, so restoring it means
+        # re-serialising it — writing the dict back would store a Python repr and never verify again.
+        restored = dumps_canonical(original[field]) if field == "payload" else original[field]
+        _update(tmp_path, field, restored, rowid)
+        assert verify_evidence_checksum(store.evidence_refs()[0]), f"{field} restored"
+        store.close()
+
+    def test_the_covered_set_is_derived_from_the_live_table(self, tmp_path: Path) -> None:
+        """So a column added to ``evidence_ref`` fails here until somebody decides whether to cover it."""
+        audit, store = _durable(tmp_path)
+        columns = {row[1] for row in _pragma(tmp_path, "table_info(evidence_ref)")}
+        assert columns - set(CHECKSUMMED_FIELDS) == {"checksum", "audit_ref"}
+        assert set(CHECKSUMMED_FIELDS) <= columns, "no covered field that the table does not have"
+        store.close()
+
+    def test_audit_ref_is_excluded_and_the_chain_covers_that_link_instead(self, tmp_path: Path) -> None:
+        """Deliberate, and pinned so it reads as a decision rather than an oversight.
+
+        The writer hashes before the audit entry exists (L-2), so ``audit_ref`` cannot be covered; and
+        the audit chain is hash-linked end to end, so re-pointing a row at a different record is a change
+        the chain's own verification can see. A row's ``audit_ref`` therefore does not affect this value.
+        """
+        audit, store = _durable(tmp_path)
+        receipt = record_evidence(
+            audit=audit, store=store, source="okx", observed_at=OBSERVED, retrieved_at=RETRIEVED
+        )
+        row = store.evidence_refs()[0]
+        assert row["audit_ref"] == receipt.audit_ref
+        _update(tmp_path, "audit_ref", "AUD-FORGED", _rowid(tmp_path, receipt.evidence_id))
+        assert verify_evidence_checksum(store.evidence_refs()[0])
+        breaks = audit.verify()
+        assert not breaks, "the chain itself is still intact; only the row's pointer moved"
+        store.close()
+
+    def test_a_reader_can_add_keys_but_cannot_change_the_payload(self, tmp_path: Path) -> None:
+        """The route lifts provenance keys out beside the row; that must not look like tampering."""
+        audit, store = _durable(tmp_path)
+        record_evidence(
+            audit=audit,
+            store=store,
+            source="okx",
+            observed_at=OBSERVED,
+            retrieved_at=RETRIEVED,
+            payload={"bid": "60736.2"},
+        )
+        row = store.evidence_refs()[0]
+        annotated = dict(row)
+        annotated["served_by"] = "/v1/intelligence/dossiers"
+        assert verify_evidence_checksum(annotated), "keys outside the covered set are ignored"
+        mutated = dict(row)
+        mutated["payload"] = {**row["payload"], "bid": "1.0"}
+        assert not verify_evidence_checksum(mutated), "a covered field changed by value is tampering"
+        store.close()
+
+    @pytest.mark.parametrize("stored", [None, ""])
+    def test_a_missing_checksum_does_not_verify(self, tmp_path: Path, stored: str | None) -> None:
+        """``checksum`` is nullable, so absence has to fail closed: no evidence of tampering is not
+        evidence of integrity."""
+        audit, store = _durable(tmp_path)
+        receipt = record_evidence(
+            audit=audit, store=store, source="okx", observed_at=OBSERVED, retrieved_at=RETRIEVED
+        )
+        _update(tmp_path, "checksum", stored, _rowid(tmp_path, receipt.evidence_id))
+        assert not verify_evidence_checksum(store.evidence_refs()[0])
+        store.close()
+
+
+class TestIntegrityAndProvenance:
     def test_a_caller_cannot_overwrite_the_provenance_fields(self, tmp_path: Path) -> None:
         """The qualifications are written last on purpose: a payload that could talk a row out of its own
         provenance would make the flag decorative."""

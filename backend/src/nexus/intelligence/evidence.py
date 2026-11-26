@@ -27,6 +27,19 @@ F-14 open rather than change four adapters inside a batch that is also rebuildin
   either; it is evidence that the venue's clock is ahead. Treating this number as latency is exactly the
   mistake F-14 exists to prevent, which is why it is written down next to the flag that qualifies it.
 
+**The checksum covers the row, not just its payload** — and did not when this module was first shipped.
+Stage 8.2 hashed ``payload`` alone and documented the result as "an integrity checksum over the recorded
+row", which was wrong in a way that only a second pair of rows could show: two evidence rows recorded
+with different ``source``, ``observed_at``, ``retrieved_at`` and ``locator`` values but no caller payload
+produced the *same* checksum, because the material hashed was the two provenance keys the writer adds and
+nothing else. Eleven of the row's stored fields could change undetected, ``observed_at`` among them — the
+field finding F-14 is about. Stage 8.3's route probe found it and this is recorded as **F-21**: the hash
+now covers every stored field except ``checksum`` itself and ``audit_ref``, and
+:func:`verify_evidence_checksum` recomputes it from a row so the property is checkable rather than
+asserted. ``audit_ref`` is excluded because it does not exist yet when the writer hashes — the audit entry
+is written first (L-2) and the ref comes back from it — and because the link into the chain is protected
+by the chain's own hash linkage, not by this value.
+
 ``kind`` is passed through as free text with the schema's default. No vocabulary for it is declared
 anywhere in the repository — the only thing the schema says is ``DEFAULT 'DATA'`` — and inventing one
 here would put a plausible-looking enum in front of a distinction nobody has yet drawn.
@@ -52,12 +65,15 @@ from nexus.store.serialise import dumps_canonical, to_jsonable
 from nexus.store.writeahead import write_with_audit
 
 __all__ = [
+    "CHECKSUMMED_FIELDS",
     "EVENT_TYPE",
     "EvidenceReceipt",
     "ObservedAtSource",
+    "evidence_checksum",
     "record_evidence",
     "record_snapshot",
     "snapshot_payload",
+    "verify_evidence_checksum",
 ]
 
 #: The audited event this writer emits. In ``writeahead.PROJECTABLE`` since Stage 8.2.
@@ -76,6 +92,50 @@ class ObservedAtSource(StrEnum):
     #: The venue published none, so the local clock stands in. The two timestamps are equal by
     #: construction and the row carries no latency information at all.
     LOCAL_FALLBACK = "LOCAL_FALLBACK"
+
+
+#: The stored fields :func:`evidence_checksum` covers. ``checksum`` is excluded by definition;
+#: ``audit_ref`` is excluded because the audit entry is written first and its ref does not exist yet when
+#: the writer hashes — the chain's own hash linkage protects that link instead. Named once so the writer
+#: that computes the value and the reader that verifies it cannot drift apart.
+CHECKSUMMED_FIELDS: tuple[str, ...] = (
+    "evidence_id",
+    "dossier_id",
+    "source",
+    "kind",
+    "observed_at",
+    "retrieved_at",
+    "data_status",
+    "locator",
+    "payload",
+)
+
+
+def evidence_checksum(row: Mapping[str, Any]) -> str:
+    """The integrity checksum of one evidence row, recomputable from the row itself.
+
+    Works on the event a writer is about to send and on a row read back from the store, because both
+    carry :data:`CHECKSUMMED_FIELDS` under the same names and ``dumps_canonical`` is stable across the
+    JSON round trip. Anything else in the mapping is ignored, so a reader cannot change the value by
+    adding a key.
+    """
+    material = {name: row.get(name) for name in CHECKSUMMED_FIELDS}
+    return sha256_hex(dumps_canonical(material))
+
+
+def verify_evidence_checksum(row: Mapping[str, Any]) -> bool:
+    """True when a stored row still matches what its writer hashed.
+
+    ``False`` means the row was altered after it was written, or was written before Stage 8.3 changed
+    what the checksum covers — the two are indistinguishable from the row alone, which is why the caller
+    is told only that the value does not match. A row with no checksum at all (``checksum`` is nullable)
+    verifies as ``False`` rather than ``True``: an absence of evidence of tampering is not evidence of
+    integrity.
+    """
+    stored = row.get("checksum")
+    if stored is None or str(stored) == "":
+        return False
+    return str(stored) == evidence_checksum(row)
 
 
 def _aware(moment: datetime, name: str) -> datetime:
@@ -210,12 +270,13 @@ def record_evidence(
         "retrieved_at": iso_utc(retrieved_at),
         "data_status": status.value,
         "locator": locator,
-        # Computed here, over exactly what is stored, so the checksum cannot disagree with the payload.
-        # This is an integrity checksum over the recorded row, not an authenticity signature over the
-        # bytes the venue sent: nothing in this system can yet attest to those.
-        "checksum": sha256_hex(dumps_canonical(body)),
         "payload": body,
     }
+    # Computed over the whole event rather than over `body` alone, so a change to any stored field is
+    # detectable and not only a change to the payload (F-21). This is an integrity checksum over the
+    # recorded row, not an authenticity signature over the bytes the venue sent: nothing in this system
+    # can yet attest to those.
+    event["checksum"] = evidence_checksum(event)
 
     entry = write_with_audit(audit=audit, store=store, event_type=EVENT_TYPE, payload=event, actor=actor)
 

@@ -52,7 +52,10 @@ TYPE_TRANSLATIONS: dict[str, str] = {
     "BIGINT": "INTEGER",
     # Every numeric column in this schema is TEXT, not an oversight: SQLite's NUMERIC affinity stores a
     # REAL — a float — and the house rule is that Decimals travel as strings so no precision is lost.
-    # 19 columns across 8 tables do this. `memory_item.confidence` is one of them and stays one.
+    # 26 columns across 8 tables do this today, and 19 across 7 did before migration 0004 added
+    # `venue_instrument_mapping`'s seven; the count is re-derived from both DDLs by the comparison in
+    # this module rather than trusted from this comment, because three copies of "19 across 8" went
+    # stale in exactly that way. `memory_item.confidence` is one of them and stays one.
     "NUMERIC": "TEXT",
 }
 
@@ -421,9 +424,10 @@ class TestConfidenceConstraint:
 
     def test_the_column_stays_text_on_purpose(self, tmp_path: Path) -> None:
         """Pinned so the choice is argued rather than discovered. The PostgreSQL target says
-        NUMERIC(6,5); SQLite's NUMERIC affinity would store a REAL, i.e. a float, and 19 numeric columns
-        across 8 tables in this schema are TEXT precisely so Decimals survive as strings. Changing this
-        one column would make it the only float-backed numeric column in the applied schema.
+        NUMERIC(6,5); SQLite's NUMERIC affinity would store a REAL, i.e. a float, and all 26 numeric
+        columns across 8 tables in this schema are TEXT precisely so Decimals survive as strings (19
+        across 7 before 0004 added `venue_instrument_mapping`). Changing this one column would make it
+        the only float-backed numeric column in the applied schema.
         """
         conn = self._conn(tmp_path)
         kinds = {r[1]: r[2] for r in conn.execute("PRAGMA table_info(memory_item)")}
