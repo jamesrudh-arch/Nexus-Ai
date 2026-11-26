@@ -647,6 +647,8 @@ SKEW_SERIES = [
     ("28", "<span class='mono'>f5e6201</span>", "0.937", "0.358", "<b>2.62&times;</b>"),
     ("29", "<span class='mono'>9e70ed3</span>", "1.170", "0.295", "<b>3.97&times;</b> &mdash; the largest"),
     ("30", "<span class='mono'>11d6db3</span>", "0.385", "0.249", "<b>1.55&times;</b>"),
+    ("31", "<span class='mono'>ffc4128</span>", "0.590", "0.251",
+     "<b>2.35&times;</b> &mdash; CI&rsquo;s own run on this commit"),
 ]
 
 
@@ -762,8 +764,10 @@ checksum Stage 8.2 published as &ldquo;an integrity checksum over the recorded r
 <span class="mono">payload</span> alone, so two different rows shared one value and nine of eleven stored
 fields could change undetected (&sect;9). That is a correction to an approved batch and is disclosed rather
 than applied quietly. Re-reading the CI annotations for this board also falsified a second published number
-&mdash; &sect;9.9&rsquo;s &ldquo;fourth measured skew and the smallest&rdquo; is the seventh, and two runs are
-smaller (&sect;10) &mdash; so this batch carries two corrections to approved text, both as inserted pointers. <b>Nothing calls either writer</b>, by ruling and by design (&sect;12). No live endpoint
+&mdash; &sect;9.9&rsquo;s &ldquo;fourth measured skew and the smallest&rdquo; counted four runs where the
+record held seven, and two of them are smaller (&sect;10); CI&rsquo;s own run 31 on this commit then made it
+eight &mdash; so this batch carries two corrections to approved text, both as inserted pointers, and states
+the series as a range rather than a count. <b>Nothing calls either writer</b>, by ruling and by design (&sect;12). No live endpoint
 was called; F-14 and F-18 are untouched, both because D-051 said so.</div>
 
 <h3>1 &middot; What D-051 authorised, and what this batch therefore did not do<span class="tag">D-051 &middot; docs/15 §10.0</span></h3>
@@ -904,9 +908,12 @@ carrying the wrong pairing of &ldquo;19&rdquo; with &ldquo;8 tables&rdquo;, all 
 <div class="card">{stale_table()}</div>
 <div class="blocked"><b>And re-reading the CI annotations for this board falsified a number in a section
 D-051 was ruled on.</b> &sect;9.9 calls run 30&rsquo;s skew &ldquo;the fourth measured skew and the smallest:
-1.55&times;&rdquo;. <b>Seven</b> runs have published both intervals &mdash; <span class="cite">docs/14</span>
-&sect;4.1&rsquo;s table holds runs 24&ndash;29 and &sect;9.9 holds run 30 &mdash; and <b>two of them are
-smaller than 1.55&times;</b>. Every pair below was re-read from its own check annotation on 2026-11-26 and the
+1.55&times;&rdquo;. <b>Every run from 24 onward has published both intervals</b> &mdash;
+<span class="cite">docs/14</span> &sect;4.1&rsquo;s table holds runs 24&ndash;29, &sect;9.9 holds run 30, and
+&sect;10.8 holds run 31, which is CI&rsquo;s own measurement of <i>this</i> commit &mdash; and <b>two of them
+are smaller than 1.55&times;</b>. The count is stated as a property and not as a total on purpose: the push
+that carried the correction produced an eighth pair, which is exactly the trap the record&rsquo;s own rule
+names. A range does not go stale. Every pair below was re-read from its own check annotation on 2026-11-26 and the
 ratio recomputed rather than copied:</div>
 <div class="card">{skew_table()}</div>
 <p class="cap">Run 26&rsquo;s <b>0.80&times;</b> is the smallest and sits <b>below 1</b>, which is the
@@ -916,8 +923,9 @@ bidirectionality <span class="cite">docs/14</span> &sect;4.1 already recorded; r
 (<span class="mono">bps_per_s_wall=0.557</span> against <span class="mono">bps_per_s_observed=0.141</span>),
 not its interval ratio, which is 3.97&times;; and <span class="cite">docs/14</span> publishes run 27 as
 &ldquo;a 3.7&times; skew&rdquo; where 1.089/0.298 = 3.65.</p>
-<p><b>What survives is the conclusion, strengthened.</b> The factor spans <b>0.80&times;&ndash;3.97&times;</b>,
-a 5.0&times; range across seven runs, and one run is below 1, so it is bidirectional as well as non-constant:
+<p><b>What survives is the conclusion, strengthened.</b> The factor spans <b>0.80&times;&ndash;3.97&times;</b>
+across every run that has published both intervals, a 5.0&times; spread, and one run is below 1, so it is
+bidirectional as well as non-constant:
 it cannot be divided out after the fact, which is exactly the evidence D-051&rsquo;s ruling 3 rests on. A
 smaller series would have supported that conclusion less well, so the ruling does not move &mdash; but the
 number was wrong, and the wrong number is what &sect;9.9 published. Correction pointers are inserted in
@@ -930,10 +938,19 @@ before anything re-measured it. The first four are the <span class="mono">ORDER 
 fidelity module now says where the number comes from instead of only what it is.</p>
 
 <h3>11 &middot; The gate<span class="tag">docs/15 §10.5</span></h3>
-<p>Every number below was produced by the command beside it and re-run before being written down. No live
-endpoint was called by this batch; CI&rsquo;s own <span class="mono">venue-verification</span> will run on the
-commit that carries it, as it did for 8.2 (run 30, &sect;9.9), and that run is CI&rsquo;s evidence and not this
-batch&rsquo;s &mdash; <b>no check in those 49 exercises the dossier writer or the route.</b></p>
+<p>Every number below was produced by the command beside it and re-run before being written down. <b>No live
+endpoint was called by this batch.</b> CI ran on <span class="mono">ffc4128</span> anyway: three runs, all
+<span class="mono">conclusion=success</span>, and the <span class="mono">pull_request</span> one carries
+<span class="mono">Live public endpoints (O-009 / O-010)</span> &mdash; <b>run 31</b>: <b>44 passed / 0 failed
+/ 5 geo-blocked / 0 skipped of 49</b>, <span class="mono">gap_bps=0.0</span> so both rates are
+<span class="mono">0.0</span> and it yields no rate comparison, skew <b>2.35&times;</b>
+(<span class="mono">dt_observed_s=0.59</span> against <span class="mono">dt_wall_s=0.251</span>),
+<span class="mono">layout_flag=True</span> with 0 skips so it is live-evidenced in a seventh run, and
+<span class="mono">sides=['BUY'] buy=50 sell=0</span> &mdash; a fully one-sided list passing live for the
+third time and in the opposite direction to runs 24 and 25, which vindicates P-7 again. That run is
+CI&rsquo;s evidence and not this batch&rsquo;s: <b>no check in those 49 exercises the dossier writer, the
+route, the projection, migration 0004 or F-21&rsquo;s checksum</b> &mdash; the 1,258 offline tests do.
+Recorded in <span class="cite">docs/15</span> &sect;10.8.</p>
 <div class="card">{gate_table()}</div>
 
 <h3>12 &middot; Limitations of this batch<span class="tag">docs/15 §10.6</span></h3>
@@ -956,9 +973,9 @@ are empty in production. <b>Recommendation: approve</b>, and record as <b>D-052<
 <span class="mono">dukascopy</span>, which changes what <span class="mono">observed_at</span> means in every
 record type and every test asserting on it. <b>Recommendation: 8.4 = F-14&rsquo;s expensive half alone</b>
 &mdash; no dossier work, no new tables &mdash; because its whole value is that a regression can be attributed
-to it and to nothing else. Its evidence is the seven measured skews of &sect;10 &mdash; <b>0.80&times;,
-1.46&times;, 1.55&times;, 2.51&times;, 2.62&times;, 3.65&times;, 3.97&times;</b> across runs 24&ndash;30, a
-5.0&times; range with one run below 1 &mdash; and it needs its own live runs before and after.</li>
+to it and to nothing else. Its evidence is the measured skew series of &sect;10 &mdash; <b>every
+run from 24 onward, spanning 0.80&times;&ndash;3.97&times; with one run below 1</b>, and stated as a range
+because the count grows with every push &mdash; and it needs its own live runs before and after.</li>
 <li><b>Should anything open a dossier yet?</b> &sect;12&rsquo;s first limitation is that nothing calls the
 writer. Wiring it means deciding what the system researches, which no ruling has covered.
 <b>Recommendation: not yet</b> &mdash; leave both writers unwired until the verification stages exist (stage 11
@@ -979,7 +996,12 @@ on 91 &middot; 13 application routes, 2 of them read-only <span class="mono">GET
 <span class="mono">/v1/intelligence/dossiers</span>, writes answered 405 &middot; nine
 <span class="mono">view_gaps</span> named in every response and none of them faked &middot; <b>F-21 found and
 fixed</b>: the evidence checksum covered the payload, not the row &middot; F-14 and F-18 untouched, both by
-ruling &middot; nothing calls either writer &middot; no live endpoint called; no migration checksum moved</footer>
+ruling &middot; nothing calls either writer &middot; no live endpoint called by the batch and no migration
+checksum moved &middot; CI on <span class="mono">ffc4128</span>: three runs, all <span class="mono">success</span>,
+the <span class="mono">pull_request</span> one carrying <b>run 31</b> &mdash; 44/0/5/<b>0</b> of 49, skew
+<b>2.35&times;</b>, <span class="mono">layout_flag=True</span>, <span class="mono">buy=50 sell=0</span>
+&middot; two published numbers corrected as inserted pointers: the checksum&rsquo;s coverage (&sect;9) and the
+skew series, now a <b>range</b> rather than a count (&sect;10)</footer>
 </div></body></html>"""
     out = HERE / "stage8-3-dossier-opened.html"
     out.write_text(html_out)

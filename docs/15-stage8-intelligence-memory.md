@@ -1151,7 +1151,7 @@ nothing to backfill and no stored value changes meaning under a reader. It is di
 applied quietly, in the same way §9.2 disclosed the `NUMERIC(6,5)` deviation, and it is put to the owner
 in §10.6.
 
-### 10.4 Stale numbers: three copies of one count, and a skew series missing three of its seven runs
+### 10.4 Stale numbers: three copies of one count, and a skew series that omitted runs the record already held
 
 Writing this section required the numeric-as-TEXT count again, so it was re-derived from both DDLs rather
 than copied: **26 columns across 8 tables are TEXT today, and 19 across 7 were before `0004` added
@@ -1175,8 +1175,10 @@ writers"* is superseded for a second of the three. Both are annotated, not rewri
 
 **And one published number turned out to be wrong in a section D-051 was ruled on.** Re-reading the CI
 annotations for this batch's board showed that §9.9's *"the fourth measured skew and the smallest: 1.55×"*
-is false twice over. Seven runs have published both intervals, not four, and two of them are smaller than
-1.55×:
+is false twice over. Runs 24–30 had all published both intervals at the time of writing — seven, not four —
+and two of them are smaller than 1.55×. (Run 31, on the commit carrying this correction, added an eighth;
+§10.8 restates the series as a property, because a count that grows with every push is stale the moment it is
+written and a range is not.)
 
 | Run | Commit | `dt_observed_s` | `dt_wall_s` | skew |
 |---|---|---|---|---|
@@ -1188,8 +1190,13 @@ is false twice over. Seven runs have published both intervals, not four, and two
 | 29 | `9e70ed3` | 1.170 | 0.295 | **3.97×** — the largest |
 | 30 | `11d6db3` | 0.385 | 0.249 | **1.55×** |
 
+*(Run 31, on the commit that carried this correction, added an eighth pair — 0.590/0.251 = **2.35×**. It is
+in §10.8's table, which restates the series as a property rather than a count, because a total that
+re-triggers on every push is stale the moment it is written. The range does not go stale.)*
+
 Every pair was re-read from the run's own check annotation on 2026-11-26 (`gh api
-repos/{owner}/{repo}/check-runs/<job>/annotations`), and the ratios recomputed rather than copied. Two
+repos/{owner}/{repo}/check-runs/<job>/annotations`), and the ratios recomputed rather than copied. The table
+is a snapshot of runs 24–30; §10.8 carries the series as it stands after run 31. Two
 further details the published sentence conflated: the **3.95×** it attributes to run 29 is that run's
 *rate* ratio (`bps_per_s_wall=0.557` against `bps_per_s_observed=0.141`, recorded in `docs/14` §4.1), not
 its interval ratio; and `docs/14` publishes run 27 as "a 3.7× skew" where 1.089/0.298 = 3.65.
@@ -1258,8 +1265,9 @@ check in it exercises the dossier writer or the route.
    `okx`, `bybit`, `binance_vision` and `dukascopy`, which changes what `observed_at` means in every
    record type and every test asserting on it. **Recommendation: 8.4 = F-14's expensive half alone** —
    no dossier work, no new tables — because its whole value is that a regression can be attributed to it
-   and to nothing else. Its evidence is the seven measured skews — **0.80×, 1.46×, 1.55×, 2.51×, 2.62×,
-   3.65×, 3.97×** across runs 24–30 (§10.4) — and it needs its own live runs before and after.
+   and to nothing else. Its evidence is the measured skew series — **every run from 24 onward that has
+   published both intervals, spanning 0.80×–3.97× with one run below 1** (§10.4 and §10.8; stated as a
+   range because the count grows with every push) — and it needs its own live runs before and after.
 3. **Should anything open a dossier yet?** §10.6's first limitation is that nothing calls the writer.
    Wiring it means deciding what the system researches, which no ruling has covered.
    **Recommendation: not yet** — leave both writers unwired until the verification stages exist (stage 11
@@ -1269,3 +1277,68 @@ check in it exercises the dossier writer or the route.
    runs when the route serves a row. **Recommendation: no periodic audit yet**, but record the gap as a
    finding so it is not discovered later as an absence — an integrity check that only runs when somebody
    looks cannot catch a change nobody looks at.
+
+### 10.8 CI's own run on this commit: run 31, and why the skew series is now stated as a property
+
+`ffc4128` triggered three runs, all `conclusion=success`: the `push` run (`45898061044`) and two
+`pull_request` runs (`45898067353`, `45898067364`). The second carries `Live public endpoints (O-009 /
+O-010)`, which is **run 31** — a live measurement on the commit that delivered this batch. As with run 30,
+**no check in those 49 exercises the dossier writer, the route, the projection, migration 0004 or F-21's
+checksum**; all of that is covered by the 1,258 offline tests. What run 31 adds is the eighth pair of
+interval readings.
+
+```
+44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49 live checks
+PARTIAL - 5 geo-blocked (need a runner outside the restricted region)
+
+okx.cross_endpoint quotes_mid=60833.95 book_mid=60833.95 gap_bps=0.0 dt_observed_s=0.59 dt_wall_s=0.251
+                   bps_per_s_observed=0.0 bps_per_s_wall=0.0 quoted_spread_bps=0.016 asserts_agreement=False
+okx.trades         count=50 price_min=60826.1 price_max=60831.7 sides=['BUY'] buy=50 sell=0 unspecified=0
+okx.bars           count=100 interval=1m span_hours=1.65 close_min=60639.8 close_max=60836.6
+okx.book           depth=40 best_bid=60833.9 best_ask=60834 spread_bps=0.016 entitlement=LIVE
+binance-vision.parse rows=1440 accepted=1440 rejected=0 had_header=False timestamp_units=us
+dukascopy.layout   passed=True payload_bytes=25761 decompressed_bytes=101480 tick_count=5074 reasons=-
+dukascopy.ticks    count=5074 price_min=1.09502 price_max=1.0964 source=DUKASCOPY_BI5 layout_flag=True
+dukascopy.probe.production_ua outcome=ok bytes=25761 lzma=True
+dukascopy.diagnosis verdict=nothing to diagnose: the production User-Agent works action=none
+```
+
+**The skew is 2.35× (`dt_observed_s=0.59` against `dt_wall_s=0.251`).** Four things about run 31 are worth
+more than the number:
+
+1. **§10.4 published a total, and the total re-triggered before the ink was dry.** That section corrected
+   §9.9's "fourth measured skew" by counting seven runs — and the push carrying the correction produced an
+   eighth. This is the exact trap the record's own rule names: a number that re-triggers per push must be
+   written as a bound, floor or property, never a total. So the series is restated here as a property:
+   **every run that has published both intervals, from run 24 onward, is in the table below; as of
+   `ffc4128` that is runs 24–31, and the next push adds another.** The range is what carries the argument,
+   and a range does not go stale: **0.80×–3.97×, a 5.0× spread, with one run below 1.**
+2. **`gap_bps=0.0` again, so both rates are `0.0` and run 31 yields no rate comparison.** Run 29's
+   `0.165` remains a single sample, and the finding that the wall-clock rate is the one that means anything
+   still rests on that one measurement.
+3. **A fully one-sided trade list passed live again, in the opposite direction.** Runs 24 and 25 returned
+   `sides=['SELL'] buy=0 sell=50`; run 31 returns `sides=['BUY'] buy=50 sell=0`. P-7's ruling — record the
+   side split and never assert on balance — is now vindicated in both directions across three runs.
+4. **The dukascopy probes are not stable run to run.** Run 30 had all three return
+   `network-IngestFault`; run 31 has `production_ua outcome=ok` with the diagnosis
+   `nothing to diagnose: the production User-Agent works`, and run 27 had `browser_ua ok`. So the probe
+   outcome is a property of the moment, not of the code, and no claim here is built on it.
+
+**0 skips**, so `layout_flag=True` is live-evidenced in a seventh run (24, 25, 26, 27, 29, 30, 31) with run
+28 still the only one that skipped the check that emits it. The annotation truncates at `2312 escaped
+characters over the cap`, so the bybit rows sit inside the tail and are **not** quoted here.
+
+| Run | Commit | `dt_observed_s` | `dt_wall_s` | skew |
+|---|---|---|---|---|
+| 24 | `7929a96` | 0.439 | 0.300 | 1.46× |
+| 25 | `7929a96` | 0.739 | 0.294 | 2.51× |
+| 26 | `ab841c7` | 0.238 | 0.298 | **0.80×** — the smallest, and below 1 |
+| 27 | `4fef432` | 1.089 | 0.298 | 3.65× |
+| 28 | `f5e6201` | 0.937 | 0.358 | 2.62× |
+| 29 | `9e70ed3` | 1.170 | 0.295 | **3.97×** — the largest |
+| 30 | `11d6db3` | 0.385 | 0.249 | 1.55× |
+| 31 | `ffc4128` | 0.590 | 0.251 | 2.35× |
+
+Every pair re-read from its own check annotation and every ratio recomputed, not copied. This table is the
+evidence 8.4 starts from, and it is the reason 8.4 needs its own live runs before and after: the quantity it
+changes is the one that has moved 5.0× between runs while nothing in the code did.
