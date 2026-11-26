@@ -1,0 +1,55 @@
+{
+  "$description": "NEXUS-AI semantic colour + elevation tokens, LIGHT mode (override set; applied via [data-theme=light]). Darker hue steps carry text so every pair passes 4.5:1 on all three light surfaces; verified by design/test_tokens.py.",
+  "color": {
+    "surface": {
+      "canvas":   { "$value": "{color.platinum}", "$type": "color", "$description": "Brand Platinum as light canvas (D-031)." },
+      "panel":    { "$value": "{color.paper}", "$type": "color" },
+      "elevated": { "$value": "{color.white}", "$type": "color" }
+    },
+    "text": {
+      "primary":   { "$value": "{color.ink}", "$type": "color", "$description": "16.27 / 18.34 / 19.22." },
+      "secondary": { "$value": "{color.ink-secondary}", "$type": "color", "$description": "8.40 / 9.47 / 9.93." },
+      "muted":     { "$value": "{color.ink-muted}", "$type": "color", "$description": "4.63 / 5.22 / 5.47." }
+    },
+    "border": {
+      "subtle": { "$value": "{color.hairline-light}", "$type": "color", "$description": "Decorative separators only." },
+      "strong": { "$value": "{color.slate-strong}", "$type": "color", "$description": "Component boundaries: 3.71 / 4.18 / 4.39." }
+    },
+    "focus": { "$value": "{color.ink}", "$type": "color", "$description": "2px outline, monochrome (D-031)." },
+    "brand": {
+      "accent": { "$value": "{color.brand.violet}", "$type": "color", "$description": "GRAPHICS ONLY, same rule as dark (D-031)." }
+    },
+    "feedback": {
+      "positive": {
+        "text":    { "$value": "{color.green.700}", "$type": "color", "$description": "5.20 / 5.87 / 6.15." },
+        "graphic": { "$value": "{color.green.700}", "$type": "color" },
+        "subtle":  { "$value": "#EAFAF1", "$type": "color", "$description": "10% of green.400 over white; text-on-tint 5.6+." }
+      },
+      "negative": {
+        "text":    { "$value": "{color.red.700}", "$type": "color", "$description": "5.60 / 6.32 / 6.62." },
+        "graphic": { "$value": "{color.red.700}", "$type": "color" },
+        "subtle":  { "$value": "#FDEDEC", "$type": "color", "$description": "10% of red.400 over white; text-on-tint 5.8+." }
+      },
+      "warning": {
+        "text":    { "$value": "{color.amber.800}", "$type": "color", "$description": "5.41 / 6.10 / 6.39." },
+        "graphic": { "$value": "{color.amber.800}", "$type": "color" },
+        "subtle":  { "$value": "#FEF5E7", "$type": "color", "$description": "10% of amber.400 over white; text-on-tint 5.9+." }
+      },
+      "info": {
+        "text":    { "$value": "{color.cyan.700}", "$type": "color", "$description": "7.07 / 7.97 / 8.36." },
+        "graphic": { "$value": "{color.cyan.700}", "$type": "color" },
+        "subtle":  { "$value": "#EBF5FB", "$type": "color", "$description": "10% of cyan.400 over white; text-on-tint 7.5+." }
+      },
+      "intelligence": {
+        "text":    { "$value": "{color.purple.700}", "$type": "color", "$description": "7.23 / 8.16 / 8.55." },
+        "graphic": { "$value": "{color.purple.700}", "$type": "color" },
+        "subtle":  { "$value": "#F5EEF8", "$type": "color", "$description": "10% of purple.400 over white; text-on-tint 7.5+." }
+      }
+    }
+  },
+  "shadow": {
+    "1": { "$value": { "color": "#0B0F1414", "offsetX": "0", "offsetY": "1px", "blur": "2px", "spread": "0" }, "$type": "shadow" },
+    "2": { "$value": { "color": "#0B0F141A", "offsetX": "0", "offsetY": "4px", "blur": "12px", "spread": "0" }, "$type": "shadow" },
+    "3": { "$value": { "color": "#0B0F1424", "offsetX": "0", "offsetY": "12px", "blur": "32px", "spread": "0" }, "$type": "shadow" }
+  }
+}

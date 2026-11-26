@@ -1,0 +1,51 @@
+{
+  "$description": "NEXUS-AI semantic tokens (tier 2), mode-independent: purpose-bound spacing, radii, elevation slots, typography roles and numeric rules. Colour semantics live in semantic.dark.json / semantic.light.json. Components (tier 3, from Stage 3) may reference this tier only — never primitives (docs/09 §3).",
+  "space": {
+    "inline": {
+      "sm": { "$value": "{space.2}", "$type": "dimension", "$description": "Icon-to-label, badge padding-x." },
+      "md": { "$value": "{space.3}", "$type": "dimension", "$description": "Control padding-x, table cell-x." }
+    },
+    "stack": {
+      "sm": { "$value": "{space.2}", "$type": "dimension", "$description": "Between a value and its label." },
+      "md": { "$value": "{space.3}", "$type": "dimension", "$description": "Between rows of a panel." },
+      "lg": { "$value": "{space.5}", "$type": "dimension", "$description": "Between panels in a column." }
+    },
+    "gutter":   { "$value": "{space.4}", "$type": "dimension", "$description": "Grid gutter between cards/panels." },
+    "panel":    { "$value": "{space.4}", "$type": "dimension", "$description": "Panel inner padding." },
+    "section":  { "$value": "{space.6}", "$type": "dimension", "$description": "Between page sections." },
+    "table": {
+      "cell-x": { "$value": "{space.3}", "$type": "dimension" },
+      "cell-y": { "$value": "{space.2}", "$type": "dimension", "$description": "Dense but readable (docs/03 §3.4)." }
+    }
+  },
+  "radius": {
+    "control": { "$value": "{radius.2}", "$type": "dimension", "$description": "Buttons, inputs, badges." },
+    "card":    { "$value": "{radius.3}", "$type": "dimension", "$description": "Cards, panels." },
+    "overlay": { "$value": "{radius.4}", "$type": "dimension", "$description": "Modals, dropdowns, popovers." },
+    "pill":    { "$value": "{radius.full}", "$type": "dimension", "$description": "Environment/state badges." }
+  },
+  "elevation": {
+    "1": { "$value": "{shadow.1}", "$type": "shadow", "$description": "Raised control (dropdown button open)." },
+    "2": { "$value": "{shadow.2}", "$type": "shadow", "$description": "Dropdowns, popovers." },
+    "3": { "$value": "{shadow.3}", "$type": "shadow", "$description": "Modals, confirmation dialogs." }
+  },
+  "typography": {
+    "role": {
+      "display": { "$value": { "fontFamily": "{font.family.mono}", "fontSize": "{font.size.display}", "fontWeight": "{font.weight.semibold}", "lineHeight": "{font.lineHeight.display}", "letterSpacing": "{font.tracking.display}" }, "$type": "typography", "$description": "The ONE hero figure per screen (consolidated equity, net exposure). Mono so it is tabular by nature; semibold, not bold — restraint (docs/08 §1)." },
+      "heading-lg": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "{font.size.heading}", "fontWeight": "{font.weight.semibold}", "lineHeight": "{font.lineHeight.heading}", "letterSpacing": "{font.tracking.display}" }, "$type": "typography", "$description": "Page titles. docs/03 §3.2 20px semibold tight." },
+      "heading-md": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "{font.size.emphasis}", "fontWeight": "{font.weight.semibold}", "lineHeight": "{font.lineHeight.heading}", "letterSpacing": "{font.tracking.none}" }, "$type": "typography", "$description": "Panel titles. docs/03 §3.2 16px." },
+      "heading-sm": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "{font.size.body}", "fontWeight": "{font.weight.semibold}", "lineHeight": "{font.lineHeight.heading}", "letterSpacing": "{font.tracking.none}" }, "$type": "typography", "$description": "Card/section titles. docs/03 §3.2 14px." },
+      "body": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "{font.size.body}", "fontWeight": "{font.weight.regular}", "lineHeight": "{font.lineHeight.body}", "letterSpacing": "{font.tracking.none}" }, "$type": "typography", "$description": "docs/03 §3.2 body 14/1.5." },
+      "data": { "$value": { "fontFamily": "{font.family.mono}", "fontSize": "{font.size.data}", "fontWeight": "{font.weight.regular}", "lineHeight": "{font.lineHeight.data}", "letterSpacing": "{font.tracking.none}" }, "$type": "typography", "$description": "Prices, IDs, table figures. ALWAYS with font-variant-numeric: tabular-nums; right-aligned in tables (docs/03 §3.2)." },
+      "data-emphasis": { "$value": { "fontFamily": "{font.family.mono}", "fontSize": "{font.size.body}", "fontWeight": "{font.weight.medium}", "lineHeight": "{font.lineHeight.data}", "letterSpacing": "{font.tracking.none}" }, "$type": "typography", "$description": "The figure a row exists for (last price, P&L). Tabular." },
+      "value": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "{font.size.emphasis}", "fontWeight": "{font.weight.semibold}", "lineHeight": "{font.lineHeight.heading}", "letterSpacing": "{font.tracking.none}" }, "$type": "typography", "$description": "Key metric on a card where prose context matters; tabular-nums applied at use." },
+      "label": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "{font.size.label}", "fontWeight": "{font.weight.medium}", "lineHeight": "{font.lineHeight.label}", "letterSpacing": "{font.tracking.label}", "textTransform": "uppercase" }, "$type": "typography", "$description": "docs/03 §3.2 labels: 11px uppercase 0.05em, secondary colour." },
+      "caption": { "$value": { "fontFamily": "{font.family.sans}", "fontSize": "{font.size.caption}", "fontWeight": "{font.weight.regular}", "lineHeight": "{font.lineHeight.caption}", "letterSpacing": "{font.tracking.none}" }, "$type": "typography", "$description": "Timestamps, hints, footnote evidence links. Muted colour." }
+    }
+  },
+  "numeric": {
+    "figures": { "$value": "{font.numeric.tabular}", "$type": "string", "$description": "Every financial figure, percentage, timestamp column and chart axis label. No exceptions (docs/09 §4)." },
+    "negatives": { "$value": "minus sign + semantic colour + ▲/▼ or +/- glyph", "$type": "string", "$description": "Trading convention, never accounting parentheses; colour never sole signal (docs/03 §3.3)." },
+    "precision": { "$value": "per-asset-class: fiat FX 4-5 dp, crypto 2-8 dp by pair tick, indices 2 dp, percentages 2 dp", "$type": "string", "$description": "Match printed-statement precision; compact notation ($1.2M) only for context, never for actionable figures (docs/09 §4)." }
+  }
+}
