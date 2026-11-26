@@ -114,6 +114,15 @@ DEFECTS = [
      "Caught by the assert-before-write discipline (no partial writes), re-run with the nested "
      "docstring replaced by a comment. Recorded because a silent no-op patch is how evidence gets "
      "misreported.", "this board"),
+    ("ID-5", "Two API tests asserted the durable file path without declaring it. Locally the default "
+     "audit backend is SQLite, so they passed; CI runs the whole suite with "
+     "<code>NEXUS_AUDIT_BACKEND=memory</code>, which makes both stores ephemeral by design, and the "
+     "first push failed CI's pytest step.",
+     "The tests now set the backend they mean, and the rule they depended on is pinned by a new "
+     "test: with an ephemeral audit log the operational store is ephemeral too and <b>no file is "
+     "created</b> behind the operator's back. Recorded because CI caught what the local run could "
+     "not — a green local suite is not the gate.",
+     "run 45753053217 ✗ → f994271 → run 45753628845 ✓"),
 ]
 
 
@@ -125,7 +134,7 @@ def limits_table() -> str:
         ("Vector recall still undecided", "No embedding store is chosen, installed or claimed. pgvector would pull Postgres in via T-3; a DuckDB VSS path is unverified here.", "board 6.1"),
         ("Intelligence memory has no writers", "<code>dossier</code>, <code>evidence_ref</code>, <code>memory_item</code> exist so provenance is mandatory from the start; stages 8–10 write them.", "migration 0002_memory"),
         ("Off-VM backup is still untested", "No backup has been restored in this project. Recovery here means \"restart on the same host\"; the DR rows from 5.2 are unchanged, and Stage 20 owns the drill.", "docs/12 §2.3"),
-        ("Compose change validated by parse only", "Docker is not available in this sandbox. The YAML was parsed and the two intended facts asserted (db profiles, core depends_on); CI's compose job is the real validation.", "git push → CI"),
+        ("Compose change validated in CI, not locally", "Docker is unavailable in this sandbox, so the edit was first checked by parsing the YAML and asserting the two intended facts (db profiles, core depends_on), then validated for real by CI: `Compose config valid` plus the runtime smoke test, which brought up `nats core` — no `db` — in a real container and served requests from it.", "CI run 45753628845 ✓"),
     ]
     return ("<table><tr><th>limitation</th><th>why, stated plainly</th><th>where it is recorded</th></tr>" +
             "".join(f"<tr><td><b>{a}</b></td><td>{b}</td><td class='cap'>{c}</td></tr>"
@@ -149,15 +158,21 @@ def main() -> pathlib.Path:
 <h1 style="font-size:var(--font-size-heading);font-weight:var(--font-weight-semibold);margin:6px 0 0">
 Database &amp; persistent memory: implementation evidence</h1>
 <div class="ribbon">IMPLEMENTATION BATCH — the backend pause was lifted by the owner for this work.
-Four findings closed (F-2, F-3, F-6, F-7), six new modules under <code>nexus/store/</code>, 47 new
-tests. The gate is green and the limitations table below is part of the deliverable, not a footnote:
-nothing here claims a backup was restored, a Postgres store exists, or a scaling ceiling was
-measured.</div>
+Four findings closed (F-2, F-3, F-6, F-7), six new modules under <code>nexus/store/</code>, 48 new
+tests, CI green on all five jobs. The limitations table below is part of the deliverable, not a
+footnote: nothing here claims a backup was restored, a Postgres store exists, or a scaling ceiling
+was measured. The first push failed CI's pytest step (ID-5) and that failure is on this board, not
+edited out of it.</div>
 
-<div class="gate">pytest: 975 passed, 2 skipped (both pre-existing: live-egress, 7m interval) · 0 failed
-ruff check src tests: All checks passed · ruff format --check: 80 files already formatted
-mypy --strict: Success, no issues in 56 source files
-new tests: 47 passed — test_migrations.py 12 · test_store_persistence.py 17 · test_boot_recovery.py 18</div>
+<div class="gate">local pytest: 976 passed, 2 skipped (both pre-existing: live-egress, 7m interval), 0 failed —
+  identical under CI's env (NEXUS_AUDIT_BACKEND=memory) and under the default SQLite backend
+  978 collected vs a 930 baseline · ruff check: All checks passed · ruff format --check: 80 files
+  unchanged · mypy --strict: Success, no issues in 56 source files
+new tests: 48 — test_migrations.py 12 · test_store_persistence.py 17 · test_boot_recovery.py 19</div>
+<div class="gate">CI run 45753628845 (commit f994271): Secret scanning ✓ · Compose config valid ✓ ·
+  Backend lint+types+tests ✓ · Runtime smoke test ✓ (real container, `nats core`, no `db`) ·
+  Container image amd64+arm64 ✓
+first push f69def3 → run 45753053217: backend pytest ✗ (ID-5) — compose and smoke were already ✓</div>
 
 <h3>Boot sequence, as implemented<span class="tag">laws L-1, L-2, L-6</span></h3>
 {flow(BOOT)}

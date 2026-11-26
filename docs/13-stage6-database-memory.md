@@ -117,12 +117,19 @@ batch, so unlike Stages 1–5 it changes production code.
 ### 2.1 Gate evidence
 
 ```
-pytest              975 passed, 2 skipped, 0 failed   (was 930 passed; +47 new tests)
+local pytest        976 passed, 2 skipped, 0 failed   (978 collected vs a 930 baseline; +48 new)
+  identical under CI's env (NEXUS_AUDIT_BACKEND=memory) and under the default SQLite backend
   skips are pre-existing: live-egress verification, 7m interval
 ruff check          All checks passed (src + tests)
 ruff format         80 files already formatted
 mypy --strict       Success: no issues found in 56 source files
-new tests           47 — test_migrations.py 12 · test_store_persistence.py 17 · test_boot_recovery.py 18
+new tests           48 — test_migrations.py 12 · test_store_persistence.py 17 · test_boot_recovery.py 19
+
+CI run 45753628845 (commit f994271) — all five jobs success:
+  Secret scanning ✓ · Compose config valid ✓ · Backend (lint · types · tests) ✓
+  Runtime smoke test ✓ — real container brought up as `nats core` with no `db`, serving requests
+  Container image (amd64 + arm64 build) ✓
+first push f69def3 → run 45753053217: Backend pytest ✗ (ID-5 below); compose and smoke already ✓
 ```
 
 ### 2.2 What was built
@@ -177,6 +184,12 @@ ordering refusal never fired because SQLite reports `no such table: main.audit_l
 **ID-4** tooling, not product: a patch script nested a docstring inside a triple-quoted string, died
 at parse time and applied nothing while the suite still showed the old failures; caught by
 assert-before-write, re-run. Recorded because a silent no-op patch is how evidence gets misreported.
+**ID-5** two API tests asserted the durable file path without declaring it: locally the default audit
+backend is SQLite so they passed, while CI runs the whole suite with `NEXUS_AUDIT_BACKEND=memory`,
+which makes both stores ephemeral by design — the first push failed CI's pytest step. The tests now
+set the backend they mean, and the rule they depended on is pinned by a new test asserting that an
+ephemeral audit log yields an ephemeral operational store and **creates no file**. Recorded because
+CI caught what the local run could not: a green local suite is not the gate.
 
 ### 2.5 Limitations (part of the deliverable)
 
@@ -187,7 +200,9 @@ T-1…T-4 unmeasured — no claim that SQLite is sufficient at any particular sc
 undecided. Intelligence-memory tables have no writers. Off-VM backup remains untested: recovery here
 means restart on the same host, and the 5.2 DR rows are unchanged. The compose change was validated
 by YAML parse plus two asserted facts (db profiles, core depends_on) because Docker is unavailable in
-this sandbox; CI's compose job is the real validation.
+this sandbox, so it was first checked by parsing the YAML and asserting the two intended facts, then
+validated for real by CI: `Compose config valid` plus the runtime smoke test bringing up `nats core`
+with no `db` in a real container (run 45753628845).
 
 ### 2.6 Stage 6 completion summary (pending stage-level approval)
 
