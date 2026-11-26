@@ -90,6 +90,15 @@ tamper/gap/reorder, CRIT alert) → re-derive halt → reconcile open orders to 
 auto-resolved; new risk blocked until closed) → apply migrations (audited) → `/readyz` only after
 all pass, `/healthz` degraded with the specific reason.
 
+### 1.6 Approval
+
+§1 **APPROVED 2026-11-25 (D-042)**, and with it **R-1 adopted as the resolution of P-6**: SQLite
+plus Parquet/DuckDB are the single-node system of record; TimescaleDB is demoted to an opt-in
+profile; the portable DDL and the `AuditStore` Protocol remain the seam; triggers T-1…T-4 must be
+measured. Laws L-1…L-6 bind 6.2 and every later stage. **Nothing has been applied yet** — the
+compose tier change, the DDL retirement of `market_tick`/`market_bar`, and every writer are 6.2
+code, and the backend remains paused at `d9a83fe` until the owner lifts it.
+
 ### 1.5 Scope of 6.2 (implementation, pending unpause)
 
 Operational store (SQLite writer for the eight unused tables, retiring `market_tick`/`market_bar`
