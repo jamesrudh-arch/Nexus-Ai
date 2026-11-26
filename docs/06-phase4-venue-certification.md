@@ -246,7 +246,7 @@ marked, so the cross-references elsewhere in this document stay valid. Items 3 t
      path (no side segment), and got **HTTP 503 on all four
      attempts**, so `verify_layout` had still never run against a real file and `LAYOUT_VERIFIED`
      stayed False. **SUPERSEDED 2026-11-26 (Stage 7.2, lever L-A):** `verify_layout` has since passed
-     against a real hour in **six** consecutive CI runs and the flag is now `True`, with records
+     against a real hour in **twelve** consecutive CI runs and the flag is now `True`, with records
      tagged `DUKASCOPY_BI5` — `docs/14` §1.4 F-1 and §2.1. EURUSD only: 12 of the 13 point divisors
      have still never met a real file. Dukascopy's datafeed is documented as aggressively rate-limited, using 503 as well
      as 429 as its throttle response, and some hosts of this kind also reject a non-browser

@@ -7,13 +7,14 @@ the research plan possible at $0. It is a **bulk historical** source, not a real
 LZMA-compressed, 20 bytes per tick, big-endian — was implemented from documentation and stayed
 UNVERIFIED through Phases 3 and 4 because this sandbox has no egress to ``datafeed.dukascopy.com``.
 It has now been checked against a real download. :func:`verify_layout` passed on a genuine
-bi5 hour in **ten consecutive CI runs on 2026-11-26**: four before the flip
-(``45754638978``, ``45756716181``, ``45758610197``, ``45759709313``) and four after it
-(``45782533635``, ``45782540670``, ``45784665370``, ``45784657260``) and two more after that.
-The last six are the flag's falsifiability test — it stayed green with the flag on. All ten
-fetched the same hour, ``2026-11-24T12:00Z``, whose path is ``EURUSD/2026/10/24/12h_ticks.bi5`` —
+bi5 hour in **twelve consecutive CI runs on 2026-11-26**: four before the flip
+(``45754638978``, ``45756716181``, ``45758610197``, ``45759709313``) and eight after it
+(``45782533635``, ``45782540670``, ``45784665370``, ``45784657260``, ``45786440060``,
+``45786447356``, ``45787390006``, ``45787399434``). Those eight are the flag's falsifiability
+test — it stayed green with the flag on, and every push that touches this module re-runs it.
+All twelve fetched the same hour, ``2026-11-24T12:00Z``, whose path is ``EURUSD/2026/10/24/12h_ticks.bi5`` —
 the ``10`` is November, because the month segment is 0-indexed, exactly the trap documented below.
-All ten returned 25,761 compressed bytes, 101,480 decompressed = **5,074 ticks × 20 exactly**, no
+All twelve returned 25,761 compressed bytes, 101,480 decompressed = **5,074 ticks × 20 exactly**, no
 failed check, and parsed prices of 1.09502–1.0964 inside EURUSD's real band — the assertion that
 exists to catch a wrong point divisor, the silent 100x error warned about below.
 therefore ``True`` and every record carries ``source="DUKASCOPY_BI5"``. Evidence: ``docs/14``
@@ -21,12 +22,13 @@ therefore ``True`` and every record carries ``source="DUKASCOPY_BI5"``. Evidence
 
 What is still **NOT** verified, and must not be inferred from the above: only EURUSD has been
 checked, so **12 of the 13 divisors** in ``POINT_DIVISORS`` have never met a real file. The feed
-is also intermittent, and those ten runs did not agree about why: the production
-User-Agent worked outright in six; in the other four the single-attempt probes faulted while
-the patient fetch inside the same run still succeeded, and the probes contradicted each other
-(a browser User-Agent answered in three of them, a different hour in two). No single variable
-explains it and no cause is established (``docs/14`` F-5), so a failed hour says nothing about
-the layout. Layout verification is not price verification either: nothing here reconciles
+is also intermittent, and those twelve runs did not agree about why: the production
+User-Agent worked outright in seven; in the other five the single-attempt probes faulted while
+the patient fetch inside the same run still succeeded, and the probes contradicted each other in
+**five different patterns** (a browser User-Agent answered in three of them, a different hour in
+two, and the twelfth got an HTTP 503 reply from the host while both User-Agent attempts faulted).
+No single variable explains it and no cause is established (``docs/14`` F-5), so a failed hour
+says nothing about the layout. Layout verification is not price verification either: nothing here reconciles
 Dukascopy against a second source (``docs/14`` F-8). FX tick history for any pair other than
 EURUSD remains PROVISIONAL and must never be used to size a live position.
 
@@ -255,7 +257,7 @@ def verify_layout(payload: bytes) -> dict[str, Any]:
     Passing these is the evidence required to flip ``LAYOUT_VERIFIED`` to ``True``. They are
     deliberately mechanical: size divisibility, offset monotonicity, sane price range.
 
-    It passed on 2026-11-26, ten runs in a row (four before the flag flipped and six after),
+    It passed on 2026-11-26, twelve runs in a row (four before the flag flipped and eight after),
     which is what ``LAYOUT_VERIFIED = True`` cites. The
     function stays for two reasons: the weekly live run keeps calling it, so an upstream change to the
     bi5 record layout is caught by the next real download instead of being assumed away; and the flag

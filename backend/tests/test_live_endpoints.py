@@ -8,7 +8,7 @@ consistent and proves nothing about the world: it cannot notice that a venue ren
 changed a divisor, started returning strings where it returned numbers, or that a URL shape was
 misread. For Dukascopy the gap was wider still — the bi5 binary layout was implemented from
 documentation alone, and ``LAYOUT_VERIFIED`` stayed ``False`` until this module downloaded a real
-hour file and ``verify_layout`` passed against it (ten consecutive CI runs on 2026-11-26,
+hour file and ``verify_layout`` passed against it (twelve consecutive CI runs on 2026-11-26,
 ``2026-11-24T12:00Z``; the flag is ``True`` now and cites that evidence — ``docs/14`` §1.4 F-1 and
 §2.1, ``docs/00`` O-010).
 
@@ -648,16 +648,33 @@ def _diagnose_dukascopy(baseline: str, browser: str, other_hour: str) -> tuple[s
         # 45756716181 the production User-Agent on a different hour returned 25,313 bytes of valid
         # LZMA, and in 45758610197 and 45784665370 a browser User-Agent on the *same* hour returned
         # 25,761 - all while the verdict said the host was never reached (docs/14 F-10).
-        reached = []
+        # F-11, found in run 45787399434: a probe that comes back with an HTTP status *reached*
+        # the host, because 503 is a reply and not a silence. The first fix for F-10 counted only
+        # successes, so that run still published "never reached" while its own other-hour probe
+        # recorded http-503 from the very host the verdict called unreachable.
+        reached: list[str] = []
         if browser == "ok":
-            reached.append("a browser User-Agent on the same hour")
+            reached.append("a browser User-Agent on the same hour (a valid file came back)")
+        elif browser.startswith("http-"):
+            reached.append(f"a browser User-Agent on the same hour, which answered {browser}")
         if other_hour == "ok":
-            reached.append("the production User-Agent on a different hour")
+            reached.append("the production User-Agent on a different hour (a valid file came back)")
+        elif other_hour.startswith("http-"):
+            reached.append(f"the production User-Agent on a different hour, which answered {other_hour}")
         if reached:
+            served = (
+                ""
+                if any("valid file" in r for r in reached)
+                else (
+                    "; every reply was an HTTP status rather than a file, so the host is reachable "
+                    "but not serving"
+                )
+            )
             return (
                 f"the production attempt got no reply ({baseline}) but the host did answer "
-                f"{' and '.join(reached)} in the same minute, so this is not an unreachable host; "
-                "one attempt per variant cannot separate a transient network fault from a rejection",
+                f"{' and '.join(reached)} in the same minute, so this is not an unreachable host"
+                f"{served}; one attempt per variant cannot separate a transient network fault "
+                "from a rejection",
                 "re-run: a production User-Agent success on retry makes the fault transient rather "
                 "than policy; a repeat failure while a variant keeps working is an OWNER DECISION "
                 "about how this project presents itself, not an engineering fix",
@@ -694,16 +711,22 @@ class TestDukascopyReachabilityDiagnostic:
     """Why does the bi5 endpoint answer 503? Measured, not guessed.
 
     History: with the corrected URL (defect 39) the host answered HTTP 503 on all four attempts in
-    run `45726585354`, so `verify_layout` had still never seen a real file. It has since — ten
+    run `45726585354`, so `verify_layout` had still never seen a real file. It has since — twelve
     consecutive runs on 2026-11-26 passed and `LAYOUT_VERIFIED` is True. What this diagnostic has
-    *not* settled is why the feed answers intermittently: across those ten runs the probes
-    produced four different patterns — production ok; both UAs faulted with another hour ok;
-    production faulted with a browser UA ok; and production faulted with *both* a browser UA and
-    another hour ok — while the patient layout fetch succeeded in every one, so no single
-    variable explains it (`docs/14` §1.4 F-5). Four of those runs (`45756716181`, `45758610197`,
-    `45784665370`, `45784657260`) also published the verdict "the host was never reached" next to
-    probes showing the host answering, which is `docs/14` F-10 and is why the branch order below is
-    pinned by tests. Three explanations are plausible and they imply different responses:
+    *not* settled is why the feed answers intermittently: across those twelve runs the probes
+    produced **five** different patterns — production ok (seven runs); both UAs faulted with another
+    hour ok; production faulted with a browser UA ok; production faulted with *both* a browser UA
+    and another hour ok; and, in `45787399434`, both UAs faulted while another hour answered
+    **http-503** — while the patient layout fetch succeeded in every one, so no single variable
+    explains it (`docs/14` §1.4 F-5).
+
+    Four of those runs (`45756716181`, `45758610197`, `45784665370`, `45784657260`) also published
+    the verdict "the host was never reached" next to probes showing the host answering, which is
+    `docs/14` F-10 and is why the branch order below is pinned by tests. The fix for F-10 counted
+    only *successes* as proof the host was reached, so `45787399434` published the same false
+    verdict on the strength of an http-503 reply — a status code is a reply from the host, not a
+    silence. That is `docs/14` F-11, and it is why the cross-product below is enumerated in a test
+    rather than one case per branch. Three explanations are plausible and they imply different responses:
 
     * the feed throttles, and 503 is one of its throttle responses alongside 429 — then patience and
       a lower request rate fix it;
@@ -846,6 +869,52 @@ class TestDukascopyDiagnosisLogic:
         """The claim this branch exists to make, now scoped to the case where it is true."""
         verdict, _ = _diagnose_dukascopy("network-IngestFault", "network-IngestFault", "network-X")
         assert "never reached" in verdict
+
+    def test_an_http_reply_from_a_variant_also_refutes_never_reached(self) -> None:
+        """F-11, pinned on the exact inputs run 45787399434 produced.
+
+        Both User-Agent attempts on the requested hour faulted at the network layer, and the
+        production User-Agent on a different hour came back `http-503`. A 503 is a reply from the
+        host, so "never reached" was false in that run too - the first F-10 fix counted only
+        successes and missed it.
+        """
+        verdict, action = _diagnose_dukascopy("network-IngestFault", "network-IngestFault", "http-503")
+        assert "never reached" not in verdict
+        assert "http-503" in verdict, "the reply it measured must be the reply it reports"
+        assert "reachable but not serving" in verdict
+        assert "re-run" in action
+
+    def test_a_browser_http_reply_refutes_never_reached_too(self) -> None:
+        """The same gap on the other probe, so neither variant can slip through again."""
+        verdict, _ = _diagnose_dukascopy("network-IngestFault", "http-503", "network-IngestFault")
+        assert "never reached" not in verdict
+        assert "browser User-Agent" in verdict and "http-503" in verdict
+
+    def test_a_variant_that_returned_a_file_is_not_described_as_not_serving(self) -> None:
+        """The "reachable but not serving" clause must fire only when nothing came back."""
+        verdict, _ = _diagnose_dukascopy("network-IngestFault", "ok", "network-IngestFault")
+        assert "valid file came back" in verdict
+        assert "not serving" not in verdict
+
+    def test_never_reached_is_claimed_only_when_all_three_probes_got_no_reply(self) -> None:
+        """The whole cross-product, because a branch-order bug hides in unpinned combinations.
+
+        F-10 and F-11 were both this shape: a branch that fires on one input while a later
+        measurement in the same run contradicts it. Enumerating every combination is the only
+        pin that cannot be satisfied by the cases someone happened to think of.
+        """
+        outcomes = ["ok", "network-IngestFault", "network-X", "http-503", "http-403"]
+        combinations = 0
+        for baseline in outcomes:
+            for browser in outcomes:
+                for other_hour in outcomes:
+                    combinations += 1
+                    verdict, _ = _diagnose_dukascopy(baseline, browser, other_hour)
+                    nothing_answered = all(o.startswith("network-") for o in (baseline, browser, other_hour))
+                    assert ("never reached" in verdict) is nothing_answered, (
+                        f"({baseline}, {browser}, {other_hour}) -> {verdict}"
+                    )
+        assert combinations == len(outcomes) ** 3
 
     def test_a_user_agent_block_is_escalated_not_silently_worked_around(self) -> None:
         verdict, action = _diagnose_dukascopy("http-503", "ok", "http-503")

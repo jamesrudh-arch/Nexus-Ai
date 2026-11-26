@@ -1,10 +1,14 @@
 # 14 — Stage 7: Market & Venue Coverage
 
-Status: **IN PROGRESS**, sub-deliverable 7.1 research (this document §1, board
-`design/stage7-1-market-venue-coverage.html`). Started after the Stage 6 stage-level approval
-(D-044, 2026-11-26). **7.1 changes no production code**: the authorisation the owner gave for
-Stage 6.2 was scoped to that batch, so every finding that needs a code change is recorded here as a
-request with its cost, not delivered. Stages 8–23 remain `NOT STARTED`.
+Status: **IN PROGRESS** — 7.1 research delivered (§1, board
+`design/stage7-1-market-venue-coverage.html`, still `AWAITING REVIEW`), **7.2 delivered** (§2, board
+`design/stage7-2-levers-implemented.html`, D-045). Started after the Stage 6 stage-level approval
+(D-044, 2026-11-26).
+
+**7.1 changed no production code**: the authorisation the owner gave for Stage 6.2 was scoped to that
+batch, so every finding needing a code change was recorded there as a request with its cost, not
+delivered. **7.2 did change production code**, on the owner's explicit authorisation of three named
+levers (§2.0) — and only those three. Stages 8–23 remain `NOT STARTED`.
 
 Mandate, as recorded in `docs/12` §1.4: *"Stage 7 retires the unverified rows market by market with
 evidence per market."* The two rows are bybit's 403 geo-block and dukascopy's
@@ -382,3 +386,393 @@ was scoped to Stage 6.2. Four questions, in dependency order:
    `EURUSD` — each citing its run id. It is a larger batch than L-A/L-B/L-E.
 4. **Bybit (L-D) stays open, recorded as blocked on the VM** rather than dropped from sight — confirm
    the row stays `GEO-BLOCKED / SUPPORTED` until D-021's host exists.
+
+---
+
+## 2. Sub-deliverable 7.2 — three levers implemented (L-A, L-B, L-E)
+
+Status: **DELIVERED, AWAITING REVIEW.** Authorised by the owner 2026-11-26 (**D-045**), implemented
+across five commits — `bc4a718` (the three levers), `41aca23` (a citation correction), `354b95c`
+(F-10 and the run count), `f675582` (the run count again, because two more runs landed while it was
+being written), and the commit carrying this section (**F-11**, found by the first run to exercise the
+F-10 fix live). Board: `design/stage7-2-levers-implemented.html`.
+
+This is the first `backend/` production change since Stage 6.2. Scope held to the three levers and
+the two findings they exposed: **6 production files and 5 test files in `backend/` — 790 insertions,
+50 deletions** (`git diff --stat 8d8f6f2 -- backend/`), plus 4 documents and 3 design files. Nothing
+else in `backend/` was touched — no API route, no store module, no migration, no adapter other than
+dukascopy's constants and docstrings.
+
+### 2.0 What the owner authorised, verbatim in effect
+
+Three questions were put (§1.9); the owner answered `Recommend` to all three, which adopts the
+recommendations as written:
+
+| Question | Answer adopted | What it bound this batch to |
+|----------|----------------|------------------------------|
+| Authorise Stage 7.2 code changes? | **L-A + L-B + L-E now**; L-C deferred to 7.3; L-D waits on the D-021 VM | Three levers, no more. The master stays empty (F-3 open) and bybit stays blocked (F-2 open) |
+| The `CONNECTED` ruling | **Redefine it** (option (a)): one comment, **no enum change, no new rung** | The ladder, `CERTIFICATION_ORDER`, `coverage_report` thresholds and the audit vocabulary had to stay byte-identical in meaning. Verified in §2.3 |
+| Bybit's row | **Stays open and visible** as `GEO-BLOCKED / SUPPORTED`, reported every run | No row removed, no status invented. It appears as `5 geo-blocked` in the headline of all twelve runs below |
+
+### 2.1 L-A — the dukascopy row is retired (F-1 → CLOSED for EURUSD)
+
+`LAYOUT_VERIFIED` is now `True` (`dukascopy.py:70`) and every parsed record carries
+`source="DUKASCOPY_BI5"` instead of `DUKASCOPY_BI5_UNVERIFIED`. The evidence is **twelve consecutive
+CI runs on 2026-11-26**, all `conclusion=success`, all fetching the same hour, all returning
+byte-identical results:
+
+| # | Run | Job | Commit | Created (UTC) | `LAYOUT_VERIFIED` | `verify_layout` | Checks |
+|---|-----|-----|--------|---------------|-------------------|-----------------|--------|
+| 1 | `45754638978` | `139690278846` | `a77865e` | 04:21:01 | `False` | `passed=True` | 24/0/5/0 of 29 |
+| 2 | `45756716181` | `139696937355` | `b67ab39` | 04:40:38 | `False` | `passed=True` | 24/0/5/0 of 29 |
+| 3 | `45758610197` | `139703054396` | `fa74748` | 04:59:09 | `False` | `passed=True` | 24/0/5/0 of 29 |
+| 4 | `45759709313` | `139706589069` | `25e314e` | 05:09:21 | `False` | `passed=True` | 24/0/5/0 of 29 |
+| 5 | `45782533635` | `139781214750` | `bc4a718` | 08:21:55 | **`True`** | `passed=True` | 24/0/5/0 of 29 |
+| 6 | `45782540670` | `139781237726` | `bc4a718` | 08:21:58 | **`True`** | `passed=True` | 24/0/5/0 of 29 |
+| 7 | `45784665370` | `139788299846` | `41aca23` | 08:36:56 | **`True`** | `passed=True` | 24/0/5/0 of 29 |
+| 8 | `45784657260` | `139788273040` | `41aca23` | 08:36:53 | **`True`** | `passed=True` | 24/0/5/0 of 29 |
+| 9 | `45786440060` | `139794273725` | `354b95c` | 08:49:32 | **`True`** | `passed=True` | 27/0/5/0 of **32** |
+| 10 | `45786447356` | `139794299438` | `354b95c` | 08:49:35 | **`True`** | `passed=True` | 27/0/5/0 of **32** |
+| 11 | `45787390006` | `139797515877` | `f675582` | 08:56:10 | **`True`** | `passed=True` | 27/0/5/0 of **32** |
+| 12 | `45787399434` | `139797547309` | `f675582` | 08:56:14 | **`True`** | `passed=True` | 27/0/5/0 of **32** |
+
+*(passed / failed / geo-blocked / skipped. Runs 1–4 produced the evidence for the flip; runs 5–12 are
+the flip's falsifiability test — **eight** runs with the flag on, all still green.)*
+
+**Twelve is a floor, not a final count.** Every push that touches `backend/src/nexus/ingestion/**`
+re-triggers this workflow, and `pull_request` events are not suppressed by that path filter, so two
+more runs appear per commit — including the commit that carries this section. The claim is therefore
+stated as a floor that no run has ever broken: `verify_layout` has passed on a real file in every
+venue run since 2026-11-25, and a future failure means `LAYOUT_VERIFIED` goes back to `False` rather
+than the check being relaxed. Reproduce with the loop in §2.6.
+
+Every one of the twelve reported, identically:
+
+```
+dukascopy.url    hour=2026-11-24T12:00:00+00:00  bytes=25761  month_segment=10
+dukascopy.layout passed=True payload_bytes=25761 decompressed_bytes=101480 tick_count=5074 reasons=-
+dukascopy.ticks  count=5074 price_min=1.09502 price_max=1.0964
+                 source=DUKASCOPY_BI5 layout_verified=True      <- runs 5-12; runs 1-4 read _UNVERIFIED/False
+```
+
+101,480 = 5,074 × 20 exactly, so the record size is confirmed against a real file, and
+`reasons=-` means no check failed. Prices 1.09502–1.0964 sit inside EURUSD's real band, which is the
+assertion that exists to catch a wrong point divisor — the silent 100× error.
+
+**The hour is `2026-11-24T12:00Z`, a Tuesday**, which is what `_recent_weekday_hour()` selects. Its
+path is `EURUSD/2026/10/24/12h_ticks.bi5`: the `10` is **November**, because the month segment is
+0-indexed. See §2.4 for how this nearly entered the record wrongly.
+
+**What the flag now claims, and what it does not.** The record *layout* is the same for every pair,
+so `LAYOUT_VERIFIED` legitimately generalises. The *point divisor* is pair-specific, so it does not:
+`LAYOUT_VERIFIED_PAIRS = ("EURUSD",)` (`dukascopy.py:78`) and `summarise()` now emits
+`layout_verified_pairs` and `divisor_unverified_pairs` (`dukascopy.py:428-429`), which names the
+**twelve other pairs** — GBPUSD, AUDUSD, NZDUSD, USDCAD, USDCHF, EURGBP, EURJPY, USDJPY, GBPJPY, AUDJPY, XAUUSD,
+XAGUSD. Pinned by `test_the_verified_scope_is_machine_readable`. Also unchanged: layout verification
+is not price verification (§2.5), and the feed is intermittent (§1.4 F-5, restated over twelve runs in
+the module docstring, which now records **five** distinct probe patterns rather than four).
+
+**Stale statements corrected.** `dukascopy.py` module docstring (rewritten, including the invented
+`{BID|ASK}` URL segment that defect 39 removed), the `LAYOUT_VERIFIED` comment, `source_label()`'s
+docstring, `verify_layout()`'s docstring (kept, with the reason it survives its own flag);
+`test_adapters.py` module docstring, `test_dukascopy_layout_is_declared_unverified` →
+`..._is_declared_verified` (now citing the twelve runs), `test_source_is_labelled_unverified` →
+`..._with_the_layout_state`, the fetch-report and summary assertions;
+`test_live_endpoints.py` module docstring, the layout-gate assertion message, and the reachability
+diagnostic's history paragraph; `docs/06:245-251` and `:297` (superseded in place, history kept).
+
+### 2.2 L-B — the venue vocabulary is enforced at the boundary (F-4 → CLOSED)
+
+`Venue` gained `DUKASCOPY` (`instrument.py:67`) — **10 members** now — so the only free FX source is
+representable and FX coverage can be recorded at all. New `InstrumentDefinitionError`
+(`instrument.py:21`) carrying a new reason code `RejectReason.INSTRUMENT_DEFINITION_INVALID`
+(`errors.py:37`). Validation moved to the boundary, where the bad value arrives:
+
+| Boundary | Refuses | Was |
+|----------|---------|-----|
+| `VenueMapping.__post_init__` (`instrument.py:118`) | a `venue` that is not a `Venue`; a `status` that is not a `VenueStatus` | constructed silently |
+| `CanonicalInstrument.__post_init__` (`instrument.py:162`) | an `asset_class` that is not an `AssetClass`; a `mappings` entry that is not a `VenueMapping` | constructed silently |
+| `InstrumentRegistry.certify` (`registry.py:379`) | a bare-string `venue` or `to_status` | `AttributeError` later |
+
+The F-4 transcript, re-run against the fixed code:
+
+```
+VenueMapping(venue="DUKASCOPY", venue_symbol="EURUSD")
+  -> InstrumentDefinitionError  reason=INSTRUMENT_DEFINITION_INVALID
+     detail: a venue mapping's venue must be a Venue member (D-007 scope); got 'DUKASCOPY' of type str
+VenueMapping(venue="NOT_A_VENUE", ...)      -> INSTRUMENT_DEFINITION_INVALID
+Venue("DUKASCOPY")                          -> Venue.DUKASCOPY   (enum members: 10)
+register(EUR/USD on Venue.DUKASCOPY)        -> INS-EUR-USD, venue DUKASCOPY
+certify("INS-BTC-USDT-USDT", "BYBIT", ...)  -> InstrumentDefinitionError: certification needs a Venue member
+```
+
+Before this batch the same first line constructed happily and then died at the first `m.venue.value`
+inside `register()` — an unclassified `AttributeError`, which through an API would have been a 500
+where every comparable condition is a named refusal. `RegistryChange.venue` stays `str | None`, but
+its docstring now records why that is safe: only a `Venue` member's value can reach it.
+
+**What L-B does not close.** There is no HTTP endpoint that registers or certifies anything
+(`api/app.py` instruments routes are GET-only), so this refusal cannot yet be exercised through the
+API — it protects the domain boundary and every future caller, including Stage 8+'s. And the master
+is still empty at boot (F-3), which is L-C's job in 7.3. Pinned by
+`TestVenueVocabularyIsEnforced` (9 tests), including `test_fx_coverage_is_recordable_end_to_end`,
+which walks EUR/USD on `Venue.DUKASCOPY` from register to `DATA_AVAILABLE` and asserts
+`ready_for_research == ("INS-EUR-USD",)` with `ready_for_paper == ()` and `is_tradeable is False` —
+data still is not permission.
+
+### 2.3 L-E — `CONNECTED` declares its authentication case (F-7 → CLOSED as a definition)
+
+The ruling as adopted: **`CONNECTED` means "the venue answered and its responses normalised", not
+"auth verified"**. Certifying to it now requires an explicit declaration
+(`AUTH_VERIFIED` / `AUTH_NOT_APPLICABLE`, `registry.py:62-64`), which is recorded as
+`RegistryChange.auth_state` (`registry.py:121`) and surfaced in `to_audit_payload()`.
+
+What the ruling deliberately did **not** touch, because the owner's answer forbade it:
+
+| Untouched | Verified by |
+|-----------|-------------|
+| `VenueStatus` — still 6 members, no new rung | `len(VenueStatus) == 6` |
+| `CERTIFICATION_ORDER` — same six rungs, same order | `len(CERTIFICATION_ORDER) == 6`; `test_order_is_the_documented_ladder` |
+| Ladder arithmetic — `certification_rank`, `is_certification_advance`, one-step-at-a-time | `test_cannot_skip_rungs` still passes unchanged |
+| `coverage_report` thresholds — research / paper / live | `test_readiness_follows_certification` unchanged |
+| Audit vocabulary — change kinds `REGISTER/ACTIVATE/DEACTIVATE/CERTIFY/DE_CERTIFY/REMAP` | `auth_state` is an added field, not a new kind; `test_payload_is_bounded` still passes |
+
+Behaviour, measured:
+
+```
+certify(..., CONNECTED, evidence="it answered")                     -> CertificationRejected
+   "certifying CONNECTED requires an explicit auth declaration — AUTH_VERIFIED (a credential was
+    presented and accepted) or AUTH_NOT_APPLICABLE (public, credential-free, and the evidence label
+    must say why). CONNECTED no longer assumes auth was verified"
+certify(..., CONNECTED, auth="PROBABLY_AUTHENTICATED")              -> CertificationRejected: must be one of
+certify(..., CONNECTED, auth=AUTH_NOT_APPLICABLE)                   -> accepted
+   change log: [('CERTIFY','SUPPORTED',None), ('CERTIFY','CONNECTED','AUTH_NOT_APPLICABLE'),
+                ('CERTIFY','DATA_AVAILABLE',None)]
+certify(..., SUPPORTED, auth=AUTH_NOT_APPLICABLE)                   -> CertificationRejected
+   "an auth declaration belongs to the CONNECTED rung only"
+certify(..., CONNECTED) when already CONNECTED                      -> no-op, needs no declaration
+demotion DATA_AVAILABLE -> CONNECTED without a declaration          -> CertificationRejected
+```
+
+A restatement records nothing, so it claims nothing and needs no declaration; a *demotion* to
+`CONNECTED` does record, so it does. The refusal text names both options and why the rung changed,
+because a refusal that does not say how to comply just produces the same mistake again.
+
+**Why this mattered more than a comment.** §1.4 F-7 measured that a credential-free source could not
+occupy `CONNECTED` honestly, and since the ladder does not skip, `DATA_AVAILABLE` was unreachable for
+all four sources this system uses — which made `MINIMUM_STATUS_FOR_ARCHIVE = DATA_AVAILABLE`
+(`ingestion/pipeline.py:50`) unsatisfiable by any free source. `test_a_credential_free_source_can_now_reach_the_archive_gate`
+pins the whole chain: `AUTH_NOT_APPLICABLE` at `CONNECTED`, then `DATA_AVAILABLE`, then
+`certification_rank(status) >= certification_rank(MINIMUM_STATUS_FOR_ARCHIVE)`, with
+`ready_for_paper == ()` and `is_tradeable is False`. **The archive gate is now reachable in
+principle; it is still not reachable in production, because the master is empty (F-3, L-C, 7.3).**
+
+**Ten pre-existing certification sites** across three test modules had to state their case (18 `auth=`
+sites in total once the 8 inside the new tests are counted — both figures recomputed from the files,
+not estimated). Every venue in them is a public feed, so every declaration is `AUTH_NOT_APPLICABLE`,
+threaded through a local `_auth_for(status)` helper (one per module) rather than hardcoded, so a test
+that climbs to a different rung cannot silently mis-declare.
+
+### 2.4 F-10 — a diagnostic verdict contradicted by its own probes (NEW, found and fixed here)
+
+Found by reading run 7's evidence lines rather than its headline. `_diagnose_dukascopy`
+(`test_live_endpoints.py`) tested `baseline.startswith("network-")` **before** testing whether either
+variant had succeeded, so a production-UA network fault published *"the host was never reached, so no
+cause can be distinguished"* even when the same run's probes had reached it. Four runs did that, and
+each is refuted by the line printed next to it:
+
+| Run | production UA | browser UA | other hour | published verdict |
+|-----|---------------|------------|------------|-------------------|
+| `45756716181` | `network-IngestFault` | `network-IngestFault` | **`ok` 25,313 bytes, `lzma=True`** | "never reached" ✗ |
+| `45758610197` | `network-IngestFault` | **`ok` 25,761 bytes, `lzma=True`** | `network-IngestFault` | "never reached" ✗ |
+| `45784665370` | `network-IngestFault` | **`ok` 25,761 bytes, `lzma=True`** | `network-IngestFault` | "never reached" ✗ |
+| `45784657260` | `network-IngestFault` | **`ok` 25,761 bytes** | **`ok` 25,313 bytes** | "never reached" ✗✗ |
+
+The branch now checks both variants first and reports what was measured: the production attempt got
+no reply, the host *did* answer a browser User-Agent on the same hour and/or the production
+User-Agent on a different hour, so this is not an unreachable host, and one attempt per variant
+cannot separate a transient fault from a rejection. "Never reached" survives for the only case where
+it is true — nothing answered. The action text keeps the User-Agent question as an **OWNER DECISION**,
+never an automatic workaround.
+
+Three offline tests pinned the shapes that had occurred and were pinned by nothing:
+`test_a_browser_success_refutes_never_reached`, `test_another_hour_answering_also_refutes_never_reached`,
+`test_never_reached_still_holds_when_nothing_answered`. Runs 9–12 report
+`27 passed / 0 failed / 5 geo-blocked / 0 skipped of 32`, and the three new checks appear by name in
+those annotations. The live-source count is unchanged at 11; the denominator moved, the coverage did
+not.
+
+Runs 9 and 10 both had `production_ua=ok`, so the corrected branch was not exercised live by them.
+**Run 12 did exercise it** — and showed the fix was incomplete.
+
+#### F-11 — an HTTP reply is also proof the host was reached (NEW, found and fixed here)
+
+Run `45787399434` (12 in the table above, at `f675582`) is the first run since the F-10 fix in which
+the production User-Agent faulted. Its three probes recorded:
+
+| Probe | Outcome | What it proves |
+|-------|---------|----------------|
+| production UA, requested hour | `network-IngestFault` | the attempt got no reply |
+| browser UA, same hour | `network-IngestFault` | that attempt got no reply either |
+| production UA, different hour | **`http-503`** | **the host answered** — a status code is a reply |
+
+and it published `verdict=the host was never reached (network-IngestFault), so no cause can be
+distinguished`. That is the same false claim as F-10, from the branch that was supposed to have
+removed it. The fix counted only `ok` outcomes as proof of reach; it did not count an HTTP status.
+The function's own comment already said why that is wrong — *"a host that never answered is a
+different fact from a host that answered 503"* — and the code contradicted its own comment whenever
+the 503 came from a *variant* rather than from the baseline.
+
+**Why it was missed, recorded because it is the second instance of the same shape:** the F-10 tests
+pinned one case per branch that had actually occurred. No combination with a network baseline and an
+`http-*` variant had occurred in the runs available at the time, so nothing pinned it, and the gap
+only appeared when CI produced that combination. This is precisely the failure mode the project has
+already been bitten by twice — a branch-order bug invisible until a rare combination occurs live — so
+the remedy is the one that should have been applied the first time: **enumerate the cross-product.**
+
+`reached` now counts an `http-*` reply from either variant, names the status it measured, and adds
+that the host is reachable but not serving when no variant retrieved a file. Four tests were added:
+`test_an_http_reply_from_a_variant_also_refutes_never_reached` (run 12's exact inputs),
+`test_a_browser_http_reply_refutes_never_reached_too` (the same gap on the other probe),
+`test_a_variant_that_returned_a_file_is_not_described_as_not_serving` (the new clause must not fire
+when a file came back), and
+`test_never_reached_is_claimed_only_when_all_three_probes_got_no_reply`, which iterates all
+**5³ = 125** combinations of five outcomes and asserts that "never reached" appears **if and only if**
+all three probes faulted at the network layer. That last test is the one that makes a third instance
+of this bug class impossible to commit silently.
+
+**The live module now collects 36 checks** (29 → 32 in `354b95c` → 36 here); the offline subset run
+in this batch is 20 (was 13, then 16). Live-source checks are still **11** — the two increases were
+both tests of our own diagnosis logic against fabricated inputs, and neither adds coverage evidence.
+Run 12's verdict is the last time this false claim was published; the corrected branch has now been
+exercised live once, and the combination that exposed F-11 is pinned offline for all 125 cases.
+
+**Two corrections to this batch's own record.**
+
+1. **A path that does not exist was nearly published as the evidence citation.** The verified file
+   was first written up as `EURUSD/2026-10-24/12h_ticks.bi5`. The real path is slash-separated with
+   a 0-indexed month — `hour_url("EURUSD", 2026-11-24T12:00Z)` emits
+   `…/datafeed/EURUSD/2026/10/24/12h_ticks.bi5`; for 24 October it would emit `…/2026/09/24/…`. Two
+   genuine hyphenated errors were committed in `bc4a718`, both in `test_adapters.py`: a docstring, and
+   a fixture URL that would 404 if anything ever fetched it — it passed only because `summarise()`
+   never validates a URL against its hour. Both fixed in `41aca23`, and the fixture now uses the hour
+   the runs really fetched.
+   **Cause, recorded because it will recur:** this environment's output rendering displays `/` as `-`
+   inside date-like sequences, so a *correct* path reads as a wrong one and a wrong one reads as
+   correct. Every path claim in this batch is now either generated by `hour_url()` or verified by
+   character-level comparison, never by eye. `docs/06` still contains four hyphenated paths in
+   historical rows; a correction note there says so and gives the generated forms.
+2. **`41aca23`'s commit message overclaimed.** It said the citation committed in `bc4a718` was
+   hyphenated; in `dukascopy.py` the path was already slash-correct. The error was real but narrower
+   than the message said. Corrected here rather than by rewriting a pushed commit.
+
+### 2.5 F-8 measured across twelve runs — quantified, not fixed
+
+F-8 said nothing asserts that two endpoints from one venue agree, and that a fix needs a stated
+tolerance plus a recorded timestamp gap. The twelve runs' recorded evidence now sizes the problem.
+Comparing `okx.quotes` (ticker) against `okx.book` (order book) in the same run:
+
+Convention, stated because it changes the third decimal: `gap_bps = |mid_quotes − mid_book| /
+mid_quotes × 10⁴`. Dividing by the book mid instead gives 2.224 rather than 2.223 for run 6 and the
+same mean — so no conclusion below depends on the choice, but the number quoted must say which it used.
+
+| # | quote bid/ask | book bid/ask | mid gap | # | quote bid/ask | book bid/ask | mid gap |
+|---|---------------|--------------|---------|---|---------------|--------------|---------|
+| 1 | 60960.3/60960.4 | 60960.3/60960.4 | 0.000 bps | 7 | 60692.3/60692.4 | 60692.3/60692.4 | 0.000 bps |
+| 2 | 61063.2/61063.3 | 61063.2/61063.3 | 0.000 bps | 8 | 60692.3/60692.4 | 60692.3/60692.4 | 0.000 bps |
+| 3 | 60974.6/60974.7 | 60965.8/60965.9 | **1.443 bps** | 9 | 60989.2/60989.3 | 60995.3/60995.4 | **1.000 bps** |
+| 4 | 60925.8/60925.9 | 60925.8/60925.9 | 0.000 bps | 10 | 60990.0/60990.1 | 60988.6/60988.7 | 0.230 bps |
+| 5 | 60721.9/60722.0 | 60726.7/60726.8 | **0.790 bps** | 11 | 60912.6/60912.7 | 60912.6/60912.7 | 0.000 bps |
+| 6 | 60726.7/60726.8 | 60713.2/60713.3 | **2.223 bps** | 12 | 60900.0/60900.1 | 60897.0/60897.1 | **0.493 bps** |
+
+Exactly zero in **6 of 12**; min 0.000, max **2.223**, mean **0.515 bps**; above the 0.016 bps quoted
+spread in **6 of 12**. (Over the first ten runs the same computation gave max 2.223 and mean 0.569;
+adding runs 11 and 12 moved the mean, not the max.) Two facts make a tolerance unchoosable today: the
+`okx.book` evidence line records **no timestamp** (verified across all twelve), so a gap cannot be
+attributed to elapsed time or to disagreement; and the two endpoints are fetched sequentially, not
+atomically, so some gap is expected. Choosing a number now would be inventing one — F-8 stays open,
+with its magnitude measured.
+
+**A false finding this measurement nearly produced, recorded so nobody repeats it.** A natural
+cross-check is "every trade price lies inside the current book". It fails in **12 of 12 runs** — and
+it is not a defect. Trades are historical prints; the book has moved since. Asserting containment
+would have manufactured a finding out of normal market behaviour, which is the same error class as
+F-9 (an invariant that is not one) in the opposite direction.
+
+### 2.6 Gate evidence
+
+| Gate | Result | Command |
+|------|--------|---------|
+| Suite | **997 passed, 2 skipped, 0 failed** (was 976 + 2) | `pytest` with CI's env (`NEXUS_AUDIT_BACKEND=memory NEXUS_ENVIRONMENT=DISABLED DO_NOT_TRACK=1`) |
+| New tests | **+21 to the gate total**: 20 in `test_instrument_registry.py` (`TestVenueVocabularyIsEnforced` 9, `TestConnectedDeclaresItsAuthCase` 11), 1 in `test_adapters.py`. A further **7 offline checks** live in `test_live_endpoints.py` — 3 for F-10, 4 for F-11 — which the default gate skips as a module, so they move the collection count (29 → 36) and not 997 |
+| Live module offline subset | **20 passed** (was 13, then 16) | `NEXUS_LIVE_VERIFY=1 pytest tests/test_live_endpoints.py -k "DiagnosisLogic or PatienceBehaviour"` |
+| Live module collected | **36** (was 29, then 32); live-source checks still **11** | `--collect-only -q` |
+| Lint / format | clean | `ruff check src tests`, `ruff format --check src tests` (80 files) |
+| Types | **Success: no issues found in 56 source files** | `mypy` (strict, `src/nexus`) |
+| Repo hygiene | **80 passed** | `pytest tests/test_repo_hygiene.py` (run after `git add -A`) |
+| CI | all jobs green on `bc4a718`, `41aca23`, `354b95c` and `f675582` — 5 `ci` jobs × 2 triggers + 1 venue job × 2 triggers per commit; the commit carrying this section is checked the same way before the owner is asked to review it | `gh api …/actions/runs?head_sha=…` |
+
+Every run id and job id above is re-readable with the same three calls, because CI job logs and
+artifacts are not retrievable from this environment but check-run annotations are:
+
+```bash
+for r in 45754638978 45756716181 45758610197 45759709313 45782533635 45782540670 \
+         45784665370 45784657260 45786440060 45786447356 45787390006 45787399434; do
+  gh api "repos/:owner/:repo/actions/runs/$r" --jq '.head_sha[0:7] + " " + .created_at + " " + .conclusion'
+  j=$(gh api "repos/:owner/:repo/actions/runs/$r/jobs" --jq '.jobs[0].id')
+  gh api "repos/:owner/:repo/check-runs/$j/annotations" --jq '.[].message' \
+    | grep -E 'dukascopy\.(url|layout|ticks|probe)|geo-blocked'
+done
+```
+
+### 2.7 What 7.2 did not close
+
+| Finding | State after 7.2 | Why |
+|---------|-----------------|-----|
+| **F-2** bybit geo-block | **OPEN** — `5 geo-blocked` in the headline of all twelve runs; the 403-from-CloudFront characterisation on public unauthenticated endpoints is run `45724918466` (`docs/06:314`), not these twelve | L-D needs the D-021 deployment VM; the `runner` dispatch input already exists |
+| **F-3** empty master | **OPEN** — `/v1/instruments/coverage` still returns `total=0 active=0` at boot | L-C deferred to 7.3 by the owner's answer. L-E removed the *definition* blocker; the *seed* is still missing |
+| **F-5** intermittent feed | **OPEN, and better evidenced** — twelve runs, **five** probe patterns, production UA worked outright in seven | No cause established; a user-agent conclusion would still be adopted on noise |
+| **F-6** 3 of 14 asset classes | **OPEN** — `DUKASCOPY` makes FX_SPOT recordable, not covered | The other ten must render `UNSUPPORTED` per D-019 |
+| **F-8** cross-endpoint agreement | **OPEN, now quantified** (§2.5) | Needs a stated bps tolerance + a recorded timestamp gap; both are design choices, not measurements |
+| **F-9** "both sides present" | **Documentation corrected** (`docs/06:234`, `:300` now say the run *happened* to contain both sides and that `_assert_ticks` accepts one) — **the owner ruling is still outstanding**: should a one-sided trade list ever fail? Runs 1–3 and 5–10 returned both sides; run 4 returned 50 buys and passed, correctly |
+| **F-10** self-refuting verdict | **CLOSED** (§2.4) | Found, fixed and pinned in this batch |
+| **F-11** the fix refuted "never reached" only on success | **CLOSED** (§2.4) | Found in run 12, the first run to exercise the F-10 branch live; an `http-503` reply is also proof the host was reached. Pinned by all 125 combinations of the probe cross-product |
+
+### 2.8 Limitations of this batch
+
+1. **EURUSD only.** Twelve of thirteen point divisors have never met a real file, and a wrong divisor
+   is a silent 100× error. `LAYOUT_VERIFIED_PAIRS` exists so no report can imply otherwise.
+2. **One hour.** All twelve runs fetched the same hour (`2026-11-24T12:00Z`, chosen by
+   `_recent_weekday_hour()`), so twelve passes are twelve readings of *one file*, not twelve samples
+   of the feed's shape. A weekend hour, a holiday, a month boundary and a JPY pair are all untested
+   against real data.
+3. **The F-11 fix is offline-evidenced only.** Run 12 exercised the F-10 branch live and exposed
+   F-11; no run has yet reproduced a network baseline beside an `http-*` reply against the corrected
+   branch. Its evidence is the 125-combination cross-product test, not a live run.
+4. **No production caller.** `certify(..., auth=...)` and the new refusals are exercised by tests, not
+   by any running code path: there is no write endpoint and the master is empty. Their first real
+   caller arrives with L-C in 7.3.
+5. **Nothing was reconciled against a second source.** Layout verification is not price verification.
+6. **Bybit's five checks remain unrun anywhere.** Its adapter is still exercised against public
+   documentation only; `SUPPORTED` is its honest rank and stays its recorded status.
+
+### 2.9 Decision requested
+
+Stage 7.2 delivered the three authorised levers. Three questions before 7.3:
+
+1. **Is Stage 7.1 approved?** Its row in `docs/07` still reads `AWAITING REVIEW / PENDING` with no
+   decision id: the owner authorised 7.2 *on the strength of* the 7.1 research but never ruled on
+   7.1 as a deliverable. Recording **D-046** for it would close the gap; leaving it open is also a
+   legitimate answer.
+2. **Authorise Stage 7.3 = L-C, seed the master?** The batch that makes coverage non-zero: register
+   only instruments whose evidence exists — okx `BTC-USDT-SWAP` (twelve runs), binance vision
+   `BTCUSDT` 1m (twelve runs, 1,440 bars, 0 rejected), dukascopy `EURUSD` (twelve runs, layout
+   verified) —
+   each at the rank its evidence supports and no higher, each citing its run ids, with
+   `AUTH_NOT_APPLICABLE` at `CONNECTED`. It decides what every screen shows, so it wants its own
+   review. Cost $0, no new dependency, offline-testable. **Recommendation: yes, as 7.3.**
+3. **The F-9 ruling.** Should a trade list containing only one side ever *fail* a live check? The
+   documentation now says what the check does; only the owner can say what it should do.
+   **Recommendation: no — record the side distribution as evidence and never fail on it**, because a
+   one-sided window is normal in a quiet market, and `_assert_book` already fails a one-sided *book*,
+   which is the case that actually indicates a broken feed.

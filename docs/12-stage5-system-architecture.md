@@ -5,6 +5,7 @@ architecture (this document §1, board `design/stage5-1-target-architecture.html
 5.2 pipelines, deployment topology, DR (this document §2, board
 `design/stage5-2-pipelines-topology-dr.html`). Design only: Stage 5 wrote no production code.
 Started after Stage 4 stage-level approval (D-039); Stage 6 followed and is now closed (D-044).
+Stage 7 is in progress and works from §1.4 below, whose wording it corrected on 2026-11-26.
 *(Header corrected 2026-11-26: it read `IN PROGRESS` after the approval was recorded.)*
 
 Binding inputs: docs/04–06 (Phase 2–4 evidence), backend/src/nexus (14 packages, 49 modules),
@@ -59,13 +60,24 @@ holds an execution credential — **new law**.
 
 ### 1.4 Honesty statuses (§26)
 
-Implemented+tested: the twelve Phase 2–4 packages above. Connected+live-verified: okx (twice),
-binance vision (end-to-end, µs-timestamp defect found and fixed). Connected-but-untested:
-bybit v5 from hosted runners (403 geo-block; code exercised against public docs only).
-Connected, layout-unverified: dukascopy (real 25,761-byte bi5 downloaded; LAYOUT_VERIFIED=False;
-503 throttling characterised). Planned: NATS production bus; intelligence/verification/lab/
-learning/notify/ops/portfolio contexts — nothing simulated to look built. Stage 7 retires the
-unverified rows market by market with evidence per market.
+Implemented+tested: the twelve Phase 2–4 packages above. **Connected and verified against live
+data**: okx (five public endpoints) and binance vision (end-to-end, µs-timestamp defect found and
+fixed). Their rank is `DATA_AVAILABLE`, **not** `LIVE_VERIFIED` — in this codebase that rank means a
+live pilot with reconciliation proven, which needs credentials and orders, and neither venue has it.
+**Connected, layout verified for EURUSD**: dukascopy — `LAYOUT_VERIFIED=True` since Stage 7.2 on
+twelve live runs, the other 12 point divisors still provisional and named by
+`LAYOUT_VERIFIED_PAIRS`; 503 throttling characterised, its cause not established.
+**Connected-but-untested**: bybit v5 from hosted runners (403 geo-block; code exercised against
+public docs only) — still open, still reported every run, and it needs the D-021 VM as a self-hosted
+runner. Planned: NATS production bus; intelligence/verification/lab/
+learning/notify/ops/portfolio contexts — nothing simulated to look built.
+
+Stage 7's mandate was *"Stage 7 retires the unverified rows market by market with evidence per
+market."* As of Stage 7.2 the dukascopy row **is** retired for EURUSD and the bybit row **is not**,
+and cannot be from a hosted runner at any cost. The evidence, the two findings this batch found in
+its own diagnostic (F-10, F-11) and the five that remain open are in `docs/14` §2. The wording above
+was corrected there too: this document described okx as "live-verified", which in this codebase
+means something okx does not have.
 
 ---
 
