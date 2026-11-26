@@ -1000,9 +1000,11 @@ F-13 correction to that evidence line was **offline-evidenced only** — the sam
 F-11 — while `verify_layout` itself was live-evidenced in both runs.
 
 **Runs 24, 25 and 26 each had no skips at all**, so `parsed_ticks` ran in all three and
-`layout_flag=True` became **live-evidenced**. Run 27 then had one skip — but not that one: both
-dukascopy checks ran and emitted evidence, so `layout_flag=True` is live-evidenced in **four
-consecutive runs** (§4.1). The limitation is closed. It is left
+`layout_flag=True` became **live-evidenced**; run 27 skipped a different check entirely, so the key is
+live-evidenced in **four consecutive runs, 24–27** (§4.1). The limitation is discharged. **Run 28 then
+skipped `parsed_ticks` again** and the key is absent from it — which does not reopen the limitation but
+proves the point it was written for: *which* check skips moves between runs, so no universal claim over
+runs is safe and the qualifier has to stay. It is left
 recorded here rather than deleted, because the mechanism that produced it is still live — F-5's
 intermittent feed can skip that check on any run, and a limitation that was real once is worth keeping
 visible next to the runs that discharged it.
@@ -1200,6 +1202,7 @@ denominator.
 | 25 | `45829842623` | **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** | **0.000** (mids identical, 60804.15) | 0.739 | 0.294 |
 | 26 | `45833872241` | **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** | **0.000** (mids identical, 60832.85) | **0.238** | **0.298** |
 | 27 | `45836112636` | **43 passed / 0 failed / 5 geo-blocked / 1 skipped of 49** | **0.000** (mids identical, 60867.95) | **1.089** | **0.298** |
+| 28 | `45838330420` | **43 passed / 0 failed / 5 geo-blocked / 1 skipped of 49** | **0.000** (mids identical, 60777.95) | 0.937 | 0.358 |
 
 Run 26 is `ab841c7`'s only venue run: that commit changed documents and no test, so the `push` event
 ran `ci` alone and only the `pull_request` event triggered `venue-verification`.
@@ -1216,6 +1219,11 @@ reframing available: shrink the interval and the "disagreement" disappears, whic
 market-moving explanation predicts and what an endpoint-disagreement explanation does not. Four
 samples still cannot bound a rate, which is why the accumulation continues rather than a tolerance
 being chosen.
+
+Run 28 (`45838330420`, the previous commit's own CI) adds a fifth: **gap 0.000 in five consecutive
+runs**, now across four different prices, with `dt_observed_s=0.937` against `dt_wall_s=0.358` — a 2.6×
+skew, in the same direction as run 25 and the opposite of run 26. Five zeros at intervals from 0.238 s
+to 1.089 s of venue time is not a tolerance waiting to be sized; it is the absence of a phenomenon.
 
 **Run 27 is the sharpest of the four, and it is the one that should be read carefully.** Its venue
 timestamps were **1.089 s** apart while the two responses arrived **0.298 s** apart — a 3.7× skew —
@@ -1235,6 +1243,27 @@ run 27 as well as 24, 25 and 26. The skip is therefore a *different* check from 
 skipped, which is F-5 recurring on a third occasion and the reason F-13's qualifier is permanent
 rather than temporary. Naming a skip from a truncated annotation is not something this document will
 guess at.
+
+**Run 28 then named its own skip, and it is the third different one.** Its annotation carries
+`dukascopy.layout passed=True` but **no** `dukascopy.ticks` and **no** `layout_flag=` key, while every
+binance-vision key is present — so the check that skipped was
+`parsed_ticks_are_in_the_right_price_band`, the very check run 27 had executed. Taken with §2.1's
+history the sequence is:
+
+| Run | Which check skipped |
+|---|---|
+| 20 | `verify_layout_passes_against_a_real_file` — while `dukascopy.ticks … layout_verified=True` was still published from the module constant. **This is what F-13 was** |
+| 21, 22, 23 | `parsed_ticks_are_in_the_right_price_band` |
+| 24, 25, 26 | **nothing** — 0 skipped of 49 |
+| 27 | one check, unnameable from the truncated annotation; provably *not* `parsed_ticks` and *not* `verify_layout`, since both emitted evidence |
+| 28 | `parsed_ticks_are_in_the_right_price_band` again |
+
+**Which check skips has no pattern at all.** That is the whole of F-5's danger and the whole of F-13's
+lesson: a claim of the form "X has passed in every run since <date>" is falsified not only by a failure
+but by a *skip*, and the skip moves between checks from run to run. So `layout_flag=True` is
+live-evidenced in **four consecutive runs, 24–27**, and then not in 28 — which does not weaken the
+correction, it demonstrates why the correction had to be a qualifier rather than a count. No claim in
+this repository is stated as a universal over runs any more.
 
 Run 26 also sharpens F-14. Its two interval readings are `dt_observed_s=0.238` against
 `dt_wall_s=0.298` — the venue-stamped interval is now *shorter* than the wall clock, where run 25 had
