@@ -36,15 +36,16 @@ runs this has no secrets in its environment.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import pytest
 
@@ -90,6 +91,9 @@ DUKASCOPY_PAIR = "EURUSD"
 #: Plausible band for EURUSD. A parsed price outside it means the point divisor is wrong, which is
 #: the catastrophic-and-silent failure the parser refuses to guess about: 100000 vs 1000 is 100x.
 EURUSD_BAND = (Decimal("0.5"), Decimal("2.5"))
+
+
+T = TypeVar("T")
 
 
 # --------------------------------------------------------------------- unavailable vs defect
@@ -145,6 +149,60 @@ def _live(source: str) -> Iterator[None]:
         if verdict == "unavailable":
             pytest.skip(f"{source} did not answer, so nothing is verified either way: {exc!r}")
         raise
+
+
+async def _with_patience(
+    operation: Callable[[], Awaitable[T]],
+    *,
+    label: str,
+    attempts: int = 6,
+    delay_seconds: float = 8.0,
+    network_attempts: int = 2,
+    network_delay_seconds: float = 2.0,
+) -> T:
+    """Retry a source that answers intermittently, with the attempts spaced apart.
+
+    Dukascopy's datafeed throttles in bursts: in one run the *same* URL returned 25,761 bytes twice
+    and HTTP 503 twice, and a probe with no retries at all succeeded where the shared transport's
+    four retries failed. So 503 here is not "the host is down" and not "the host refuses us" — the
+    diagnostic settled that, finding the production User-Agent works — it is "ask again, more slowly".
+
+    Retrying immediately makes a throttle worse, which is why the shared transport's own backoff did
+    not help: its attempts land close together. Spacing them out is the thing that works.
+
+    Two kinds of failure get two different budgets, because waiting means different things for each.
+    An HTTP 429 or 5xx is a throttle and genuinely clears with patience, so it gets the full budget.
+    A network-level failure — DNS, connect refusal, a TLS-level block — is not usually going to clear
+    in eight seconds, and giving it the full budget turned a run that verified nothing into four
+    minutes of sleeping. It gets a short budget, enough for a transient timeout to recover.
+
+    Only `unavailable` is retried at all. A 404 is a defect in our URL and must surface at once
+    rather than be retried into a skip, and a geo-block will not change however long we wait.
+    """
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return await operation()
+        except IngestFault as exc:
+            verdict = _classify(exc)
+            if verdict == "defect":
+                raise
+            if verdict == "geo-blocked":
+                pytest.skip(
+                    f"GEO-BLOCKED {label}: the runner's IP is restricted, so this endpoint answered "
+                    f"403 at the edge and nothing about it was verified: {exc!r}"
+                )
+            throttled = "returned HTTP" in str(exc)
+            budget = attempts if throttled else network_attempts
+            delay = delay_seconds if throttled else network_delay_seconds
+            if attempt >= budget:
+                pytest.skip(
+                    f"{label} answered only with {'throttle' if throttled else 'network'} errors "
+                    f"across {attempt} attempts spaced {delay:.0f}s apart, so nothing is verified "
+                    f"either way: {exc!r}"
+                )
+            await asyncio.sleep(delay)
 
 
 def _evidence(label: str, **fields: Any) -> None:
@@ -511,8 +569,7 @@ class TestDukascopyLiveLayout:
         hour = _recent_weekday_hour()
         url = hour_url(DUKASCOPY_PAIR, hour)
         assert url.startswith(DUKASCOPY_BASE), f"unexpected base in {url}"
-        with _live("dukascopy"):
-            payload = await transport.get_bytes(url)
+        payload = await _with_patience(lambda: transport.get_bytes(url), label="dukascopy")
         assert payload, f"{url} came back empty"
         _evidence("dukascopy.url", hour=hour.isoformat(), bytes=len(payload), month_segment=url.split("/")[6])
 
@@ -520,8 +577,7 @@ class TestDukascopyLiveLayout:
         """This is the evidence ``LAYOUT_VERIFIED`` requires: a real hour file, structurally sound."""
         hour = _recent_weekday_hour()
         url = hour_url(DUKASCOPY_PAIR, hour)
-        with _live("dukascopy"):
-            payload = await transport.get_bytes(url)
+        payload = await _with_patience(lambda: transport.get_bytes(url), label="dukascopy")
 
         result = verify_layout(payload)
         _evidence(
@@ -543,8 +599,7 @@ class TestDukascopyLiveLayout:
         """The divisor check: 100000 for EURUSD. Wrong by 100x is the catastrophic silent failure."""
         hour = _recent_weekday_hour()
         source = DukascopyHistorical(transport=transport)
-        with _live("dukascopy"):
-            parsed = await source.fetch_hour(DUKASCOPY_PAIR, hour)
+        parsed = await _with_patience(lambda: source.fetch_hour(DUKASCOPY_PAIR, hour), label="dukascopy")
 
         low, high = EURUSD_BAND
         assert parsed.ticks, f"no ticks parsed from {parsed.url}"
@@ -761,3 +816,84 @@ class TestDukascopyDiagnosisLogic:
         assert "User-Agent" not in verdict, (
             "nothing succeeded with the browser User-Agent, so blaming it is unsupported"
         )
+
+
+class TestPatienceBehaviour:
+    """The retry policy, pinned without network access.
+
+    It has three branches and none of them is reachable from a sandbox with no egress, so without
+    this they are unexecuted code deciding what counts as worth retrying.
+    """
+
+    async def test_a_throttle_error_is_retried_until_it_clears(self) -> None:
+        calls = {"n": 0}
+
+        async def flaky() -> str:
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise IngestFault("DATA_UNAVAILABLE: https://x/y.bi5 returned HTTP 503", retryable=True)
+            return "payload"
+
+        result = await _with_patience(flaky, label="dukascopy", attempts=5, delay_seconds=0.0)
+        assert result == "payload"
+        assert calls["n"] == 3, "it should stop as soon as the source answers"
+
+    async def test_a_404_is_not_retried_because_it_is_our_defect(self) -> None:
+        """Retrying a wrong URL into a skip would hide exactly the finding this module exists for."""
+        calls = {"n": 0}
+
+        async def wrong_url() -> str:
+            calls["n"] += 1
+            raise IngestFault("DATA_UNAVAILABLE: https://x/BID/y.bi5 returned HTTP 404", retryable=False)
+
+        with pytest.raises(IngestFault, match="404"):
+            await _with_patience(wrong_url, label="dukascopy", attempts=5, delay_seconds=0.0)
+        assert calls["n"] == 1, "a defect must surface on the first attempt, not be retried away"
+
+    async def test_a_geo_block_is_not_retried_because_waiting_will_not_help(self) -> None:
+        calls = {"n": 0}
+
+        async def blocked() -> str:
+            calls["n"] += 1
+            raise IngestFault("DATA_UNAVAILABLE: https://x/y returned HTTP 403", retryable=False)
+
+        with pytest.raises(pytest.skip.Exception, match="GEO-BLOCKED"):
+            await _with_patience(blocked, label="bybit", attempts=5, delay_seconds=0.0)
+        assert calls["n"] == 1
+
+    async def test_exhausted_patience_skips_and_says_how_hard_it_tried(self) -> None:
+        calls = {"n": 0}
+
+        async def always_throttled() -> str:
+            calls["n"] += 1
+            raise IngestFault("DATA_UNAVAILABLE: https://x/y.bi5 returned HTTP 503", retryable=True)
+
+        with pytest.raises(pytest.skip.Exception, match="6 attempts spaced") as info:
+            await _with_patience(always_throttled, label="dukascopy", attempts=6, delay_seconds=0.0)
+        assert calls["n"] == 6
+        assert "nothing is verified either way" in str(info.value), (
+            "an exhausted retry must not read as a pass"
+        )
+
+    async def test_a_network_failure_is_also_worth_waiting_out(self) -> None:
+        calls = {"n": 0}
+
+        async def timeouts() -> str:
+            calls["n"] += 1
+            if calls["n"] < 2:
+                raise IngestFault("DATA_UNAVAILABLE: https://x/y.bi5 failed: ConnectTimeout('')")
+            return "payload"
+
+        assert await _with_patience(timeouts, label="dukascopy", attempts=3, delay_seconds=0.0) == "payload"
+
+    async def test_an_assertion_failure_is_never_retried(self) -> None:
+        """A failed invariant is a finding, not a flake, and must not be softened by retrying."""
+        calls = {"n": 0}
+
+        async def bad_invariant() -> str:
+            calls["n"] += 1
+            raise AssertionError("crossed book")
+
+        with pytest.raises(AssertionError, match="crossed book"):
+            await _with_patience(bad_invariant, label="dukascopy", attempts=5, delay_seconds=0.0)
+        assert calls["n"] == 1
