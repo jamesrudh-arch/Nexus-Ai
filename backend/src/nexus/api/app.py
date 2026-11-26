@@ -40,6 +40,7 @@ from nexus.core.errors import NexusError, RejectReason
 from nexus.core.ids import iso_utc, utc_now
 from nexus.execution.halt import HaltManager, HaltScope
 from nexus.instruments.registry import InstrumentRegistry, UnknownInstrument, coverage_report
+from nexus.instruments.seed import seed_master
 from nexus.instruments.sessions import MarketCalendar
 from nexus.observability.metrics import (
     observe_api_request,
@@ -101,12 +102,20 @@ def create_app(
     calendar: MarketCalendar | None = None,
     archive: Any = None,
     store: Any = None,
+    seed: bool = True,
 ) -> FastAPI:
     """Build the API with explicit dependencies (testable, no global state required).
 
-    ``registry`` and ``archive`` are optional: with no registry the Phase 3 routes report an
-    empty master rather than failing, and with no archive they report that nothing has been
-    stored yet. Both answers are honest; neither invents data.
+    ``archive`` is optional: with no archive the Phase 3 routes report that nothing has been
+    stored yet rather than an empty dataset, because "no archive" and "archive holds nothing"
+    are different facts. That answer is honest; it invents nothing.
+
+    ``registry`` is optional too, and since Stage 7.3 (lever L-C) an absent registry is **seeded**
+    rather than left empty: :func:`nexus.instruments.seed.seed_master` writes down the instruments
+    whose live evidence exists, each at the rank that evidence supports and no higher, so the
+    coverage routes report what has actually been proven instead of ``total=0`` (finding F-3).
+    Pass ``seed=False`` to boot an empty master. An **injected** registry is never seeded — what a
+    caller built is what the app serves, so a test fixture stays a test fixture.
     """
     cfg = settings or get_settings()
     audit_log = audit or AuditLog(store=_default_store(cfg))
@@ -132,7 +141,14 @@ def create_app(
             affected_accounts=restored.affected_accounts,
             affected_instruments=restored.affected_instruments,
         )
-    instrument_registry = registry or InstrumentRegistry()
+    if registry is None:
+        instrument_registry = InstrumentRegistry()
+        if seed:
+            # Idempotent, offline and recorded: every rung it claims carries the evidence label
+            # naming the runs that proved it, and nothing seeded here becomes active (D-002).
+            seed_master(instrument_registry)
+    else:
+        instrument_registry = registry
     market_calendar = calendar or MarketCalendar()
 
     app = FastAPI(

@@ -154,7 +154,14 @@ class RegistrySnapshot:
 
 
 def _mapping_to_dict(mapping: VenueMapping) -> dict[str, Any]:
-    """Serialise a venue mapping. Decimal fields become strings so no precision is lost."""
+    """Serialise a venue mapping. Decimal fields become strings so no precision is lost.
+
+    ``notes`` is exposed because a rank on its own can be read as coverage. Stage 7.3 seeds bybit at
+    ``SUPPORTED`` — true, an adapter exists — and the reason it goes no higher (403 geo-blocked from
+    every hosted runner, finding F-2, needs the D-021 VM) lives in that note. The owner's ruling was
+    that the row stays open *and visible*; a status with no visible reason is visible only in the
+    sense that it is not hidden, which is not the same thing.
+    """
     return {
         "venue": mapping.venue.value,
         "venue_symbol": mapping.venue_symbol,
@@ -169,6 +176,7 @@ def _mapping_to_dict(mapping: VenueMapping) -> dict[str, Any]:
         "settlement_currency": mapping.settlement_currency,
         "trading_hours": mapping.trading_hours,
         "is_tradeable": mapping.is_tradeable,
+        "notes": mapping.notes,
     }
 
 
@@ -186,6 +194,7 @@ def _instrument_to_dict(instrument: CanonicalInstrument) -> dict[str, Any]:
         "option_type": instrument.option_type,
         "active": instrument.active,
         "data_status": instrument.data_status,
+        "notes": instrument.notes,
         "mappings": [_mapping_to_dict(m) for m in instrument.mappings],
         "tradeable_venues": [v.value for v in instrument.tradeable_venues()],
         "highest_status": max(

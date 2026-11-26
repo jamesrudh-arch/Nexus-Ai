@@ -54,8 +54,11 @@ import pytest
 
 from nexus.data.records import (
     BackoffPolicy,
+    BookLevel,
+    BookRecord,
     HttpTransport,
     IngestFault,
+    TickRecord,
     TokenBucket,
 )
 from nexus.ingestion.binance_vision import SOURCE as BINANCE_VISION_SOURCE
@@ -371,12 +374,23 @@ def _assert_ticks(ticks: tuple[Any, ...], *, source: str, label: str) -> None:
         if tick.venue_timestamp is not None:
             _assert_aware(tick.venue_timestamp, f"{label}: venue_timestamp")
     prices = [tick.price for tick in ticks]
+    sides = [str(tick.side) for tick in ticks]
+    # P-7, the owner's ruling at Stage 7.3: one-sidedness in a trade list is **never** a failure.
+    # A 50-trade window in a quiet minute can legitimately be all buys — run 45759709313 was — and
+    # failing on it would manufacture an outage out of normal market behaviour. The distribution is
+    # therefore recorded as evidence in counts, not merely as the set of sides that happened to
+    # appear, so a future run can be compared instead of re-argued. The asymmetry with
+    # `_assert_book` below is deliberate: a one-sided *book* does indicate a broken feed, because a
+    # book with no bids or no asks cannot be crossed, quoted or traded against.
     _evidence(
         f"{label}.trades",
         count=len(ticks),
         price_min=min(prices),
         price_max=max(prices),
-        sides=sorted({str(tick.side) for tick in ticks}),
+        sides=sorted(set(sides)),
+        buy=sides.count("BUY"),
+        sell=sides.count("SELL"),
+        unspecified=sides.count("None"),
         newest=max(tick.observed_at for tick in ticks).isoformat(),
     )
 
@@ -402,6 +416,12 @@ def _assert_book(book: Any, *, source: str, label: str) -> None:
         best_ask=ask_prices[0],
         spread_bps=round((ask_prices[0] - bid_prices[0]) / bid_prices[0] * 10_000, 3),
         entitlement=book.entitlement,
+        # P-8: the timestamp was the missing half of that finding. `.quotes` has always recorded
+        # `observed_at` and this line did not, so a gap between the two mids could not be attributed
+        # to elapsed time rather than to disagreement — and a tolerance chosen without that is
+        # invented. Recording it makes the gap measurable from one run's annotation. It does **not**
+        # assert agreement: the tolerance remains the owner's call, and nothing here fails on a gap.
+        observed_at=book.observed_at.isoformat(),
     )
 
 
@@ -1023,3 +1043,87 @@ class TestPatienceBehaviour:
         with pytest.raises(AssertionError, match="crossed book"):
             await _with_patience(bad_invariant, label="dukascopy", attempts=5, delay_seconds=0.0)
         assert calls["n"] == 1
+
+
+# ------------------------------------------------------------------ P-7 / P-8: what the harness asserts
+class TestTradeSideRuling:
+    """P-7, the owner's ruling at Stage 7.3: a one-sided trade list is **evidence, never a failure**.
+
+    Offline, like the diagnosis-logic class above — these pin a decision about what the harness
+    asserts, and a decision that needed the network to verify would not be a decision. The history
+    is F-9: ``docs/06`` recorded okx's first live verification as "50 trades with both sides
+    present", which read as an invariant but never was one, and run ``45759709313`` returned 50 buys
+    and passed. The documentation was corrected in Stage 7.2; this pins the ruling itself.
+    """
+
+    NOW = datetime(2026, 11, 26, 12, 0, tzinfo=UTC)
+
+    def _tick(self, side: str | None, price: str = "60900.0") -> TickRecord:
+        return TickRecord(
+            instrument_id="INS-BTC-USDT-USDT",
+            venue="OKX",
+            venue_symbol="BTC-USDT-SWAP",
+            price=Decimal(price),
+            quantity=Decimal("0.01"),
+            observed_at=self.NOW,
+            side=side,
+            source=OKX_SOURCE,
+        )
+
+    def _book(self, *, bids: int = 3, asks: int = 3) -> BookRecord:
+        return BookRecord(
+            instrument_id="INS-BTC-USDT-USDT",
+            venue="OKX",
+            venue_symbol="BTC-USDT-SWAP",
+            bids=tuple(BookLevel(Decimal("60900.0") - Decimal(i), Decimal("0.5")) for i in range(bids)),
+            asks=tuple(BookLevel(Decimal("60900.1") + Decimal(i), Decimal("0.5")) for i in range(asks)),
+            observed_at=self.NOW,
+            entitlement="LIVE",
+            source=OKX_SOURCE,
+        )
+
+    def test_fifty_buys_and_no_sells_passes(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Run 45759709313's real shape, reproduced offline: a quiet minute can be all buys."""
+        _assert_ticks(tuple(self._tick("BUY") for _ in range(50)), source=OKX_SOURCE, label="okx")
+        line = next(x for x in capsys.readouterr().out.splitlines() if ".trades" in x)
+        assert "count=50" in line
+        assert "buy=50" in line and "sell=0" in line
+        assert "sides=['BUY']" in line
+
+    def test_the_distribution_is_recorded_as_counts_and_not_only_as_a_set(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Why counts and not just the set of sides: ``sides=['BUY','SELL']`` is identical for a
+        49/1 minute and a 25/25 minute, so the set alone cannot be compared between runs."""
+        ticks = [self._tick("BUY")] * 37 + [self._tick("SELL")] * 13
+        _assert_ticks(tuple(ticks), source=OKX_SOURCE, label="okx")
+        line = next(x for x in capsys.readouterr().out.splitlines() if ".trades" in x)
+        assert "buy=37" in line and "sell=13" in line
+
+    def test_a_feed_that_publishes_no_side_is_recorded_not_failed(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """``side=None`` is inside the vocabulary: some feeds do not say. That is a fact about the
+        feed, not a defect in it."""
+        _assert_ticks(tuple(self._tick(None) for _ in range(5)), source=OKX_SOURCE, label="okx")
+        line = next(x for x in capsys.readouterr().out.splitlines() if ".trades" in x)
+        assert "unspecified=5" in line and "buy=0" in line and "sell=0" in line
+
+    def test_a_one_sided_book_still_fails_because_the_asymmetry_is_deliberate(self) -> None:
+        """The ruling is about *trades*. A book with no asks cannot be crossed, quoted or traded
+        against, so ``_assert_book`` keeps failing one — and that difference is the ruling, not an
+        inconsistency."""
+        with pytest.raises(AssertionError, match="one-sided book"):
+            _assert_book(self._book(asks=0), source=OKX_SOURCE, label="okx")
+        with pytest.raises(AssertionError, match="one-sided book"):
+            _assert_book(self._book(bids=0), source=OKX_SOURCE, label="okx")
+
+    def test_the_book_evidence_carries_its_own_timestamp(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """P-8's missing half. ``.quotes`` always recorded ``observed_at`` and ``.book`` did not, so
+        a gap between the two mids could not be attributed to elapsed time rather than to
+        disagreement — and a tolerance chosen without that is invented. This makes the gap
+        measurable; it still asserts no agreement, because the tolerance is the owner's call."""
+        _assert_book(self._book(), source=OKX_SOURCE, label="okx")
+        line = next(x for x in capsys.readouterr().out.splitlines() if ".book" in x)
+        assert f"observed_at={self.NOW.isoformat()}" in line
+        assert "spread_bps=" in line and "entitlement=LIVE" in line
