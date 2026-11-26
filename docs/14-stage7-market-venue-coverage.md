@@ -392,10 +392,11 @@ was scoped to Stage 6.2. Four questions, in dependency order:
 ## 2. Sub-deliverable 7.2 — three levers implemented (L-A, L-B, L-E)
 
 Status: **DELIVERED, AWAITING REVIEW.** Authorised by the owner 2026-11-26 (**D-045**), implemented
-across six commits — `bc4a718` (the three levers), `41aca23` (a citation correction), `354b95c`
-(F-10 and the run count), `f675582` (the run count again, because two more runs landed while it was
-being written), `500ac36` (**F-11**, found by the first run to exercise the F-10 fix live, plus the
-counts corrected to twelve runs), and the commit carrying runs 13–14. Board:
+across the batch's commits — `bc4a718` (the three levers), `41aca23` (a citation correction),
+`354b95c` (F-10 and the run count), `f675582` (the run count again, because two more runs landed
+while it was being written), `500ac36` (**F-11**, found by the first run to exercise the F-10 fix
+live, plus the counts corrected to twelve runs), `88af6f4` (runs 13–14, the corrected branch
+exercised live) and the correction commits that follow. Board:
 `design/stage7-2-levers-implemented.html`.
 
 This is the first `backend/` production change since Stage 6.2. Scope held to the three levers and
@@ -667,13 +668,20 @@ dukascopy.diagnosis verdict=the production attempt got no reply (network-IngestF
   rejection   action=re-run: … a repeat failure while a variant keeps working is an OWNER DECISION
 ```
 
+**Run 15 exercised it a second time.** `45797880440`, triggered by `88af6f4`, reported
+`31 passed / 0 failed / 5 geo-blocked / 0 skipped of 36` with `production_ua=network-IngestFault`,
+`browser_ua=ok` (25,761 bytes) and `other_hour=network-IngestFault` — a *different* combination from
+run 13 — and published the corrected verdict again, naming the one variant that answered. So the
+corrected branch has now been exercised live twice, on two different input shapes, and
+`verify_layout` has passed fifteen times running.
+
 Run 13's single skip is the designed behaviour, not a regression: its ticks fetch did not answer, so
 the check skipped rather than failed (`test_live_endpoints.py:153`, *"did not answer, so nothing is
 verified either way"*), and the headline says so — `1 could not reach their source`. The layout check
 in the same run used the patient fetch and passed. Note what this run therefore demonstrates and what
-it does not: it exercises the branch that reports a **succeeded** variant, live. The F-11-specific
-combination — a network baseline beside an `http-*` reply — has still not recurred, so that half of
-the fix remains offline-evidenced by the 125-combination test.
+it does not: runs 13 and 15 both exercise the branch that reports a **succeeded** variant. The
+F-11-specific combination — a network baseline beside an `http-*` reply — has still not recurred, so
+that half of the fix remains offline-evidenced by the 125-combination test.
 
 **Two corrections to this batch's own record.**
 
@@ -774,10 +782,11 @@ done
    `_recent_weekday_hour()`), so twelve passes are twelve readings of *one file*, not twelve samples
    of the feed's shape. A weekend hour, a holiday, a month boundary and a JPY pair are all untested
    against real data.
-3. **Half of the F-11 fix is offline-evidenced only.** Run 12 exposed F-11; run 13 then exercised the
-   corrected branch live — but on the *succeeded-variant* path, publishing the corrected verdict
-   verbatim (§2.4). The `http-*`-beside-a-network-fault path that F-11 actually added has not
-   recurred in any run, so its only evidence is the 125-combination cross-product test.
+3. **Half of the F-11 fix is offline-evidenced only.** Run 12 exposed F-11; runs 13 and 15 then
+   exercised the corrected branch live on two different input shapes, publishing the corrected verdict
+   verbatim both times (§2.4). But both took the *succeeded-variant* path. The
+   `http-*`-beside-a-network-fault path that F-11 actually added has not recurred in any run, so its
+   only evidence is the 125-combination cross-product test.
 4. **No production caller.** `certify(..., auth=...)` and the new refusals are exercised by tests, not
    by any running code path: there is no write endpoint and the master is empty. Their first real
    caller arrives with L-C in 7.3.

@@ -408,8 +408,8 @@ refuses out-of-vocabulary values where they arrive instead of crashing later. <b
 <b>F-10</b>, was found on the way: a diagnostic that published &ldquo;the host was never reached&rdquo;
 in four runs whose own probes recorded it answering. Fixing it produced <b>F-11</b>, because the fix
 counted only successes as proof of reach and the first run to exercise it live answered
-<code>http-503</code> — a reply. Gate <b>997 passed / 2 skipped / 0 failed</b>, CI green on all five
-commits.</div>
+<code>http-503</code> — a reply. Gate <b>997 passed / 2 skipped / 0 failed</b>, CI green on every
+commit of the batch.</div>
 
 <h3>0 · What was authorised, and what that forbade<span class="tag">docs/14 §2.0 · D-045</span></h3>
 <div class="card">{authorisation_table()}</div>
@@ -621,13 +621,21 @@ dukascopy.diagnosis verdict=the production attempt got no reply (network-IngestF
   unreachable host</b>; one attempt per variant cannot separate a transient network fault from a
   rejection
 <span class="k">run 14 (PR trigger): 31 passed / 0 failed / 5 geo-blocked / 0 skipped of 36, production_ua=ok</span></pre></div>
+<p><b>Run 15 exercised it a second time, on a different input shape.</b>
+<span class="mono">45797880440</span>, triggered by <span class="mono">88af6f4</span>, reported
+<span class="mono">31 / 0 / 5 / 0 of 36</span> with <span class="mono">production_ua=network-IngestFault</span>,
+<span class="mono">browser_ua=ok</span> (25,761 bytes) and
+<span class="mono">other_hour=network-IngestFault</span> — the mirror image of run 13 — and published
+the corrected verdict again, naming the one variant that answered. The corrected branch has now run
+live twice on two different shapes, and <span class="mono">verify_layout</span> has passed
+<b>fifteen</b> times running.</p>
 <p class="cap">Run 13's single skip is the designed behaviour, not a regression: its ticks fetch did not
 answer, so the check <b>skipped rather than failed</b>
 <span class="cite">(test_live_endpoints.py:153, &ldquo;did not answer, so nothing is verified either
 way&rdquo;)</span> and the headline says so — <span class="mono">1 could not reach their source</span>.
 The layout check in the same run used the patient fetch and passed.</p>
-<div class="blocked"><b>Limitation, stated precisely:</b> run 13 exercised the branch that reports a
-<i>succeeded</i> variant. The F-11-specific path — a network baseline beside an
+<div class="blocked"><b>Limitation, stated precisely:</b> runs 13 and 15 both exercised the branch
+that reports a <i>succeeded</i> variant. The F-11-specific path — a network baseline beside an
 <span class="mono">http-*</span> reply — has not recurred in any run, so that half of the fix is
 evidenced by the 125-combination cross-product test and not by a live run.</div>
 <p><b>Two corrections to this batch's own record</b>, because a correction that is absorbed silently is
@@ -739,7 +747,7 @@ live checks should assert.</li>
 f675582 → 500ac36 (F-11) → this one &middot; gate 997 passed / 2 skipped / 0 failed, +21 tests in the
 gate and 7 offline checks in the live module &middot; ruff + format clean, mypy strict clean on 56
 files, hygiene 80 &middot; backend/ 790 insertions / 50 deletions across 6 production and 5 test files
-&middot; CI green on every commit of the batch &middot; evidence: fourteen live runs on 2026-11-26, all
+&middot; CI green on every commit of the batch &middot; evidence: fifteen live runs on 2026-11-26, all
 success, verify_layout passed in every one &middot; bybit geo-blocked in every one &middot; the master is
 still empty (F-3 → 7.3)</footer>
 </div></body></html>"""
