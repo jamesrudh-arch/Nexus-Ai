@@ -392,10 +392,11 @@ was scoped to Stage 6.2. Four questions, in dependency order:
 ## 2. Sub-deliverable 7.2 — three levers implemented (L-A, L-B, L-E)
 
 Status: **DELIVERED, AWAITING REVIEW.** Authorised by the owner 2026-11-26 (**D-045**), implemented
-across five commits — `bc4a718` (the three levers), `41aca23` (a citation correction), `354b95c`
+across six commits — `bc4a718` (the three levers), `41aca23` (a citation correction), `354b95c`
 (F-10 and the run count), `f675582` (the run count again, because two more runs landed while it was
-being written), and the commit carrying this section (**F-11**, found by the first run to exercise the
-F-10 fix live). Board: `design/stage7-2-levers-implemented.html`.
+being written), `500ac36` (**F-11**, found by the first run to exercise the F-10 fix live, plus the
+counts corrected to twelve runs), and the commit carrying runs 13–14. Board:
+`design/stage7-2-levers-implemented.html`.
 
 This is the first `backend/` production change since Stage 6.2. Scope held to the three levers and
 the two findings they exposed: **6 production files and 5 test files in `backend/` — 790 insertions,
@@ -642,10 +643,37 @@ all three probes faulted at the network layer. That last test is the one that ma
 of this bug class impossible to commit silently.
 
 **The live module now collects 36 checks** (29 → 32 in `354b95c` → 36 here); the offline subset run
-in this batch is 20 (was 13, then 16). Live-source checks are still **11** — the two increases were
-both tests of our own diagnosis logic against fabricated inputs, and neither adds coverage evidence.
-Run 12's verdict is the last time this false claim was published; the corrected branch has now been
-exercised live once, and the combination that exposed F-11 is pinned offline for all 125 cases.
+in this batch is 20 (was 13, then 16). Live-source checks are still **11** — both increases were tests
+of our own diagnosis logic against fabricated inputs, and neither adds coverage evidence.
+
+**Runs 13 and 14 confirm it live.** The commit carrying the F-11 fix triggered two more venue runs —
+`45796096183` (push) and `45796115693` (pull request), both `conclusion=success`, and the first to
+collect 36: `30 passed / 0 failed / 5 geo-blocked / 1 skipped of 36` and
+`31 passed / 0 failed / 5 geo-blocked / 0 skipped of 36`. All four new checks appear by name in both
+annotations. `verify_layout` passed again in both, making that the thirteenth and fourteenth
+consecutive passes.
+
+Run 13 is also **the first live exercise of the corrected branch**, and it published the corrected
+wording rather than the false claim:
+
+```
+dukascopy.probe.production_ua              outcome=network-IngestFault
+dukascopy.probe.browser_ua                 outcome=ok  bytes=25761  lzma=True
+dukascopy.probe.production_ua_other_hour   outcome=ok  bytes=25313  lzma=True
+dukascopy.diagnosis verdict=the production attempt got no reply (network-IngestFault) but the host
+  did answer a browser User-Agent on the same hour (a valid file came back) and the production
+  User-Agent on a different hour (a valid file came back) in the same minute, so this is not an
+  unreachable host; one attempt per variant cannot separate a transient network fault from a
+  rejection   action=re-run: … a repeat failure while a variant keeps working is an OWNER DECISION
+```
+
+Run 13's single skip is the designed behaviour, not a regression: its ticks fetch did not answer, so
+the check skipped rather than failed (`test_live_endpoints.py:153`, *"did not answer, so nothing is
+verified either way"*), and the headline says so — `1 could not reach their source`. The layout check
+in the same run used the patient fetch and passed. Note what this run therefore demonstrates and what
+it does not: it exercises the branch that reports a **succeeded** variant, live. The F-11-specific
+combination — a network baseline beside an `http-*` reply — has still not recurred, so that half of
+the fix remains offline-evidenced by the 125-combination test.
 
 **Two corrections to this batch's own record.**
 
@@ -746,9 +774,10 @@ done
    `_recent_weekday_hour()`), so twelve passes are twelve readings of *one file*, not twelve samples
    of the feed's shape. A weekend hour, a holiday, a month boundary and a JPY pair are all untested
    against real data.
-3. **The F-11 fix is offline-evidenced only.** Run 12 exercised the F-10 branch live and exposed
-   F-11; no run has yet reproduced a network baseline beside an `http-*` reply against the corrected
-   branch. Its evidence is the 125-combination cross-product test, not a live run.
+3. **Half of the F-11 fix is offline-evidenced only.** Run 12 exposed F-11; run 13 then exercised the
+   corrected branch live — but on the *succeeded-variant* path, publishing the corrected verdict
+   verbatim (§2.4). The `http-*`-beside-a-network-fault path that F-11 actually added has not
+   recurred in any run, so its only evidence is the 125-combination cross-product test.
 4. **No production caller.** `certify(..., auth=...)` and the new refusals are exercised by tests, not
    by any running code path: there is no write endpoint and the master is empty. Their first real
    caller arrives with L-C in 7.3.

@@ -606,10 +606,30 @@ test_never_reached_is_claimed_only_when_all_three_probes_got_no_reply
 <span class="mono">the host is reachable but not serving</span> — which is a different fact from both
 &ldquo;unreachable&rdquo; and &ldquo;served&rdquo;, and is the reading the 503 throttling supports.
 <b>The live module collects 36</b> (29 → 32 → 36); live-source checks are still <b>11</b>.</p>
-<div class="blocked"><b>Limitation, stated:</b> the F-11 fix is offline-evidenced. Run 12 exercised the
-<i>F-10</i> branch live and exposed F-11; no run has yet reproduced a network baseline beside an
-<span class="mono">http-*</span> reply against the corrected branch. Its evidence is the 125-combination
-test, not a live run.</div>
+<p><b>Runs 13 and 14 confirm it live.</b> The commit carrying this fix triggered two more venue runs —
+<span class="mono">45796096183</span> (push) and <span class="mono">45796115693</span> (pull request),
+both <span class="mono">success</span>, and the first to collect 36. All four new checks appear by name
+in both annotations, and <span class="mono">verify_layout</span> passed again in both — the thirteenth
+and fourteenth consecutive passes.</p>
+<div class="ba after"><div class="hd">RUN 13 — THE FIRST LIVE EXERCISE OF THE CORRECTED BRANCH · 30 passed / 0 failed / 5 geo-blocked / 1 skipped of 36</div>
+<pre>dukascopy.probe.production_ua              outcome=network-IngestFault
+dukascopy.probe.browser_ua                 outcome=ok  bytes=25761  lzma=True
+dukascopy.probe.production_ua_other_hour   outcome=ok  bytes=25313  lzma=True
+dukascopy.diagnosis verdict=the production attempt got no reply (network-IngestFault) but the host
+  did answer a browser User-Agent on the same hour (a valid file came back) and the production
+  User-Agent on a different hour (a valid file came back) in the same minute, <b>so this is not an
+  unreachable host</b>; one attempt per variant cannot separate a transient network fault from a
+  rejection
+<span class="k">run 14 (PR trigger): 31 passed / 0 failed / 5 geo-blocked / 0 skipped of 36, production_ua=ok</span></pre></div>
+<p class="cap">Run 13's single skip is the designed behaviour, not a regression: its ticks fetch did not
+answer, so the check <b>skipped rather than failed</b>
+<span class="cite">(test_live_endpoints.py:153, &ldquo;did not answer, so nothing is verified either
+way&rdquo;)</span> and the headline says so — <span class="mono">1 could not reach their source</span>.
+The layout check in the same run used the patient fetch and passed.</p>
+<div class="blocked"><b>Limitation, stated precisely:</b> run 13 exercised the branch that reports a
+<i>succeeded</i> variant. The F-11-specific path — a network baseline beside an
+<span class="mono">http-*</span> reply — has not recurred in any run, so that half of the fix is
+evidenced by the 125-combination cross-product test and not by a live run.</div>
 <p><b>Two corrections to this batch's own record</b>, because a correction that is absorbed silently is
 worth nothing:</p>
 <div class="ba before"><div class="hd">1 · A PATH THAT DOES NOT EXIST WAS NEARLY PUBLISHED AS THE EVIDENCE CITATION</div>
@@ -716,11 +736,12 @@ live checks should assert.</li>
 </div>
 
 <footer>Stage 7.2 &middot; implementation &middot; D-045 &middot; commits bc4a718 → 41aca23 → 354b95c →
-f675582 → this one &middot; gate 997 passed / 2 skipped / 0 failed, +21 tests in the gate and 7 offline
-checks in the live module &middot; ruff + format clean, mypy strict clean on 56 files, hygiene 80
-&middot; backend/ 790 insertions / 50 deletions across 6 production and 5 test files &middot; CI green
-on all five commits &middot; evidence: twelve live runs on 2026-11-26, all success, verify_layout passed
-in every one &middot; bybit geo-blocked in every one &middot; the master is still empty (F-3 → 7.3)</footer>
+f675582 → 500ac36 (F-11) → this one &middot; gate 997 passed / 2 skipped / 0 failed, +21 tests in the
+gate and 7 offline checks in the live module &middot; ruff + format clean, mypy strict clean on 56
+files, hygiene 80 &middot; backend/ 790 insertions / 50 deletions across 6 production and 5 test files
+&middot; CI green on every commit of the batch &middot; evidence: fourteen live runs on 2026-11-26, all
+success, verify_layout passed in every one &middot; bybit geo-blocked in every one &middot; the master is
+still empty (F-3 → 7.3)</footer>
 </div></body></html>"""
     out = HERE / "stage7-2-levers-implemented.html"
     out.write_text(html)
