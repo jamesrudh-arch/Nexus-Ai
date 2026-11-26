@@ -1,6 +1,8 @@
 -- NEXUS core schema (Phase 2)
--- Target: PostgreSQL 16 + TimescaleDB (Apache-2 community). SQLite-compatible subset is
--- created automatically by nexus.audit.log.SqliteAuditStore for single-host dev.
+-- Target: PostgreSQL 16 + TimescaleDB (Apache-2 community). This file is the *portable target*
+-- kept by R-1 (D-042), not the schema that runs today: the live schema is the SQLite one in
+-- nexus/store/schema.py, applied by nexus/store/migrations.py. The two are kept column-for-column
+-- compatible so promotion under trigger conditions T-1...T-4 is a copy, not a rewrite.
 -- All timestamps are TIMESTAMPTZ in UTC. Money/quantity use NUMERIC, never FLOAT.
 
 BEGIN;
@@ -206,42 +208,40 @@ CREATE TABLE IF NOT EXISTS risk_limit_change (
     audit_ref     TEXT
 );
 
--- ---------------------------------------------------------------- market data (TimescaleDB)
--- Converted to a hypertable in production; kept as a plain table so SQLite dev and
--- Postgres-without-Timescale both work. Tiered retention per D-019 / Q-08:
---   raw ticks 7 days -> 1s bars 90 days -> 1m bars 3 years (Feasibility §10.6 Z-04).
-CREATE TABLE IF NOT EXISTS market_tick (
-    time           TIMESTAMPTZ NOT NULL,
-    instrument_id  TEXT        NOT NULL,
-    venue          TEXT        NOT NULL,
-    bid            NUMERIC(28, 12),
-    ask            NUMERIC(28, 12),
-    last           NUMERIC(28, 12),
-    volume         NUMERIC(28, 12),
-    received_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    source         TEXT        NOT NULL DEFAULT 'UNKNOWN'
-);
-CREATE INDEX IF NOT EXISTS ix_tick_time ON market_tick (time DESC);
-CREATE INDEX IF NOT EXISTS ix_tick_instrument_time ON market_tick (instrument_id, time DESC);
+-- ---------------------------------------------------------------- market time series: RETIRED
+-- market_tick and market_bar were defined here but never written to. The first-party archive
+-- (nexus.archive.parquet_store: Parquet + zstd, Hive-partitioned, queried with DuckDB) already
+-- holds market time series and is the tested path, so R-1 (D-042) retires these tables instead of
+-- wiring them: one data class has exactly one system of record (law L-3), and two durability
+-- stories for ticks is how a system ends up quoting numbers it cannot explain.
+-- The D-024 retention ladder (ticks 30d -> 1m 12mo -> 5m/1d indefinite) is enforced by
+-- nexus.archive.retention, not by a TimescaleDB retention policy.
 
-CREATE TABLE IF NOT EXISTS market_bar (
-    time           TIMESTAMPTZ NOT NULL,
-    instrument_id  TEXT        NOT NULL,
-    venue          TEXT        NOT NULL,
-    interval       TEXT        NOT NULL,          -- 1s | 1m | 5m | 1h | 1d
-    open           NUMERIC(28, 12) NOT NULL,
-    high           NUMERIC(28, 12) NOT NULL,
-    low            NUMERIC(28, 12) NOT NULL,
-    close          NUMERIC(28, 12) NOT NULL,
-    volume         NUMERIC(28, 12) NOT NULL DEFAULT 0,
-    trades         INTEGER,
-    source         TEXT        NOT NULL DEFAULT 'UNKNOWN',
-    PRIMARY KEY (instrument_id, venue, interval, time)
+-- ---------------------------------------------------------------- durable gateway result
+-- The gateway's idempotency ledger (Stage 6, finding F-7). Without it a restart lost the record of
+-- which intents had already been processed, which is exactly when a duplicate order becomes
+-- possible.
+CREATE TABLE IF NOT EXISTS execution_result (
+    intent_id         TEXT PRIMARY KEY,
+    status            TEXT NOT NULL,
+    order_id          TEXT,
+    order_state       TEXT NOT NULL,
+    reasons           TEXT[] NOT NULL DEFAULT '{}',
+    idempotent_replay BOOLEAN NOT NULL DEFAULT FALSE,
+    at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+    audit_ref         TEXT
 );
 
--- Uncomment when TimescaleDB is installed on the host (free, Apache-2 community):
--- SELECT create_hypertable('market_tick', 'time', if_not_exists => TRUE,
---                          chunk_time_interval => INTERVAL '1 day');
--- SELECT add_retention_policy('market_tick', INTERVAL '7 days');
+-- ---------------------------------------------------------------- projection bookkeeping
+-- One row per audit record projected into the tables above, so boot recovery can finish a write
+-- that was audited but never projected (law L-2).
+CREATE TABLE IF NOT EXISTS op_projection (
+    audit_ref    TEXT PRIMARY KEY,
+    event_type   TEXT NOT NULL,
+    entity_type  TEXT NOT NULL,
+    entity_id    TEXT NOT NULL,
+    projected_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ix_projection_entity ON op_projection (entity_type, entity_id);
 
 COMMIT;

@@ -59,6 +59,12 @@ class RejectReason(StrEnum):
     CONFIG_INVALID = "CONFIG_INVALID"
     SECRET_UNAVAILABLE = "SECRET_UNAVAILABLE"  # noqa: S105 - reason code, not a credential
 
+    # Persistence (Stage 6: D-042, laws L-1…L-6)
+    PERSISTENCE_FAILED = "PERSISTENCE_FAILED"
+    AUDIT_CHAIN_INVALID = "AUDIT_CHAIN_INVALID"
+    BOOT_RECOVERY_INCOMPLETE = "BOOT_RECOVERY_INCOMPLETE"
+    MIGRATION_INVALID = "MIGRATION_INVALID"
+
 
 class NexusError(Exception):
     """Base error carrying a stable reason code and safe detail.

@@ -85,14 +85,34 @@ class _HaltEvent:
 
 
 class HaltManager:
-    """Thread-safe holder of halt state with an auditable event history."""
+    """Thread-safe holder of halt state with an auditable, durable event history.
 
-    def __init__(self, *, audit: Any = None, events: Any = None) -> None:
-        self._state = HaltState()
+    ``store`` makes a halt survive a restart (Stage 6, finding F-3, law L-1): every engagement and
+    release is written to ``halt_event``, and boot recovery re-derives the state from those rows
+    before the API reports ready. Without a store the halt is runtime-only, which is the behaviour
+    that used to clear an active halt on restart.
+
+    ``restored_state`` is what recovery hands back. It is set directly rather than re-engaged so the
+    original incident id, scope, reason and timestamp survive: a restarted system must show the halt
+    the owner actually engaged, not a fresh one that happens to look similar.
+    """
+
+    def __init__(
+        self,
+        *,
+        audit: Any = None,
+        events: Any = None,
+        store: Any = None,
+        restored_state: HaltState | None = None,
+    ) -> None:
+        self._state = restored_state or HaltState()
         self._history: list[_HaltEvent] = []
         self._lock = threading.RLock()
         self._audit = audit
         self._events = events
+        self._store = store
+        if restored_state is not None:
+            self._history.append(_HaltEvent(action="RESTORED", state=self._state))
 
     @property
     def state(self) -> HaltState:
@@ -149,11 +169,28 @@ class HaltManager:
 
     def _record(self, action: str, *, note: str = "") -> None:
         self._history.append(_HaltEvent(action=action, state=self._state))
+        entry: Any = None
         if self._audit is not None:
             payload: dict[str, Any] = {"action": action, **self._state.to_dict()}
             if note:
                 payload["note"] = note
-            self._audit.record(f"halt.{action.lower()}", payload, actor=self._state.triggered_by)
+            entry = self._audit.record(f"halt.{action.lower()}", payload, actor=self._state.triggered_by)
+        if self._store is not None:
+            # Law L-2, durable before acknowledged: the audit entry above is committed first, so a
+            # crash between the two leaves a record that boot recovery re-projects into halt_event
+            # rather than a halt nobody can prove was ever engaged.
+            self._store.save_halt_event(
+                action=action,
+                scope=self._state.scope,
+                reason=self._state.reason or note,
+                triggered_by=self._state.triggered_by,
+                at=self._state.since or iso_utc(utc_now()),
+                incident_id=self._state.incident_id,
+                affected_accounts=self._state.affected_accounts,
+                affected_instruments=self._state.affected_instruments,
+                cancel_working_orders=self._state.cancel_working_orders,
+                audit_ref=getattr(entry, "record_id", None),
+            )
         if self._events is not None:
             from nexus.events.bus import EventEnvelope
 

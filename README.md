@@ -18,8 +18,8 @@
 | `docs/04-phase2-core-foundation.md` | Phase 2 — design, acceptance evidence, security/reliability posture, stated limitations |
 | `docs/05-phase3-market-data.md` | Phase 3 (**ACCEPTED**, D-027) — instrument master, sessions, free-feed adapters, Parquet archive, retention, acceptance evidence, CI run history, **30 defects found & fixed**, stated limitations |
 | `docs/06-phase4-venue-certification.md` | Phase 4 (in pre-flight) — VM-first bring-up plan, Bybit + OKX demo certification scope (D-028/D-029), **5 pre-flight defects**, what is still unverified |
-| `backend/` | `nexus-core` Python package: config, audit chain, secrets, events, data gates, risk engine, live-authority gate, halt, gateway, API — plus Phase 3 `instruments/`, `ingestion/`, `archive/`, `data/records.py` |
-| `docker-compose.yml`, `infra/`, `.github/workflows/ci.yml` | $0 self-hosted stack (Postgres+Timescale, NATS, Valkey, MinIO, Caddy, Prometheus/Grafana/Loki) + free CI |
+| `backend/` | `nexus-core` Python package: config, audit chain, secrets, events, data gates, risk engine, live-authority gate, halt, gateway, API — plus Phase 3 `instruments/`, `ingestion/`, `archive/`, `data/records.py` and Stage 6 `store/` (durable operational state, migrations, fail-closed boot recovery) |
+| `docker-compose.yml`, `infra/`, `.github/workflows/ci.yml` | $0 self-hosted stack (NATS, Valkey, MinIO, Caddy, Prometheus/Grafana/Loki; Postgres+Timescale is an **opt-in `postgres` profile** per R-1/D-042 — SQLite + Parquet are the single-node system of record) + free CI |
 
 ## Key Decisions (summary)
 

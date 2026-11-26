@@ -171,6 +171,17 @@ class AuditLog:
         )
 
     @property
+    def store(self) -> AuditStore:
+        """The backing store, exposed read-only.
+
+        Boot wiring inspects it to keep the operational store on the same footing as the audit log:
+        an explicitly ephemeral audit log gets an ephemeral operational store, because a durable
+        operational state beside a volatile record of why it changed would be worse than either
+        choice on its own.
+        """
+        return self._store
+
+    @property
     def chain_head(self) -> str:
         return self._chain.last_hash
 
@@ -200,3 +211,13 @@ class AuditLog:
     def verify(self) -> list[Any]:
         """Return chain breaks (empty == intact)."""
         return verify_chain(self._store.read_all())
+
+    def records(self) -> list[AuditRecord]:
+        """Every record in chain order.
+
+        Read-only by construction. Boot recovery walks the chain to re-derive halt state and to
+        finish audited writes whose operational projection never landed (law L-2); nothing may
+        write through this method, and the append-only triggers added by migration
+        ``0003_audit_append_only`` make the same point inside the database.
+        """
+        return self._store.read_all()

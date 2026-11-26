@@ -21,7 +21,9 @@
 set -u
 
 PROJECT="${SMOKE_PROJECT:-nexus-smoke}"
-SERVICES="${SMOKE_SERVICES:-db nats core}"
+# `db` is opt-in since R-1 (D-042): core does not connect to TimescaleDB, so the smoke stack is
+# nats + core. Set SMOKE_SERVICES="db nats core" to smoke the postgres profile as well.
+SERVICES="${SMOKE_SERVICES:-nats core}"
 REPORT="${SMOKE_REPORT:-smoke-report.txt}"
 WAIT_SECONDS="${SMOKE_WAIT_SECONDS:-300}"
 IMAGE="${SMOKE_IMAGE:-nexus-core:0.2.0}"

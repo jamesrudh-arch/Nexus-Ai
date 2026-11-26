@@ -49,6 +49,12 @@ from nexus.observability.metrics import (
 )
 from nexus.risk.authority import evaluate_authority
 from nexus.secrets.provider import SecretNotFoundError, get_secret_provider
+from nexus.store.operational import SqliteOperationalStore
+from nexus.store.recovery import (
+    BootRecoveryReport,
+    indeterminate_halt_state,
+    recover,
+)
 
 # Starlette removed the public ``RequestResponseEndpoint`` alias, so the middleware
 # callable is typed locally. Keeping it explicit preserves strict-mypy coverage of the
@@ -94,6 +100,7 @@ def create_app(
     registry: InstrumentRegistry | None = None,
     calendar: MarketCalendar | None = None,
     archive: Any = None,
+    store: Any = None,
 ) -> FastAPI:
     """Build the API with explicit dependencies (testable, no global state required).
 
@@ -103,7 +110,28 @@ def create_app(
     """
     cfg = settings or get_settings()
     audit_log = audit or AuditLog(store=_default_store(cfg))
-    halt_manager = halt or HaltManager(audit=audit_log)
+    op_store = store if store is not None else _default_operational_store(cfg, audit_log)
+
+    # Stage 6 boot sequence (laws L-1, L-2, L-6): verify the chain, finish audited writes whose
+    # projection never landed, re-derive the halt, resolve orders left non-terminal.
+    recovery, boot_error = _boot_recovery(audit_log, op_store)
+    restored = recovery.halt_state if recovery is not None else None
+    if boot_error is not None:
+        # Nothing derived from an untrusted chain can be believed — including the absence of a
+        # halt. Fail closed into the kill switch instead of serving (L-6).
+        restored = indeterminate_halt_state(
+            f"boot recovery could not complete ({boot_error.reason.value}): failing closed"
+        )
+    halt_manager = halt or HaltManager(audit=audit_log, store=op_store, restored_state=restored)
+    if halt is not None and restored is not None and restored.active and not halt_manager.active:
+        # An injected manager must still honour a durable halt: re-engage at the recovered scope.
+        halt_manager.engage(
+            scope=restored.scope,
+            reason=restored.reason or "boot recovery: durable halt re-applied",
+            triggered_by=restored.triggered_by,
+            affected_accounts=restored.affected_accounts,
+            affected_instruments=restored.affected_instruments,
+        )
     instrument_registry = registry or InstrumentRegistry()
     market_calendar = calendar or MarketCalendar()
 
@@ -120,6 +148,9 @@ def create_app(
     app.state.registry = instrument_registry
     app.state.calendar = market_calendar
     app.state.archive = archive
+    app.state.store = op_store
+    app.state.recovery = recovery
+    app.state.boot_error = boot_error
 
     @app.middleware("http")
     async def _count_requests(request: Request, call_next: RequestResponseEndpoint) -> Response:
@@ -138,6 +169,15 @@ def create_app(
             audit_log.record("health.readiness_probe", {"at": iso_utc(utc_now())})
         except Exception as exc:  # noqa: BLE001 - readiness must report, not raise
             problems.append(f"audit store unwritable: {type(exc).__name__}")
+        if boot_error is not None:
+            problems.append(f"boot recovery refused: {boot_error.reason.value}")
+        if recovery is not None:
+            if recovery.halt_indeterminate:
+                problems.append("halt state indeterminate at boot: failing closed")
+            if recovery.orders_marked_unknown:
+                problems.append(
+                    f"{len(recovery.orders_marked_unknown)} order(s) UNKNOWN pending reconciliation"
+                )
         if cfg.environment not in set(EnvironmentState):
             problems.append("environment state invalid")
         ready = not problems
@@ -189,6 +229,7 @@ def create_app(
                 "active": len(instrument_registry.active()),
             },
             "archive": {"configured": archive is not None},
+            "persistence": _persistence_status(op_store, recovery, boot_error),
         }
 
     @app.get("/v1/audit/verify", tags=["audit"])
@@ -303,6 +344,68 @@ def create_app(
         {"version": __version__, "phase": __phase__, "environment": cfg.environment.name},
     )
     return app
+
+
+def _default_operational_store(cfg: Settings, audit_log: AuditLog) -> Any:
+    """Operational state, on the same footing as the audit chain (R-1 / D-042).
+
+    R-1 makes SQLite the single-node system of record for governance *and* operational state, with
+    market time series in the Parquet archive — so by default this is the same file the audit chain
+    lives in. When the caller explicitly chose an ephemeral audit log (``NEXUS_AUDIT_BACKEND=memory``
+    or an injected in-memory store) the operational store is ephemeral too: a durable operational
+    state next to a volatile record of why it changed would be worse than either choice alone.
+    """
+    import os
+
+    from nexus.audit.log import InMemoryAuditStore
+
+    ephemeral = os.environ.get("NEXUS_AUDIT_BACKEND", "sqlite").lower() == "memory" or isinstance(
+        audit_log.store, InMemoryAuditStore
+    )
+    if ephemeral:
+        return SqliteOperationalStore(":memory:", audit=audit_log)
+    url = cfg.database_url
+    if url.startswith("sqlite:///"):
+        return SqliteOperationalStore(url.removeprefix("sqlite:///"), audit=audit_log)
+    # _default_store() already refuses a non-sqlite scheme; this branch is only reachable when an
+    # audit store was injected for a backend this build does not implement. Stay ephemeral rather
+    # than invent a file location for it.
+    return SqliteOperationalStore(":memory:", audit=audit_log)
+
+
+def _boot_recovery(audit_log: AuditLog, op_store: Any) -> tuple[BootRecoveryReport | None, NexusError | None]:
+    """Run boot recovery, converting a refusal into state the endpoints can report honestly."""
+    try:
+        return recover(audit=audit_log, store=op_store), None
+    except NexusError as exc:
+        return None, exc
+
+
+def _persistence_status(
+    op_store: Any,
+    recovery: BootRecoveryReport | None,
+    boot_error: NexusError | None,
+) -> dict[str, Any]:
+    """What the system of record is, and what boot recovery found (A-06: status on the wire)."""
+    migrations = getattr(op_store, "migrations", None)
+    try:
+        counts: dict[str, Any] = op_store.counts()
+    except NexusError as exc:
+        counts = {"error": exc.reason.value}
+    path = getattr(op_store, "path", None)
+    return {
+        "engine": "sqlite",
+        "role": "system of record for governance + operational state (R-1 / D-042)",
+        "time_series": "parquet+zstd archive under the D-024 retention ladder",
+        "path": None if path in (None, ":memory:") else str(path),
+        "ephemeral": path == ":memory:",
+        "migrations": migrations.to_dict() if migrations is not None else None,
+        "counts": counts,
+        "boot_recovery": recovery.to_dict() if recovery is not None else None,
+        "boot_error": None
+        if boot_error is None
+        else {"reason": boot_error.reason.value, "detail": boot_error.detail},
+    }
 
 
 def _default_store(cfg: Settings) -> Any:

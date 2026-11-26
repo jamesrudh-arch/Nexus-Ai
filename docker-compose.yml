@@ -2,24 +2,31 @@
 #
 # Every image below is free/open-source. Total memory budget is sized for the Oracle
 # Cloud Always Free Ampere A1 VM (2 OCPU / 12 GB RAM, allowance halved 15 Jun 2026).
-# Caps below total ~5.2 GB, leaving headroom for the OS and an optional local model.
+# Caps below total ~3.7 GB with the default profiles; the opt-in `postgres` profile adds 1.5 GB.
 #
-# Usage:
-#   docker compose up -d core                        # minimal: the API alone (SQLite audit log)
-#   docker compose up -d core db                     # + TimescaleDB, ready for Phase 4
-#   docker compose --profile observability up -d     # + Prometheus/Grafana/Loki
-#   docker compose --profile full up -d              # everything
+# Startup tiers (Stage 5.2, D-041) — bring up in order and stop at the tier the host can hold:
+#   T1 core + caddy 1.15 GB   docker compose up -d core caddy
+#   T2 + nats/cache/minio     docker compose up -d core caddy nats cache minio   (2.18 GB)
+#   T3 + observability        docker compose --profile observability up -d       (3.71 GB)
+#   T4 + TimescaleDB (opt-in) docker compose --profile postgres up -d            (5.25 GB)
+#   T5 + ollama (opt-in)      see the commented `ai` profile                     (10.37 GB)
+# Budget law: T4 and T5 are mutually exclusive with headroom on a 12 GB host — never both while
+# trading is armed.
 #
 # Nothing here connects to a venue or can place an order. Live trading is disabled in
 # code (Phase 2), not by configuration.
 #
-# KNOWN GAP, recorded rather than papered over: `core` waits for `db` to be healthy but does not
-# connect to it. The only implemented audit store is SQLite (`NEXUS_DATABASE_URL` defaults to
-# sqlite:/// and any other scheme is refused at startup), so TimescaleDB currently costs ~1.5 GB of
-# the 12 GB free-tier budget and adds startup latency for a database nothing reads. Wiring
-# `core` to it is Phase 4 work; until then bring up `core` alone on a memory-constrained host.
-# The migration in backend/migrations/0001_core.sql is complete Postgres DDL and is what that
-# wiring will apply.
+# GAP RESOLVED (Stage 6, R-1 / D-042). This file used to record that `core` waited for `db` to be
+# healthy while nothing read it — 1.5 GB of a 12 GB free-tier budget spent on a database no code
+# connected to. R-1 declares SQLite (audit chain + operational state, both in `core-data`) and the
+# Parquet/zstd archive (market time series) the single-node system of record, so TimescaleDB is now
+# an opt-in `postgres` profile and `core` no longer depends on it.
+#
+# backend/migrations/*.sql remain the portable PostgreSQL target, column-for-column compatible with
+# the SQLite schema in backend/src/nexus/store/schema.py. Promotion happens only on a *measured*
+# trigger: T-1 a second writer process, T-2 a benchmarked write ceiling, T-3 a genuine hypertable or
+# pgvector need, T-4 leaving the single VM. Until then, running Postgres alongside SQLite would mean
+# two systems of record for one data class, which law L-3 forbids.
 
 name: nexus
 
@@ -36,6 +43,7 @@ services:
   # ---------------------------------------------------------------- system of record
   db:
     image: timescale/timescaledb:latest-pg16   # PostgreSQL 16 + TimescaleDB (Apache-2)
+    profiles: [postgres, full]                 # opt-in: nothing reads it yet (R-1 / D-042)
     <<: *restart-policy
     logging: *default-logging
     environment:
@@ -153,8 +161,7 @@ services:
       # complete. Separate volume so it can be backed up and sized on its own.
       - archive-data:/app/data/archive
     depends_on:
-      db:
-        condition: service_healthy
+      # `db` is deliberately absent: it is an opt-in profile and core does not connect to it (R-1).
       nats:
         condition: service_healthy
     deploy:

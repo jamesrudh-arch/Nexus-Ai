@@ -77,6 +77,7 @@ class ExecutionGateway:
         data_gate: Any | None = None,
         risk_engine: Any | None = None,
         adapters: dict[str, Any] | None = None,
+        store: Any | None = None,
     ) -> None:
         self._settings = settings
         self._halt = halt
@@ -87,6 +88,18 @@ class ExecutionGateway:
         self._adapters = dict(adapters or {})  # empty in Phase 2 by design
         self._seen_intents: dict[str, SubmitResult] = {}
         self._lock = threading.RLock()
+        # Stage 6, finding F-7: the idempotency ledger was in-memory only, so a restart lost it and
+        # a replayed intent could be processed a second time. With a store the ledger is durable and
+        # is rehydrated here, at construction, before any intent can be submitted.
+        self._store = store
+        self._rehydrated = 0
+        if store is not None:
+            self._rehydrated = self.rehydrate_from_store()
+
+    @property
+    def rehydrated_count(self) -> int:
+        """How many ledger entries were reloaded from durable storage at boot."""
+        return self._rehydrated
 
     @property
     def adapter_count(self) -> int:
@@ -97,6 +110,34 @@ class ExecutionGateway:
         by a model, plugin or strategy."""
         with self._lock:
             self._adapters[venue.upper()] = adapter
+
+    def rehydrate_from_store(self) -> int:
+        """Reload the durable idempotency ledger. Returns how many entries were restored.
+
+        Restored entries keep their original status, order id, state and reasons, so a replay after
+        a restart produces exactly the refusal an in-memory replay would have produced — including
+        the ``IDEMPOTENCY_CONFLICT`` reason and the audit entry that accompanies it.
+        """
+        if self._store is None:
+            return 0
+        loaded = 0
+        for row in self._store.execution_results():
+            with self._lock:
+                if row.intent_id in self._seen_intents:
+                    continue
+                self._seen_intents[row.intent_id] = SubmitResult(
+                    status=GatewayStatus(row.status),
+                    intent_id=row.intent_id,
+                    order_id=row.order_id,
+                    order_state=OrderState(row.order_state),
+                    reasons=row.reasons,
+                    idempotent_replay=False,
+                    checks={"rehydrated_from": "store", "result_at": row.at},
+                    at=row.at,
+                )
+                loaded += 1
+        self._rehydrated = loaded
+        return loaded
 
     def submit(
         self,
@@ -138,10 +179,16 @@ class ExecutionGateway:
         )
         with self._lock:
             self._seen_intents.setdefault(intent.intent_id, result)
-        self._audit.record(
+        entry = self._audit.record(
             "execution.refused" if result.refused else "execution.accepted",
             result.to_audit_payload(),
         )
+        if self._store is not None:
+            # Law L-2: the audit entry is committed first, then the ledger row. A crash between the
+            # two is repaired at boot by reproject_missing(), which reads the chain.
+            self._store.save_execution_result(
+                result.to_audit_payload(), audit_ref=getattr(entry, "record_id", None)
+            )
         if self._events is not None:
             from nexus.events.bus import EventEnvelope
 
