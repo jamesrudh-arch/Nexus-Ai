@@ -627,8 +627,8 @@ dukascopy.diagnosis verdict=the production attempt got no reply (network-IngestF
 <span class="mono">browser_ua=ok</span> (25,761 bytes) and
 <span class="mono">other_hour=network-IngestFault</span> — the mirror image of run 13 — and published
 the corrected verdict again, naming the one variant that answered. The corrected branch has now run
-live twice on two different shapes, and <span class="mono">verify_layout</span> has passed
-<b>fifteen</b> times running.</p>
+live twice on two different shapes, and <span class="mono">verify_layout</span> has passed in
+<b>every venue run since 2026-11-25</b>.</p>
 <p class="cap">Run 13's single skip is the designed behaviour, not a regression: its ticks fetch did not
 answer, so the check <b>skipped rather than failed</b>
 <span class="cite">(test_live_endpoints.py:153, &ldquo;did not answer, so nothing is verified either
@@ -747,8 +747,9 @@ live checks should assert.</li>
 f675582 → 500ac36 (F-11) → this one &middot; gate 997 passed / 2 skipped / 0 failed, +21 tests in the
 gate and 7 offline checks in the live module &middot; ruff + format clean, mypy strict clean on 56
 files, hygiene 80 &middot; backend/ 790 insertions / 50 deletions across 6 production and 5 test files
-&middot; CI green on every commit of the batch &middot; evidence: fifteen live runs on 2026-11-26, all
-success, verify_layout passed in every one &middot; bybit geo-blocked in every one &middot; the master is
+&middot; CI green on every commit of the batch &middot; evidence: the fifteen live runs read for this batch on
+2026-11-26, all success, verify_layout passed in every one — as it has in every venue run since
+2026-11-25, each later commit adding two more attempts &middot; bybit geo-blocked in every one &middot; the master is
 still empty (F-3 → 7.3)</footer>
 </div></body></html>"""
     out = HERE / "stage7-2-levers-implemented.html"

@@ -672,8 +672,9 @@ dukascopy.diagnosis verdict=the production attempt got no reply (network-IngestF
 `31 passed / 0 failed / 5 geo-blocked / 0 skipped of 36` with `production_ua=network-IngestFault`,
 `browser_ua=ok` (25,761 bytes) and `other_hour=network-IngestFault` — a *different* combination from
 run 13 — and published the corrected verdict again, naming the one variant that answered. So the
-corrected branch has now been exercised live twice, on two different input shapes, and
-`verify_layout` has passed fifteen times running.
+corrected branch has now been exercised live twice, on two different input shapes. `verify_layout`
+has passed in **every venue run since 2026-11-25** — fifteen consecutive passes were read for this
+batch, and each commit since has added two more attempts, none of which has failed.
 
 Run 13's single skip is the designed behaviour, not a regression: its ticks fetch did not answer, so
 the check skipped rather than failed (`test_live_endpoints.py:153`, *"did not answer, so nothing is
