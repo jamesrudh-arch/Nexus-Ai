@@ -1342,3 +1342,12 @@ characters over the cap`, so the bybit rows sit inside the tail and are **not** 
 Every pair re-read from its own check annotation and every ratio recomputed, not copied. This table is the
 evidence 8.4 starts from, and it is the reason 8.4 needs its own live runs before and after: the quantity it
 changes is the one that has moved 5.0× between runs while nothing in the code did.
+
+**Where the series stops being quoted, and why.** The commit that carried this section triggered its own
+`Live public endpoints` run — run 32, `conclusion=success`, on a commit that changed documents and design
+files and no code — and its numbers are deliberately **not** quoted here. Quoting them would require another
+commit, which would trigger another run, whose numbers would then be unquoted for the same reason: the regress
+is endless and each turn of it publishes a total that is stale on arrival. That is exactly what the property
+phrasing above exists to stop. So the rule this section leaves behind is the rule it follows: **the series is
+open-ended, the range is the claim, and the next batch that touches this record picks the table up from
+wherever CI has reached** — with every pair re-read from its own annotation before it is written down.
