@@ -141,3 +141,43 @@ fabricated flow or invented Greeks — absent data renders unavailable + cause.
 Loading (skeleton shimmer + message), Empty (icon + "watching N instruments"), Error (negative
 badge + retry + view logs), Stale (warning badge + last-updated + new-risk-blocked) — contained
 per region; one failing feed never blanks a screen.
+
+---
+
+## 3. Sub-deliverable 3.3 — Intelligence Centre & Trade Opportunities (BUILT — AWAITING REVIEW)
+
+Board: `design/stage3-3-intelligence-opportunities.html`. Var audit clean; 16 regions, 10
+specimen-tagged.
+
+### 3.1 Intelligence Centre region plan (docs/03 §7 chrome, complete)
+
+Attention priorities (rank, why-now chips: novelty/uncertainty/event, research depth Tier 0–4,
+cycle position OB→AN→RS→VF→DC→LE) · current tasks & tool activity (allowlist + source registry
+enforced, every line links to its run record) · beliefs & uncertainty (confidence as a band with
+validity interval and change conditions; a point estimate without them is a defect) · scenario
+status with calibration state · dossier view (evidence graph claims↔sources↔assets↔decisions with
+contradictions highlighted and linked, chronology, counter-thesis, quant result with run id,
+disposition + reason code, freshness) · memory & knowledge (type tabs, expiring TTLs, corrections
+as first-class entries) · decision-state strip carrying the complete vocabulary
+ACCEPT/REJECT/WAIT/REDUCE/EXIT/ESCALATE/ABSTAIN with reason codes. Context rail: knowledge-
+sufficiency meter with stated basis and what it is sufficient *for*, tier legend, audit posture
+(no hidden chain-of-thought).
+
+### 3.2 Trade Opportunities region plan
+
+Verified candidate queue: three verification stages per row (V1 evidence & data sufficiency,
+V2 risk & mandate compliance, V3 execution safety — definitions finalise at Stage 11, chrome
+reserved); any FAIL ends the candidate with a reason code; confidence never overrides a failed
+stage. Expanded intent carries exactly the docs/03 §5 approval-binding fields (instrument, venue,
+side, size, estimated cost, worst-case loss, portfolio impact, evidence summary, counter-case,
+stop/exit plan, expiry) because Stage 4 approval binds to that immutable intent. Queue states:
+empty (links to the Overview no-trade region), degraded engine (frozen queue + cause), verifying.
+Context rail: verification trail with timestamps; mandate checks — environment SHADOW routes any
+approval to paper execution; live authority DENIED until the owner authorises.
+
+### 3.3 Button chrome decision
+
+Buttons render as ghost/outline using semantic text + border tokens (primary = info/cyan family,
+danger = negative family, ghost = border.strong) so every label clears 4.5:1 in both modes with
+the approved Stage 2 token set. Filled buttons require dedicated on-colour text tokens; those
+enter with the component tier at Stage 4, not before.
