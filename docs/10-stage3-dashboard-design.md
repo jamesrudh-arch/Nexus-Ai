@@ -181,3 +181,45 @@ Buttons render as ghost/outline using semantic text + border tokens (primary = i
 danger = negative family, ghost = border.strong) so every label clears 4.5:1 in both modes with
 the approved Stage 2 token set. Filled buttons require dedicated on-colour text tokens; those
 enter with the component tier at Stage 4, not before.
+
+---
+
+## 4. Sub-deliverable 3.4 — Positions, Laboratory, Risk, History (BUILT — AWAITING REVIEW)
+
+Board: `design/stage3-4-trading-risk-history.html`. Four shells; var audit clean; 16 specimen tags.
+
+### 4.1 Open Positions (p8 positions + p9 execution room)
+
+Positions blotter with venue-reported protective-order state and a reconciliation column:
+unmatched rows block new risk on that instrument until resolved. Order blotter carries working
+orders, fills with slippage vs arrival, and rejects with reason codes linked to venue responses.
+Reconciliation card (ledger vs venue per account) sits beside the emergency-halt control, which
+shows its exact scope — accounts, instruments, working-order policy — before any confirm
+(docs/03 J-03). Context rail: per-position protective detail with venue ack timestamps and the
+unknown-order policy (unconfirmable order state → CRIT alert + new risk blocked).
+
+### 4.2 Strategy Laboratory (p7 + p11)
+
+Catalogue with cost-adjusted Sharpe as confidence intervals, maxDD, turnover, environment state
+and promotion-gate progress; never ranked by hit rate alone (docs/03 §8). Selected-strategy panel:
+hypothesis, backtest vs walk-forward vs stress rows, the five promotion gates with owner approval
+last, model-registry code hash and pinned data window. Scenario studio mini-panel: shocks with
+portfolio reprice and limit-after. Context rail states the promotion law (RESEARCH → SHADOW →
+PAPER → PILOT → LIVE, each step owner-approved, rollback recorded before promotion, never
+automatic) and paper-runtime progress.
+
+### 4.3 Portfolio & Risk (p8 + p11)
+
+Consolidated accounts, factor exposures with usage bars, concentration vs per-instrument limits,
+stress repricing with calibration state, and a risk-limits ledger: owner-set only, every change
+audited and linked, with the standing rule that the independent fail-closed risk engine cannot be
+widened by model confidence. Context rail: equity/drawdown curve anatomy — gross solid, net
+dashed with fees/funding/slippage deducted, trade annotations linking to records (docs/03 §8).
+
+### 4.4 Trade History (p12 + p13 + p9 fills)
+
+Fills table (venue-reported, slippage and fees per fill); performance & attribution with
+cost breakdown and benchmark comparison; calibration panel that shows under-sampled cases rather
+than hiding them; append-only audit & replay stream across research, decisions, approvals,
+orders, fills, changes and incidents with replay selector and CSV/PNG export carrying a
+provenance header (window, filters, data status).
