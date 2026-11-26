@@ -993,12 +993,17 @@ chosen**; §3.9 asks the owner to rule on the reframing rather than on a number.
 Nothing in `_assert_book` asserts agreement between the two endpoints, which is why all four runs
 passed with gaps of 0.000, 0.693, 0.461 and 1.250 without any being judged.
 
-**One limitation this batch owes rather than hides.** Runs 22 and 23 both skipped
+**One limitation this batch owed rather than hid — since discharged.** Runs 22 and 23 both skipped
 `test_parsed_ticks_are_in_the_right_price_band` (F-5: the feed did not answer inside the patience
-budget), which is the check that emits the renamed `layout_flag=` key. So the F-13 correction to that
-evidence line is **offline-evidenced only** and has not yet been observed in a live run — the same
-class of limitation as F-11. `verify_layout` itself passed in both runs, so the layout claim is
-live-evidenced; the renamed key is not yet.
+budget), which is the check that emits the renamed `layout_flag=` key. At the time of writing, the
+F-13 correction to that evidence line was **offline-evidenced only** — the same class of limitation as
+F-11 — while `verify_layout` itself was live-evidenced in both runs.
+
+**Runs 24, 25 and 26 each had no skips at all** (§4.1), so `parsed_ticks` ran in all three and
+`layout_flag=True` is now **live-evidenced**: the limitation is closed, three runs running. It is left
+recorded here rather than deleted, because the mechanism that produced it is still live — F-5's
+intermittent feed can skip that check on any run, and a limitation that was real once is worth keeping
+visible next to the runs that discharged it.
 
 ### 3.6 F-12 and F-13 — the record contradicting its own evidence
 
@@ -1191,17 +1196,33 @@ denominator.
 |---|---|---|---|---|---|
 | 24 | `45829853116` | **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** | **0.000** (mids identical, 60804.15) | 0.439 | 0.300 |
 | 25 | `45829842623` | **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** | **0.000** (mids identical, 60804.15) | 0.739 | 0.294 |
+| 26 | `45833872241` | **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** | **0.000** (mids identical, 60832.85) | **0.238** | **0.298** |
 
-Fetched adjacently, the two endpoints **agreed exactly** — gap 0.000 in both runs. That is the
-strongest confirmation of P-9's reframing available: shrink the interval and the "disagreement"
-disappears, which is what a market-moving explanation predicts and what an endpoint-disagreement
-explanation does not.
+Run 26 is `ab841c7`'s only venue run: that commit changed documents and no test, so the `push` event
+ran `ci` alone and only the `pull_request` event triggered `venue-verification`. All six commits of
+this batch are green — **22 runs, 0 non-success**.
+
+Fetched adjacently, the two endpoints **agreed exactly** — gap 0.000 in all three runs, at two
+different prices (60804.15, then 60832.85). That is the strongest confirmation of P-9's reframing
+available: shrink the interval and the "disagreement" disappears, which is what a market-moving
+explanation predicts and what an endpoint-disagreement explanation does not. Three samples still
+cannot bound a rate, which is why the accumulation continues rather than a tolerance being chosen.
+
+Run 26 also sharpens F-14. Its two interval readings are `dt_observed_s=0.238` against
+`dt_wall_s=0.298` — the venue-stamped interval is now *shorter* than the wall clock, where run 25 had
+it **2.5× longer**. The skew is therefore **bidirectional**, which rules out a one-sided explanation
+such as the ticker endpoint merely lagging: two venue timestamps straddling one fetch can fall on
+either side of it. Nothing can be inferred about our own latency from `observed_at` at all, which is
+precisely the finding.
 
 These runs also close two things the previous batch owed. **No skips at all**, so `verify_layout` and
 `parsed_ticks` both ran and F-13's renamed `layout_flag=` key is **live-evidenced at last** (it had
-been offline-only because runs 22 and 23 both skipped the check that emits it). And the trade list
-came back **`buy=0 sell=50`** — fully one-sided — and **passed**, which is P-7 vindicated live for the
-second time (run `45759709313` was 50 buys; this is 50 sells).
+been offline-only because runs 22 and 23 both skipped the check that emits it) — and held across all
+three runs, `layout_flag=True` each time. And the trade list came back **`buy=0 sell=50`** — fully
+one-sided — and **passed**, which is P-7 vindicated live for the second time (run `45759709313` was 50
+buys; this is 50 sells). Run 26 returned to a two-sided list, `buy=48 sell=2`, so the one-sided shape
+is intermittent rather than the new normal — which is what makes P-7 a ruling about the check and not
+a guess about the market.
 
 ### 4.2 F-14 — `observed_at` is venue time, not observation time, in all four adapters
 
@@ -1283,8 +1304,9 @@ as a pass).
 | Suite | **1,036 passed, 2 skipped, 0 failed** |
 | Live module collected | **49** (36 at the start of 7.3 → 41 → 49); live-source checks **12** |
 | Live module offline subset | **32 passed** |
-| CI, final commit `7929a96` | runs `45829853116` + `45829842623`, both `success`: **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** |
-| CI, every commit of the batch | green on all four commits, all events, 0 non-success |
+| CI, `7929a96` (P-9 code) | runs `45829853116` + `45829842623`, both `success`: **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** |
+| CI, `ab841c7` (this closure) | `45833872241` `success`, same result; one venue run only, because a documents-only commit runs `venue-verification` on the `pull_request` event alone |
+| CI, every commit of the batch | **22 runs across six commits, 0 non-success** |
 | Lint / format / types | ruff + format clean (82 files); **mypy strict Success on 57 source files** |
 | Repo hygiene | **83 passed** |
 | Boards | both re-audited: 0 undefined CSS vars, 0 external refs, 0 unstyled classes, tags balanced |

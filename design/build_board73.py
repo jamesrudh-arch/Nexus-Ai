@@ -305,6 +305,9 @@ def p9_table() -> str:
             ("25", "<span class='cite'>45829842623</span>", "<b class='ok'>0.000</b>",
              "<span class='mono'>0.739</span>", "<span class='mono'>0.294</span>",
              "0.000", "0.000", "60804.15", "60804.15"),
+            ("26", "<span class='cite'>45833872241</span>", "<b class='ok'>0.000</b>",
+             "<span class='mono'>0.238</span>", "<span class='mono'>0.298</span>",
+             "0.000", "0.000", "60832.85", "60832.85"),
         ],
     )
 
@@ -456,10 +459,13 @@ def gate_table() -> str:
              "<span class='cite'>(was 56)</span>", "<span class='mono'>mypy</span> (strict)"),
             ("Repo hygiene", "<b>83 passed</b> <span class='cite'>(was 80)</span>",
              "<span class='mono'>pytest tests/test_repo_hygiene.py</span>"),
-            ("CI, this batch", "Runs <span class='cite'>45819528009</span> (push) and "
-             "<span class='cite'>45819539643</span> (pull request), both "
-             "<span class='mono'>conclusion=success</span>: <b>36 passed / 0 failed / 5 geo-blocked "
-             "/ 0 skipped of 41</b>",
+            ("CI, this batch", "<b>22 runs across six commits, 0 non-success.</b> Latest: "
+             "<span class='cite'>45833872241</span> (<span class='cite'>ab841c7</span>) "
+             "<b>44 / 0 / 5 geo-blocked / 0 skipped of 49</b>, and "
+             "<span class='cite'>45829853116</span> + <span class='cite'>45829842623</span> "
+             "(<span class='cite'>7929a96</span>) the same. At 7.3's first commit the runs were "
+             "<span class='cite'>45819528009</span> + <span class='cite'>45819539643</span> at "
+             "36 / 0 / 5 / 0 of 41; collection has since gone 41 &rarr; 49",
              "<span class='mono'>gh api &hellip;/check-runs/&lt;job&gt;/annotations</span>"),
         ],
     )
@@ -511,11 +517,14 @@ def limits_table() -> str:
                   "what was measured. That is why every label is asserted non-trivial, over 40 "
                   "characters, and inside the audit payload's 200-char bound — and why a future seed "
                   "must be held to the same standard rather than copying the shape"),
-            ("3", "<b>Dukascopy's rank is a judgement call</b>, argued in §1 and reversible by one "
-                  "line. If <span class='mono'>DATA_AVAILABLE</span> is read as requiring "
-                  "reconciliation against a second source, the honest rank is "
-                  "<span class='mono'>CONNECTED</span> and EUR/USD leaves "
-                  "<span class='mono'>ready_for_research</span>"),
+            ("3", "<b>Dukascopy's rank was a judgement call &mdash; now ruled (D-048).</b> Argued in "
+                  "§1 and reversible by one line: if <span class='mono'>DATA_AVAILABLE</span> were read "
+                  "as requiring reconciliation against a second source, the honest rank would be "
+                  "<span class='mono'>CONNECTED</span> and EUR/USD would leave "
+                  "<span class='mono'>ready_for_research</span>. The owner confirmed "
+                  "<span class='mono'>DATA_AVAILABLE</span>, on the ground that "
+                  "<span class='cite'>pipeline.py:47-49</span> reserves the higher rung for a source "
+                  "that has produced stored bars and dukascopy has produced none"),
             ("4", "<b>One instrument per verified source.</b> Three canonical instruments is what "
                   "the evidence supports, not what a UI wants. A fourth needs its own evidence, and "
                   "the seed has no mechanism for speculative rows — which is the point"),
@@ -752,13 +761,17 @@ pass is not a measurement. §11 asks the owner to rule on the reframing rather t
 endpoints, which is why all four runs passed with gaps of 0.000, 0.693, 0.461 and 1.250 without any
 being judged. The measurement was added to the evidence line only &mdash; that is the whole of P-8's
 adopted half.</p>
-<div class="blocked"><b>One limitation this batch owes rather than hides.</b> Runs 22 and 23 both
-skipped <span class="mono">test_parsed_ticks_are_in_the_right_price_band</span> (F-5: the feed did not
-answer inside the patience budget), and that is the check which emits the renamed
-<span class="mono">layout_flag=</span> key from F-13. So that correction is <b>offline-evidenced only</b>
-and has not yet been observed in a live run &mdash; the same class of limitation as F-11.
-<span class="mono">verify_layout</span> itself passed in both runs, so the layout claim is
-live-evidenced; the renamed key is not yet.</div>
+<div class="gate"><b>One limitation this batch owed rather than hid &mdash; since discharged.</b>
+Runs 22 and 23 both skipped <span class="mono">test_parsed_ticks_are_in_the_right_price_band</span>
+(F-5: the feed did not answer inside the patience budget), and that is the check which emits the
+renamed <span class="mono">layout_flag=</span> key from F-13 &mdash; so at the time, that correction
+was <b>offline-evidenced only</b>, the same class of limitation as F-11, while
+<span class="mono">verify_layout</span> itself was live-evidenced in both runs. <b>Runs 24, 25 and 26
+each had no skips at all</b> (&sect;12), so <span class="mono">parsed_ticks</span> ran in all three and
+<span class="mono">layout_flag=True</span> is now <b>live-evidenced</b>, three runs running. The box
+stays rather than being deleted, because the mechanism that produced it is still live: F-5 can skip
+that check on any run, and a limitation that was real once is worth keeping visible beside the runs
+that discharged it.</div>
 
 <h3>7 &middot; F-12 and F-13 &mdash; the record contradicting its own evidence<span class="tag">NEW &middot; both found and fixed here</span></h3>
 <p>Found while writing this board's own §1, in the module the seed cites most. Two defects, both in
@@ -914,7 +927,12 @@ denominator the rate needs:</p>
 gap_bps=&hellip; dt_observed_s=&hellip; dt_wall_s=&hellip; bps_per_s_observed=&hellip;
 bps_per_s_wall=&hellip; quoted_spread_bps=&hellip; <b>asserts_agreement=False</b></span></div>
 <div class="card">{p9_table()}</div>
-<p class="cap">Three pure functions hold the arithmetic so it can be pinned without a venue:
+<p class="cap">Gap 0.000 in all three, at two different prices &mdash; and run 26 is
+<span class="cite">ab841c7</span>&rsquo;s only venue run, because a documents-only commit runs
+<span class="mono">venue-verification</span> on the <span class="mono">pull_request</span> event
+alone. All six commits of this batch are green: <b>22 runs, 0 non-success</b>. Three samples still
+cannot bound a rate, which is why the accumulation continues rather than a tolerance being chosen.
+Three pure functions hold the arithmetic so it can be pinned without a venue:
 <span class="mono">_gap_bps</span> is &sect;2.5&rsquo;s convention
 <span class="mono">|qm &minus; bm| / qm &times; 1e4</span> in exactly one place, and
 <span class="mono">_rate_bps_per_second</span> returns <span class="mono">None</span> rather than
@@ -928,7 +946,13 @@ shown beside it.</p>
 <div class="blocked"><b>F-14 &mdash; found by the dual recording, on its first run.</b>
 <span class="mono">dt_observed_s=0.739</span> beside <span class="mono">dt_wall_s=0.294</span> is not
 possible if both measure one interval: the venue-stamped gap was <b>2.5&times; the wall clock</b>.
-Reading the adapters explains it, and the explanation is not local to okx.</div>
+Reading the adapters explains it, and the explanation is not local to okx. Run 26 then made the
+skew <b>bidirectional</b>: <span class="mono">dt_observed_s=0.238</span> against
+<span class="mono">dt_wall_s=0.298</span>, the venue-stamped interval now <i>shorter</i> than the wall
+clock where run 25 had it 2.5&times; longer. That rules out a one-sided explanation such as the
+ticker endpoint merely lagging &mdash; two venue timestamps straddling one fetch can fall on either
+side of it &mdash; so nothing at all can be inferred about our own latency from
+<span class="mono">observed_at</span>. Which is precisely the finding.</div>
 <div class="card">{f14_table()}</div>
 <p class="cap"><b>Not fixed here, deliberately.</b> Changing what
 <span class="mono">observed_at</span> means touches four adapters, every record type and every test
@@ -959,10 +983,13 @@ both success, 36 passed / 0 failed / 5 geo-blocked of 41, and 4760462's pair
 instruments and four venue mappings, bybit among them at SUPPORTED and not omitted &middot; verify_layout
 has passed in every venue run <i>that reached the source</i> since 2026-11-25, stated as a floor
 because each later commit adds two more attempts, and qualified because a run whose feed never answers
-skips rather than passes (F-13) &middot; and 7929a96's pair 45829853116 + 45829842623 both success at
-44 passed / 0 failed / 5 geo-blocked / <b>0 skipped</b> of 49, which is the first run with no skips at
-all and so live-evidences F-13's renamed layout_flag= key at last, and returned a fully one-sided
-trade list (buy=0 sell=50) that passed &mdash; P-7 vindicated live a second time &middot; F-3 closed,
+skips rather than passes (F-13) &middot; and 7929a96's pair 45829853116 + 45829842623 plus
+ab841c7's 45833872241 all success at 44 passed / 0 failed / 5 geo-blocked / <b>0 skipped</b> of 49 —
+three consecutive runs with no skips at all, which live-evidences F-13's renamed layout_flag= key at
+last, and gap_bps 0.000 in all three at two different prices. Run 25 returned a fully one-sided trade
+list (buy=0 sell=50) that passed, P-7 vindicated live a second time, and run 26 came back two-sided
+(buy=48 sell=2), so the one-sided shape is intermittent rather than the new normal &middot; 22 runs
+across six commits, 0 non-success &middot; F-3 closed,
 F-12 and F-13 closed, F-8 reframed as P-9 and now ruled and implemented, <b>F-14 found</b>, F-2 F-5
 F-6 F-11 F-14 still open</footer>
 </div></body></html>"""
