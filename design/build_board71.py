@@ -83,18 +83,26 @@ def evidence_base() -> str:
     return f"""<table>
 <tr><th>source of truth</th><th>identity</th><th>what it gave</th><th>readable here?</th></tr>
 {rows([
-    ("live venue run <b>at HEAD</b>",
+    ("live venue run <b>on this board's own commit</b>",
+     "<span class='mono'>run 45758610197</span> · job <span class='mono'>139703054396</span> · "
+     "<span class='mono'>fa74748</span> · 2026-11-26T04:59Z · <b>success</b>",
+     "24 passed / 0 failed / 5 geo-blocked / 0 skipped of 29 — the third consecutive run with the "
+     "same headline, on a commit that changed <b>no code at all</b>",
+     "<span class='chip pos'>yes — annotation</span>"),
+    ("the two runs before it",
      "<span class='mono'>run 45756716181</span> · job <span class='mono'>139696937355</span> · "
-     "<span class='mono'>b67ab39</span> · 2026-11-26T04:41Z · <b>success</b>",
-     "the check annotation: 24 passed / 0 failed / 5 geo-blocked / 0 skipped of 29, with per-source "
-     "numbers",
-     "<span class='chip pos'>yes — annotation</span>"),
-    ("the run before it",
-     "<span class='mono'>run 45754638978</span> · job <span class='mono'>139690278846</span> · "
-     "<span class='mono'>a77865e</span> · 04:21Z · success",
-     "the same headline and the same dukascopy layout result 20 minutes earlier — the reproduction "
-     "that makes F-1 more than one lucky download",
-     "<span class='chip pos'>yes — annotation</span>"),
+     "<span class='mono'>b67ab39</span> · 04:41Z · success<br><span class='mono'>run "
+     "45754638978</span> · job <span class='mono'>139690278846</span> · <span class='mono'>a77865e</span>"
+     " · 04:21Z · success",
+     "the same dukascopy layout result three times running, and three <b>different</b> reachability "
+     "diagnoses — which is what makes F-1 solid and F-5 the opposite",
+     "<span class='chip pos'>yes — annotations</span>"),
+    ("CI on this commit",
+     "<span class='mono'>run 45758603745</span> · <span class='mono'>fa74748</span> · <b>all five "
+     "jobs success</b>",
+     "secret scanning · compose config · backend lint/types/tests · runtime smoke in a real container "
+     "· amd64+arm64 image — the repository is green after a batch that changed only docs and design",
+     "<span class='chip pos'>yes — per-job conclusions</span>"),
     ("job logs", "<span class='mono'>gh run view --log-failed</span> / <span class='mono'>…/jobs/&lt;id&gt;/logs</span>",
      "would give the full pytest transcript",
      "<span class='chip neg'>no — EOF against results-receiver.actions.githubusercontent.com, "
@@ -292,6 +300,44 @@ def retirement_table() -> str:
 </table>"""
 
 
+def three_runs_table() -> str:
+    return f"""<table>
+<tr><th>what</th><th>run 45754638978<br>a77865e · 04:21Z</th><th>run 45756716181<br>b67ab39 · 04:41Z</th>
+<th>run 45758610197<br>fa74748 · 04:59Z</th><th>reading</th></tr>
+{rows([
+    ("headline", "24 / 0 / 5 geo-blocked of 29", "24 / 0 / 5 geo-blocked of 29",
+     "24 / 0 / 5 geo-blocked of 29", "<span class='chip pos'>identical three times</span>"),
+    ("dukascopy <span class='mono'>verify_layout</span>",
+     "passed=True · 25761 → 101480 · 5074 ticks · reasons=-",
+     "passed=True · 25761 → 101480 · 5074 ticks · reasons=-",
+     "passed=True · 25761 → 101480 · 5074 ticks · reasons=-",
+     "<b>byte-identical</b> — the evidence O-010 demands, reproduced (F-1)"),
+    ("dukascopy parsed band", "1.09502 – 1.0964", "1.09502 – 1.0964", "1.09502 – 1.0964",
+     "identical: the same hour file, and the divisor is right for EURUSD"),
+    ("dukascopy tag still recorded", "<span class='mono'>DUKASCOPY_BI5_UNVERIFIED</span>",
+     "<span class='mono'>DUKASCOPY_BI5_UNVERIFIED</span>", "<span class='mono'>DUKASCOPY_BI5_UNVERIFIED</span>",
+     "<span class='chip warn'>stale in all three</span> — the constant never changed"),
+    ("dukascopy probes", "production_ua <b>ok</b>", "both UAs failed; other hour ok (25313)",
+     "production_ua failed; <b>browser_ua ok</b>",
+     "<span class='chip neg'>three different patterns</span> — noise-dominated, no cause (F-5)"),
+    ("transport calls to land the bi5", "1", "16", "1 then 4",
+     "intermittency is real and varies wildly run to run"),
+    ("okx bid / ask", "60960.3 / 60960.4", "61063.2 / 61063.3", "60974.6 / 60974.7",
+     "prices move, as they should; structure identical each time"),
+    ("okx book best bid / ask", "60960.3 / 60960.4", "61063.2 / 61063.3",
+     "<b>60965.8 / 60965.9</b>", "run 3's book is 8.8 USD (1.4 bps) from its own ticker — F-8"),
+    ("okx book / entitlement", "depth 40 · LIVE · 0.016 bps", "depth 40 · LIVE · 0.016 bps",
+     "depth 40 · LIVE · 0.016 bps", "identical"),
+    ("binance vision dump", "71,720-byte ZIP · 1440 rows · 0 rejected · units=us",
+     "71,720-byte ZIP · 1440 rows · 0 rejected · units=us",
+     "71,720-byte ZIP · 1440 rows · 0 rejected · units=us",
+     "identical — a fixed historical day, so it must be"),
+    ("bybit", "5 GEO-BLOCKED", "5 GEO-BLOCKED", "5 GEO-BLOCKED",
+     "<span class='chip neg'>unchanged, and unchangeable from a hosted runner</span> (F-2)"),
+])}
+</table>"""
+
+
 def limits_table() -> str:
     return f"""<table>
 <tr><th>limitation</th><th>why it matters</th></tr>
@@ -343,7 +389,7 @@ Market &amp; venue coverage &mdash; what is actually verified, per venue and per
 <div class="ribbon">RESEARCH BATCH — no production code is changed. Stage 7's mandate is recorded in
 <code>docs/12</code> §1.4: <i>&ldquo;Stage 7 retires the unverified rows market by market with
 evidence per market.&rdquo;</i> This board establishes, with measurements rather than restatements,
-what those rows now say. Three of the seven findings below could only be found by <b>running</b>
+what those rows now say. Three of the eight findings below could only be found by <b>running</b>
 things: booting the API, climbing the certification ladder, and handing the domain a venue its own
 enum does not contain.</div>
 
@@ -364,7 +410,7 @@ on earth disappeared. <b>Eleven checks are live evidence about a source</b>: 5 o
 vision, 3 dukascopy, 1 dukascopy reachability. Any coverage claim built on &ldquo;24 passed&rdquo;
 would overstate what is proven by more than half.</div>
 
-<h3>3 · The verified numbers, per source<span class="tag">run 45756716181 · job 139696937355 · b67ab39 · 04:41Z</span></h3>
+<h3>3 · The verified numbers, per source<span class="tag">quoted from run 45756716181 · b67ab39 · 04:41Z; reproduced by runs 45754638978 and 45758610197</span></h3>
 <p><b>OKX</b> — five public endpoints, real responses, normalised. <span class="chip pos">5 / 5 PASS</span></p>
 {okx_card()}
 <p class="cap">Contract size 0.01 and tick size 0.1 are the numbers sizing math needs; the book is
@@ -384,6 +430,13 @@ tens of thousands of years out.</p>
 unauthenticated endpoints, from a GitHub-hosted runner. Nothing about the adapter is implicated and
 nothing about it is proven. Per D-007 venues are certified independently, so okx's five passes say
 nothing here.</p>
+<p><b>The three runs side by side</b> — what repeated exactly, and what did not:</p>
+<div class="card">{three_runs_table()}</div>
+<p class="cap">The dukascopy layout result is byte-identical across all three, including the run on a
+commit that changed no code. The reachability probes differ every time, and in run 3 the
+<i>browser</i> user agent succeeded where the production one failed — the exact opposite of run 1.
+Read carelessly that would suggest a user-agent policy; read honestly it says the probe is
+noise-dominated, which is the verdict the diagnostic itself returned (F-5).</p>
 
 <h3>4 · Findings<span class="tag">F-n: research findings, not register decisions (those are D-0nn)</span></h3>
 
@@ -392,9 +445,11 @@ nothing here.</p>
 says no real file has ever been downloaded</div>
 <p><span class="mono">verify_layout</span>'s own docstring states the bargain:
 <i>&ldquo;Passing these is the evidence required to flip <span class="mono">LAYOUT_VERIFIED</span> to
-<span class="mono">True</span>&rdquo;</i> <span class="cite">(dukascopy.py:219–225)</span>. At HEAD it
+<span class="mono">True</span>&rdquo;</i> <span class="cite">(dukascopy.py:219–225)</span>. It has now
 returned <span class="mono">passed=True · payload_bytes=25761 · decompressed_bytes=101480 ·
-tick_count=5074 · reasons=-</span>, and the same result in the run before it. 101,480 is 5,074 ×
+tick_count=5074 · reasons=-</span> in <b>three consecutive runs</b> — <span class="mono">a77865e</span>,
+<span class="mono">b67ab39</span>, and <span class="mono">fa74748</span>, the last of which changed no
+code at all, so the result does not depend on any edit in this batch. 101,480 is 5,074 ×
 20 bytes exactly, offsets inside the hour, and the parsed prices 1.09502–1.0964 sit in EURUSD's real
 band — which is the check that would catch a wrong point divisor, the silent 100× error O-010 names.</p>
 <p>Against that, four statements and one constant are stale:
@@ -488,22 +543,52 @@ and the one venue it <i>can</i> reach cannot be expressed. <b>Closes with:</b> l
 <div class="finding"><div class="fid">F-5 · DO NOT OVERCLAIM THE 503</div>
 <div class="ft">Two runs twenty minutes apart produced different dukascopy diagnoses, so the 503 is
 still unexplained — only the layout result reproduced</div>
-<p>Run <span class="mono">45754638978</span> (04:21Z) probed and concluded
-<span class="mono">verdict="nothing to diagnose: the production User-Agent works"</span> after
-<span class="mono">probe.production_ua outcome=ok bytes=25761 lzma=True</span>. Run
-<span class="mono">45756716181</span> (04:41Z, HEAD) probed the same hour and got
-<span class="mono">network-IngestFault</span> for <b>both</b> user agents, succeeded on a different
-hour (<span class="mono">10h_ticks.bi5</span>, 25,313 bytes), and concluded
-<span class="mono">verdict="the host was never reached (network-IngestFault), so no cause can be
-distinguished"</span> with <span class="mono">action="re-run from a host with egress"</span>.</p>
-<p>The diagnostic behaved exactly as designed — it refused to invent a cause it had not measured,
-which is one of the seven logic tests that pin that behaviour. But it means the ledger's claim that
-the 503 was &ldquo;characterised&rdquo; is only partly supported: throttling is <i>consistent</i> with
-the evidence (16 transport calls to land one 25,761-byte file; the patience helper exists because
-this feed answers intermittently), while no cause has been <i>established</i>. <b>What reproduced in
-both runs is the layout pass — which is the evidence O-010 actually demands.</b> <b>Closes with:</b>
-nothing here; it needs repeated runs, and the honest state is &ldquo;intermittent, cause
-unknown&rdquo;.</p></div>
+<p>Three runs probed the same two hours and produced <b>three different patterns</b>:</p>
+<div class="ev"><span class="k">run 45754638978 (04:21Z, a77865e)</span>
+  production_ua=ok bytes=25761 lzma=True
+  verdict="nothing to diagnose: the production User-Agent works"
+<span class="k">run 45756716181 (04:41Z, b67ab39)</span>
+  production_ua=network-IngestFault   browser_ua=network-IngestFault
+  production_ua_other_hour=ok bytes=25313 lzma=True   (10h_ticks.bi5)
+  verdict="the host was never reached (network-IngestFault), so no cause can be distinguished"
+<span class="k">run 45758610197 (04:59Z, fa74748)</span>
+  production_ua=network-IngestFault   browser_ua=ok bytes=25761 lzma=True
+  production_ua_other_hour=network-IngestFault
+  verdict="the host was never reached (network-IngestFault), so no cause can be distinguished"</div>
+<p>Run 3 is the decisive one, and it points the opposite way from run 1: the <b>browser</b> user agent
+succeeded where the production one failed. Taken alone, run 1 says "the production User-Agent works";
+taken alone, run 3 would say "you need a browser User-Agent". Both readings would be over-fitting one
+sample. The probes are noise-dominated — which is exactly the verdict the diagnostic returned twice,
+and which seven offline logic tests require it to return rather than inventing a cause. Adopting a
+browser user agent in the adapters on the strength of run 3 would be circumvention of a host's stated
+preference justified by a single noisy sample; the module already refuses to make that choice for
+itself and leaves it to the owner.</p>
+<p>So the ledger's claim that the 503 was &ldquo;characterised&rdquo; is only partly supported:
+throttling is <i>consistent</i> with the evidence (16 transport calls to land one 25,761-byte file in
+run 2, 4 in run 3, 1 in run 1; the patience helper exists because this feed answers intermittently),
+while no cause has been <i>established</i> and no user-agent conclusion survives three samples.
+<b>What reproduced in all three runs is the layout pass — the evidence O-010 actually demands.</b>
+<b>Closes with:</b> nothing here; the honest state is &ldquo;intermittent, cause unknown&rdquo;, and
+it stays that way until runs accumulate or the deployment host offers a stable vantage point.</p>
+</div>
+
+<div class="finding"><div class="fid">F-8 · EACH ENDPOINT IS CHECKED ALONE</div>
+<div class="ft">Nothing asserts that two endpoints from the same venue agree with each other, and run
+3 shows the gap is measurable</div>
+<p>In run <span class="mono">45758610197</span>, okx's ticker check recorded
+<span class="mono">bid=60974.6 ask=60974.7</span> and the order-book check, sampled seconds later in
+the same run, recorded <span class="mono">best_bid=60965.8 best_ask=60965.9</span> — a difference of
+<b>8.8 USD, about 1.4 bps</b>. Both are internally sound (each uncrossed at 0.016 bps) and both
+passed. In a moving market that spread is entirely plausible; the point is that <b>the suite could not
+distinguish it from a venue serving inconsistent data across endpoints</b>, because every check
+validates one endpoint in isolation: uncrossed book, both trade sides, contiguous candles, prices
+inside the quoted band.</p>
+<p><b>Consequence:</b> a cross-endpoint consistency assertion — ticker best bid/ask against the top of
+the book, sampled together, with a tolerance stated in bps and a timestamp gap recorded — would be the
+check that catches a venue whose feeds disagree. It is cheap, offline-testable against fixtures, and
+belongs with the verification module rather than the adapters. <b>Closes with:</b> an optional addition
+to L-A's batch; it is not required to retire either honesty row, and this board does not claim it
+is.</p></div>
 
 <div class="finding"><div class="fid">F-6 · 3 OF 14</div>
 <div class="ft">Fourteen asset classes are declared; three have a free source, one more is plausible,
@@ -578,8 +663,12 @@ of the five need an authorisation this batch does not have.</p>
 gh api repos/:owner/:repo/actions/runs/45756716181/jobs --jq '.jobs[0].id'   -> 139696937355
 gh api repos/:owner/:repo/check-runs/139696937355/annotations --jq '.[].message'
 gh api repos/:owner/:repo/actions/runs/45756716181 --jq '.head_sha'          -> b67ab39… (= HEAD)
-<span class="k"># the same, for the run before it</span>
+<span class="k"># the run on this board's own commit, and the one before that</span>
+gh api repos/:owner/:repo/actions/runs/45758610197/jobs --jq '.jobs[0].id'   -> 139703054396
+gh api repos/:owner/:repo/check-runs/139703054396/annotations --jq '.[].message'
 gh api repos/:owner/:repo/check-runs/139690278846/annotations --jq '.[].message'
+<span class="k"># CI on this commit</span>
+gh api repos/:owner/:repo/actions/runs/45758603745/jobs --jq '.jobs[].conclusion'  -> 5x success'
 <span class="k"># what the 29 checks actually are</span>
 NEXUS_LIVE_VERIFY=1 pytest tests/test_live_endpoints.py --collect-only -v    -> 29, by class
 <span class="k"># what a real boot reports for coverage</span>
@@ -631,8 +720,9 @@ carrying a spliced fragment of the Stage 2 paragraph), the status headers of
 still said gate 975/2/0 after the verified number became 976/2/0.</p>
 </div>
 
-<footer>Stage 7.1 &middot; research &middot; no production code changed &middot; evidence: run
-45756716181 at b67ab39 (HEAD) + run 45754638978 + a real in-process boot + executed probes of the
+<footer>Stage 7.1 &middot; research &middot; no production code changed &middot; evidence: live runs
+45758610197 (fa74748, this commit), 45756716181 (b67ab39) and 45754638978 (a77865e) &middot; CI run
+45758603745 all five jobs green &middot; a real in-process boot &middot; executed probes of the
 registry and domain types</footer>
 </div></body></html>"""
     out = HERE / "stage7-1-market-venue-coverage.html"
