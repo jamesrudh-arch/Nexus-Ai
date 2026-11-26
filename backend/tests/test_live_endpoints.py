@@ -58,6 +58,7 @@ from nexus.data.records import (
     BookRecord,
     HttpTransport,
     IngestFault,
+    QuoteRecord,
     TickRecord,
     TokenBucket,
 )
@@ -425,6 +426,72 @@ def _assert_book(book: Any, *, source: str, label: str) -> None:
     )
 
 
+# ------------------------------------------------------- P-9: the cross-endpoint pair, recorded not judged
+def _mid(bid: Decimal, ask: Decimal) -> Decimal:
+    return (bid + ask) / 2
+
+
+def _gap_bps(quotes_mid: Decimal, book_mid: Decimal) -> Decimal:
+    """F-8's convention, stated wherever it is published: ``|qm - bm| / qm * 1e4``.
+
+    A statistic with an unstated denominator is a defect (that is what F-8 was), so the convention
+    lives in exactly one function and every published number comes from it.
+    """
+    return abs(quotes_mid - book_mid) / quotes_mid * Decimal(10_000)
+
+
+def _rate_bps_per_second(gap_bps: Decimal, elapsed_seconds: float) -> float | None:
+    """P-9's quantity of interest: how fast the two mids diverged, not how far apart they ended up.
+
+    ``None`` when the interval is not measurable, because a rate with no denominator is the same
+    defect as a statistic with no convention — and dividing by a zero or negative interval would
+    invent one.
+    """
+    if elapsed_seconds <= 0:
+        return None
+    return round(float(gap_bps) / elapsed_seconds, 3)
+
+
+def _record_cross_endpoint(
+    quotes: Any,
+    book: Any,
+    *,
+    label: str,
+    wall_seconds: float,
+) -> None:
+    """Record one quotes/book pair and assert **nothing** about whether they agree.
+
+    P-9, the owner's ruling at Stage 7.3: the two endpoints are not simultaneous, so a constant bps
+    tolerance would measure market movement rather than disagreement. Four runs put the interval at
+    1.287-1.435 s and the implied rate at 0.000-0.904 bps/s, and a sample that small cannot bound a
+    rate's upper end. So the pair is recorded — both mids, both timestamps, the interval measured two
+    ways, the gap and the rate — and accumulation is left to do the rest.
+
+    This function contains no assertion about the gap on purpose. Adding one would re-litigate a
+    question the owner has answered, and would fail on ordinary volatility.
+    """
+    quotes_mid = _mid(quotes.bid, quotes.ask)
+    book_mid = _mid(book.best_bid, book.best_ask)
+    observed_seconds = (book.observed_at - quotes.observed_at).total_seconds()
+    gap = _gap_bps(quotes_mid, book_mid)
+    _evidence(
+        f"{label}.cross_endpoint",
+        quotes_mid=quotes_mid,
+        book_mid=book_mid,
+        gap_bps=round(float(gap), 3),
+        # Two independent readings of the same interval: the adapters' own timestamps, and the wall
+        # clock around the two calls. If they ever disagree materially, something is stamping a
+        # timestamp that is not the fetch time — which would quietly invalidate every gap published
+        # so far, so the disagreement is recorded rather than averaged away.
+        dt_observed_s=round(observed_seconds, 3),
+        dt_wall_s=round(wall_seconds, 3),
+        bps_per_s_observed=_rate_bps_per_second(gap, observed_seconds),
+        bps_per_s_wall=_rate_bps_per_second(gap, wall_seconds),
+        quoted_spread_bps=round(float((quotes.ask - quotes.bid) / quotes.bid * 10_000), 3),
+        asserts_agreement=False,
+    )
+
+
 def _assert_instruments(records: tuple[Any, ...], *, label: str, wanted: str) -> None:
     assert records, f"{label}: no instruments came back"
     by_symbol = {record.venue_symbol: record for record in records}
@@ -523,6 +590,22 @@ class TestOkxLiveEndpoints:
         with _live("okx"):
             book = await adapter.book(OKX_INST_ID, depth=20)
         _assert_book(book, source=OKX_SOURCE, label="okx")
+
+    async def test_the_quotes_and_book_pair_is_recorded_and_not_judged(self, transport: Any) -> None:
+        """P-9: fetch the pair back-to-back and record the rate. Assert nothing about agreement.
+
+        The interval measured across the whole class was 1.287-1.435 s, but that spanned the trades
+        and candles fetches between the two calls. Fetching them adjacently measures the endpoints
+        themselves, which is the interval the rate needs as its denominator.
+        """
+        adapter = OkxPublicAdapter(transport=transport)
+        with _live("okx"):
+            before = datetime.now(UTC)
+            quotes = await adapter.quotes([OKX_INST_ID])
+            book = await adapter.book(OKX_INST_ID, depth=20)
+            wall_seconds = (datetime.now(UTC) - before).total_seconds()
+        assert quotes, "okx: no quotes came back"
+        _record_cross_endpoint(quotes[0], book, label="okx", wall_seconds=wall_seconds)
 
 
 # --------------------------------------------------------------------- Binance Vision
@@ -1131,3 +1214,109 @@ class TestTradeSideRuling:
         line = next(x for x in capsys.readouterr().out.splitlines() if ".book" in x)
         assert f"observed_at={self.NOW.isoformat()}" in line
         assert "spread_bps=" in line and "entitlement=LIVE" in line
+
+
+class TestCrossEndpointRateArithmetic:
+    """P-9, offline: the arithmetic behind the rate, and the fact that nothing judges it.
+
+    These pin the helper rather than the venue, so the convention that produced every published
+    `gap_bps` cannot drift from the code that computes the next one. F-8 was a statistic with an
+    unstated denominator; the defence against that recurrence is a single function and a test that
+    re-derives a number already on the record from it.
+    """
+
+    #: Run 45819539643's published evidence, verbatim from its annotation.
+    RUN_19_QUOTES = (Decimal("60591.2"), Decimal("60591.3"))
+    RUN_19_BOOK = (Decimal("60587.0"), Decimal("60587.1"))
+    RUN_19_DT = 1.287
+
+    def _quote(self, bid: Decimal, ask: Decimal, at: datetime) -> QuoteRecord:
+        return QuoteRecord(
+            instrument_id="INS-BTC-USDT-USDT",
+            venue="OKX",
+            venue_symbol="BTC-USDT-SWAP",
+            bid=bid,
+            ask=ask,
+            observed_at=at,
+            source=OKX_SOURCE,
+        )
+
+    def _book(self, bid: Decimal, ask: Decimal, at: datetime) -> BookRecord:
+        return BookRecord(
+            instrument_id="INS-BTC-USDT-USDT",
+            venue="OKX",
+            venue_symbol="BTC-USDT-SWAP",
+            bids=(BookLevel(bid, Decimal("0.5")),),
+            asks=(BookLevel(ask, Decimal("0.5")),),
+            observed_at=at,
+            entitlement="LIVE",
+            source=OKX_SOURCE,
+        )
+
+    def test_the_convention_re_derives_a_number_already_on_the_record(self) -> None:
+        """Run 19 published gap 0.693 bps over 1.287 s. Recomputing it from the helper must agree,
+        or the helper and the record have drifted apart."""
+        qm = _mid(*self.RUN_19_QUOTES)
+        bm = _mid(*self.RUN_19_BOOK)
+        assert qm == Decimal("60591.25") and bm == Decimal("60587.05")
+        gap = _gap_bps(qm, bm)
+        assert round(float(gap), 3) == 0.693
+        assert _rate_bps_per_second(gap, self.RUN_19_DT) == 0.539
+
+    def test_the_denominator_is_the_quotes_mid_not_the_book_mid(self) -> None:
+        """`|qm - bm| / qm`, as stated in §2.5. Swapping the denominator changes the answer, so the
+        asymmetry is pinned rather than left to whoever reads the formula next."""
+        qm, bm = Decimal("60591.25"), Decimal("60587.05")
+        assert round(float(_gap_bps(qm, bm)), 6) != round(float(abs(qm - bm) / bm * 10_000), 6)
+
+    def test_a_gap_is_symmetric_in_sign_but_not_in_magnitude(self) -> None:
+        """The book above the quotes and below it are the same distance, and neither is a failure."""
+        qm = Decimal("60000")
+        assert _gap_bps(qm, Decimal("60006")) == _gap_bps(qm, Decimal("59994"))
+
+    def test_a_rate_with_no_interval_is_not_invented(self) -> None:
+        """Dividing by zero or a negative interval would fabricate a denominator, which is the same
+        defect F-8 named. `None` says "not measurable" instead."""
+        assert _rate_bps_per_second(Decimal("1.5"), 0.0) is None
+        assert _rate_bps_per_second(Decimal("1.5"), -0.4) is None
+
+    def test_an_absurd_gap_is_recorded_and_not_judged(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """The whole of P-9 in one test: a 5,064 bps divergence — the book at half the price — must pass.
+
+        If this ever fails, somebody has re-litigated a question the owner answered, and the fix is
+        to remove their assertion, not to raise the threshold.
+        """
+        at = datetime(2026, 11, 26, 13, 5, 9, 75000, tzinfo=UTC)
+        quotes = self._quote(Decimal("60784.9"), Decimal("60785.0"), at)
+        book = self._book(Decimal("30000.0"), Decimal("30000.1"), at + timedelta(seconds=1.383))
+        _record_cross_endpoint(quotes, book, label="okx", wall_seconds=1.400)
+        line = next(x for x in capsys.readouterr().out.splitlines() if "cross_endpoint" in x)
+        assert "asserts_agreement=False" in line
+        # |60784.95 - 30000.05| / 60784.95 * 1e4 = 5064.56, computed by the helper and verified
+        # against that arithmetic. Hardcoded on purpose: a magic number that matches the convention
+        # today is the thing that fails when somebody changes the denominator.
+        assert "gap_bps=5064.56" in line, line
+        assert "bps_per_s_observed=3662.01" in line, line
+        assert "dt_observed_s=1.383" in line and "dt_wall_s=1.4" in line
+
+    def test_both_readings_of_the_interval_are_recorded(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """The adapters' timestamps and the wall clock around the calls are independent readings of
+        one interval. A material disagreement would mean a timestamp is not the fetch time, which
+        would quietly invalidate every gap published so far — so it is recorded, not averaged away."""
+        at = datetime(2026, 11, 26, 13, 5, 2, 973000, tzinfo=UTC)
+        quotes = self._quote(Decimal("60780.0"), Decimal("60780.1"), at)
+        book = self._book(Decimal("60777.2"), Decimal("60777.3"), at + timedelta(seconds=1.435))
+        _record_cross_endpoint(quotes, book, label="okx", wall_seconds=9.999)
+        line = next(x for x in capsys.readouterr().out.splitlines() if "cross_endpoint" in x)
+        assert "dt_observed_s=1.435" in line and "dt_wall_s=9.999" in line
+        assert "bps_per_s_observed=0.321" in line, line
+        assert "bps_per_s_wall=0.046" in line, line
+
+    def test_an_identical_pair_records_a_zero_rate(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """Run 18's shape: same interval, no movement, gap exactly zero. Zero is a measurement."""
+        at = datetime(2026, 11, 26, 12, 26, 10, 568000, tzinfo=UTC)
+        quotes = self._quote(Decimal("60606.2"), Decimal("60606.3"), at)
+        book = self._book(Decimal("60606.2"), Decimal("60606.3"), at + timedelta(seconds=1.338))
+        _record_cross_endpoint(quotes, book, label="okx", wall_seconds=1.350)
+        line = next(x for x in capsys.readouterr().out.splitlines() if "cross_endpoint" in x)
+        assert "gap_bps=0.0" in line and "bps_per_s_observed=0.0" in line
