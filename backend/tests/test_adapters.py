@@ -10,9 +10,10 @@ That is a real limitation and is recorded as such: correct parsing of a syntheti
 proves the normalisation logic, it does **not** prove the live endpoint still returns that
 shape. Phase 3's exit gate included a live-endpoint verification step that had to run from a host
 with egress; it runs from CI, and on 2026-11-26 it produced the evidence that flipped
-``DUKASCOPY.LAYOUT_VERIFIED`` to ``True`` (four consecutive runs against a real bi5 hour — see
-``docs/14`` §1.4 F-1). The fixtures below are still synthetic, so they still prove parsing and not
-the live shape; the live module is what proves that, and it is the only place a real payload appears.
+``DUKASCOPY.LAYOUT_VERIFIED`` to ``True`` (six consecutive runs against the same real bi5 hour,
+``2026-11-24T12:00Z`` — see ``docs/14`` §1.4 F-1 and §2.1). The fixtures below are still synthetic,
+so they still prove parsing and not the live shape; the live module is what proves that, and it is
+the only place a real payload appears.
 
 What these tests do guarantee:
 * every adapter is structurally credential-free and cannot place an order;
@@ -148,10 +149,14 @@ class TestNoCredentialSurface:
         """The flag follows the evidence, in both directions.
 
         It was ``False`` from Phase 3 until 2026-11-26 because no real file had ever been downloaded.
-        ``verify_layout`` then passed against a genuine ``EURUSD/2026-10-24/12h_ticks.bi5`` in four
-        consecutive CI runs (``45754638978``, ``45756716181``, ``45758610197``, ``45759709313``):
-        25,761 compressed bytes → 101,480 decompressed = 5,074 ticks × 20 exactly, no failed check,
-        parsed prices 1.09502–1.0964. Evidence in ``docs/14`` §1.4 F-1 and ``docs/00`` O-010.
+        ``verify_layout`` then passed against a genuine hour in six consecutive CI runs: hour
+        ``2026-11-24T12:00Z``, path ``EURUSD/2026/10/24/12h_ticks.bi5`` — whose ``10`` is November,
+        the 0-indexed month. Runs ``45754638978``, ``45756716181``, ``45758610197`` and
+        ``45759709313`` produced the evidence before the flip; ``45782533635`` and ``45782540670``
+        are the first two at ``LAYOUT_VERIFIED = True``, and they still pass. Every one returned
+        25,761 compressed bytes → 101,480 decompressed = 5,074 ticks × 20 exactly, no failed
+        check, parsed prices 1.09502–1.0964. Evidence in ``docs/14`` §1.4 F-1 / §2.1 and
+        ``docs/00`` O-010.
 
         This test pins the verified state so that flipping the flag back is a deliberate act that
         breaks something, rather than a constant nobody re-reads — which is how it stayed stale for a
@@ -1412,9 +1417,10 @@ class TestDukascopyLayoutVerification:
         hour = DukascopyHour(
             "EURUSD",
             "BID",
-            NOW,
+            datetime(2026, 11, 24, 12, 0, tzinfo=UTC),  # the hour the six runs really fetched
             (),
-            "https://datafeed.dukascopy.com/datafeed/EURUSD/2026-10-24/12h_ticks.bi5",
+            # hour_url for that hour: the month segment is 0-indexed, so November is "10".
+            "https://datafeed.dukascopy.com/datafeed/EURUSD/2026/10/24/12h_ticks.bi5",
             25_761,
             101_480,
             True,  # layout_verified, from the module constant the parser copies

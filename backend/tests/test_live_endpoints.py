@@ -8,8 +8,9 @@ consistent and proves nothing about the world: it cannot notice that a venue ren
 changed a divisor, started returning strings where it returned numbers, or that a URL shape was
 misread. For Dukascopy the gap was wider still — the bi5 binary layout was implemented from
 documentation alone, and ``LAYOUT_VERIFIED`` stayed ``False`` until this module downloaded a real
-hour file and ``verify_layout`` passed against it (2026-11-26, four consecutive CI runs; the flag is
-``True`` now and cites that evidence — ``docs/14`` §1.4 F-1, ``docs/00`` O-010).
+hour file and ``verify_layout`` passed against it (2026-11-26, six consecutive CI runs on hour
+``2026-11-24T12:00Z``; the flag is ``True`` now and cites that evidence — ``docs/14`` §1.4 F-1 and
+§2.1, ``docs/00`` O-010).
 
 This module closes that gap by running the **real adapters** against the **real endpoints** over a
 real ``HttpTransport``. It is not part of the ordinary suite: it needs network egress, which the
