@@ -271,5 +271,5 @@ Cross-cutting laws restated on every board: specimen-tagged design data vs real-
 production data; drill-down from every figure; verification gates before decisions; owner-only
 mandates; fail-closed risk; no hidden chain-of-thought; capability registry never advertises
 unsupported markets; $0 cost gate; WCAG floors from docs/09.
-Stage 3 is complete at batch level (D-033…D-036); **stage-level approval is requested next** and
-gates Stage 4 (Interaction & UX).
+Stage 3 APPROVED at stage level 2026-11-25 (D-037; batches D-033…D-036). Stage 4
+(Interaction & UX) begins on this approval.
