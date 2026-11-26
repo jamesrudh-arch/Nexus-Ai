@@ -324,7 +324,12 @@ class TestDurableIdempotency:
 
 
 class TestApiSurface:
-    def test_status_reports_the_system_of_record(self, tmp_path: Path) -> None:
+    def test_status_reports_the_system_of_record(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # This test is about the durable path, so it says so: CI runs the whole suite with
+        # NEXUS_AUDIT_BACKEND=memory, which deliberately makes both stores ephemeral.
+        monkeypatch.setenv("NEXUS_AUDIT_BACKEND", "sqlite")
         path = tmp_path / "nexus.db"
         app = create_app(
             settings=Settings(_env_file=None, database_url=f"sqlite:///{path}"),
@@ -361,6 +366,24 @@ class TestApiSurface:
         assert body["persistence"]["boot_error"]["reason"] == "AUDIT_CHAIN_INVALID"
         assert body["persistence"]["boot_recovery"] is None
 
+    def test_ephemeral_audit_backend_keeps_operational_state_ephemeral(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Matching footings, and no silent file.
+
+        With an explicitly ephemeral audit log the operational store is ephemeral too, even when
+        ``database_url`` names a file: a durable record of state beside a volatile record of why it
+        changed would be worse than either choice alone. Nothing may be written behind the
+        operator's back.
+        """
+        monkeypatch.setenv("NEXUS_AUDIT_BACKEND", "memory")
+        path = tmp_path / "nexus.db"
+        app = create_app(settings=Settings(_env_file=None, database_url=f"sqlite:///{path}"))
+        body = TestClient(app).get("/v1/status").json()["persistence"]
+        assert body["ephemeral"] is True
+        assert body["path"] is None
+        assert not path.exists()
+
     def test_readyz_reports_orders_awaiting_reconciliation(self, tmp_path: Path) -> None:
         path, audit, store = _durable(tmp_path)
         store.save_order(
@@ -386,6 +409,7 @@ class TestApiSurface:
         from nexus.secrets.provider import reset_secret_provider_cache
 
         monkeypatch.setenv("NEXUS_SECRET_OWNER_API_TOKEN", "test-owner-token")
+        monkeypatch.setenv("NEXUS_AUDIT_BACKEND", "sqlite")  # durability is the subject of this test
         reset_secret_provider_cache()
 
         path = tmp_path / "nexus.db"
