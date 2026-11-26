@@ -84,3 +84,48 @@ docs/03 §3.2 states the type scale in px while §10 requires rem-based scalable
 specifies that type tokens are **consumed in rem** at implementation (identical rendered px at
 100% zoom, scalable with user font settings); docs/03 and the Stage 2 token values remain
 unchanged until the owner rules.
+
+---
+
+## 2. Sub-deliverable 4.2 — Journeys & flows (BUILT — AWAITING REVIEW)
+
+Board: `design/stage4-2-journeys-flows.html`. Five flows, 31 steps; var audit clean.
+
+### 2.1 Flows specified
+
+- **J-01 Morning Command Check** (desktop ~5 min): top-band verification → capital/exposure →
+  live risk & health → regime with uncertainty → positions & opportunities drill → rails & lower
+  strip → no-trade reading. Branch: contained region error/stale; the check continues on healthy
+  regions. Exit: owner can state capital, exposure, risk, health, evidence quality and what NEXUS
+  watches, within one hop of drill.
+- **J-02 Intraday Monitoring** (mobile): compact command → glance capital → positions with
+  venue-reported protectives → assertive alert → incident drill → optional two-tap halt. Branch:
+  offline = cached read-only with stale badge, no order submission, and an explicit statement that
+  halt requires connectivity (no queued-halt fiction).
+- **J-03 Emergency Halt** (mobile critical): four doors → scope modal with typed HALT + MFA →
+  engage at the risk engine → notify & preserve → reconcile → resume as its own decision.
+  Branches: MFA failure aborts with audit; partial venue ack invokes the unknown-order policy.
+- **Approval binding**: verified candidate → review → freeze immutable intent hash → restate-not-
+  ask confirm + MFA → route by environment (SHADOW ⇒ paper; live authority DENIED) → idempotent
+  execute + reconcile. Branch: material change or expiry invalidates the approval and re-asks.
+- **Incident triage**: CRIT alert → ack with SLA clock → scope → contain (feed barred, risk
+  blocked) → notify (delivery failures alert themselves) → recover & close with note. Branch:
+  insufficient containment escalates to J-03 with the incident linked.
+
+### 2.2 Flow laws (binding on Stage 5+)
+
+1. Every step names its screen region and chrome — a step without a surface is a missing design.
+2. Every branch carries a visible state; silent failure is a defect.
+3. Every exit condition is measurable (time, taps, green states) — journeys are testable at
+   Stage 23 validation.
+4. Critical mobile paths ≤2 taps; consequential paths pass restate-not-ask confirmation with MFA
+   per the friction ladder.
+5. Halt and risk blocks live in the risk engine; UI reflects engine state, never replaces it.
+6. Approvals bind to immutable intents; material change invalidates and re-asks.
+
+### 2.3 Stage 4 completion summary (pending stage-level approval)
+
+4.1 interaction system (D-038) + 4.2 journeys & flows. Together they define how every approved
+Stage 3 surface behaves: states, confirmations, friction, halt/resume, palette, keyboard, motion,
+live regions, and the five owned journeys with measurable exits. Stage-level approval gates
+Stage 5 (System Architecture).
