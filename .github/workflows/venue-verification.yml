@@ -123,15 +123,36 @@ jobs:
 
           # One annotation only: GitHub caps annotations at 10 per level per step, so a report that
           # emitted one per test would silently lose everything past the tenth.
-          LIMIT = 8000
+          # GitHub caps an annotation message at 4096 characters and truncates it *silently*, which
+          # is how the Dukascopy layout evidence -- the whole point of the run -- was once cut off
+          # mid-value. The cap applies to the ESCAPED form, and escaping expands the text (":" becomes
+          # "%3A", "," becomes "%2C", a newline becomes "%0A"), so budgeting the raw length is not
+          # enough: a body of 4000 characters full of URLs escapes past the limit and loses its tail.
+          LIMIT = 4096
+
+          def escape(text):
+              return (
+                  text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  .replace(":", "%3A").replace(",", "%2C")
+              )
 
           def annotation(level, title, lines):
+              """Emit one annotation whose escaped form is guaranteed to fit."""
               text = "\n".join(lines) if isinstance(lines, (list, tuple)) else str(lines)
-              if len(text) > LIMIT:
-                  text = text[:LIMIT] + f"\n...truncated ({len(text) - LIMIT} more characters)"
-              esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-              esc = esc.replace(":", "%3A").replace(",", "%2C")
-              print(f"::{level} title={title}::{esc}")
+              if len(escape(text)) <= LIMIT:
+                  print(f"::{level} title={title}::{escape(text)}")
+                  return
+              # Truncate on the raw text, then re-check the escaped length, shrinking until it fits.
+              # The notice is appended last so it survives rather than being cut off itself.
+              cut = len(text)
+              while cut > 200:
+                  cut = int(cut * 0.85)
+                  candidate = text[:cut]
+                  notice = f"\n...truncated: {len(escape(text)) - LIMIT} escaped characters over the cap"
+                  if len(escape(candidate + notice)) <= LIMIT:
+                      print(f"::{level} title={title}::{escape(candidate + notice)}")
+                      return
+              print(f"::{level} title={title}::{escape(text[:200])}")
 
           path = pathlib.Path("live-report.xml")
           if not path.is_file():
@@ -176,17 +197,29 @@ jobs:
           geo = [r for r in rows if r[0] == "GEO-BLOCKED"]
           skipped = [r for r in rows if r[0] == "SKIP"]
 
+          # Failures and passes carry the evidence and come first: if anything has to be cut, it
+          # should be the repetitive explanation of why five endpoints were unreachable, not the
+          # measurements. Grouped skips replace five near-identical 220-character messages with one.
           body = [
               f"{len(passed)} passed / {len(failed)} failed / {len(geo)} geo-blocked / "
               f"{len(skipped)} skipped of {len(rows)} live checks",
               "",
           ]
           for status, name, detail, evidence in rows:
-              body.append(f"{status} {name}")
-              for item in evidence:
-                  body.append(f"      {item}")
-              if status != "PASS" and detail:
-                  body.append(f"      {detail}")
+              if status in ("FAIL", "PASS"):
+                  body.append(f"{status} {name}")
+                  body.extend(f"      {item}" for item in evidence)
+                  if status == "FAIL" and detail:
+                      body.append(f"      {detail}")
+
+          for label, group in (("GEO-BLOCKED", geo), ("SKIP", skipped)):
+              if not group:
+                  continue
+              body.append("")
+              body.append(f"{label} ({len(group)}): " + ", ".join(name for _, name, _, _ in group))
+              # One representative reason per group: they differ only in the URL, and the URLs are
+              # already visible in the failures and passes above.
+              body.append(f"      e.g. {group[0][2]}")
 
           if failed:
               # An adapter that mis-normalises a live response is a defect in this repository.

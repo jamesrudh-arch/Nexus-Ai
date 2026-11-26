@@ -1581,6 +1581,8 @@ class TestLiveEndpointVerificationIsGatedAndReadable:
     def _publish_step(self) -> str:
         for step in self._steps():
             if str(step.get("name", "")).startswith("Publish"):
+                # Named-step lookup, not a bare `if: always()` search: the upload step carries the
+                # same condition, so matching on the condition alone cannot tell them apart.
                 assert "always()" in str(step.get("if", "")), (
                     "the report step must run on failure too — that is when it matters most"
                 )
@@ -1647,14 +1649,55 @@ class TestLiveEndpointVerificationIsGatedAndReadable:
             f"only {collected.group(1)} live checks collected; the module has quietly lost coverage"
         )
 
+    def _commands(self) -> str:
+        """The run steps' commands with comment lines stripped.
+
+        Asserting on the raw text is vacuous here: this workflow *explains* `junit_logging=all` in a
+        comment as well as using it, so a control that deleted the flag from the command still
+        matched the prose and the test passed while the report went empty. Only what executes counts.
+        """
+        lines = []
+        for step in self._steps():
+            for line in str(step.get("run", "")).splitlines():
+                if not line.strip().startswith("#"):
+                    lines.append(line)
+        return " ".join(lines)
+
     def test_the_workflow_requests_captured_output_in_the_report(self) -> None:
         """Without this the JUnit XML holds statuses and none of the measurements."""
-        runs = " ".join(str(step.get("run", "")) for step in self._steps())
-        assert "junit_logging=all" in runs, (
+        commands = self._commands()
+        assert "-o junit_logging=all" in commands, (
             "pytest writes no captured stdout into its JUnit XML by default, so the EVIDENCE lines "
             "the annotation is built from would never reach the report"
         )
-        assert "NEXUS_LIVE_VERIFY=1" in runs, "the module-level skip is never lifted"
+        assert "NEXUS_LIVE_VERIFY=1" in commands, "the module-level skip is never lifted"
+
+    def test_the_workflow_marks_the_live_tests_it_runs(self) -> None:
+        """`-m live` must reach pytest as a command, not only be described in a comment."""
+        assert "-m live" in self._commands()
+
+    def test_the_annotation_budget_is_measured_after_escaping(self) -> None:
+        """GitHub truncates an annotation at 4096 characters *silently*, after escaping.
+
+        Escaping expands the text — ":" becomes "%3A", "," becomes "%2C", a newline becomes "%0A" —
+        so budgeting the raw length is not enough. That mistake cost the Dukascopy layout evidence,
+        the whole point of the run, which was cut off mid-value. The budget must be applied to the
+        escaped form and the escaping must happen inside the same function that enforces the cap.
+        """
+        body = self._publish_step()
+        assert "LIMIT = 4096" in body, (
+            "GitHub's annotation cap is 4096 characters; a larger budget is silently truncated"
+        )
+        # Anchored on the guard itself, not on `len(escape(` appearing anywhere: the function also
+        # escapes when printing and when measuring the truncation loop, so a loose search still
+        # matched after a control replaced the guard with the raw length (a vacuous assertion).
+        assert re.search(r"if len\(escape\(text\)\) <= LIMIT", body), (
+            "the cap must be compared against the ESCAPED length, or a body full of URLs and "
+            "commas escapes past the limit and loses its tail"
+        )
+        assert "%3A" in body and "%2C" in body and "%0A" in body, (
+            "the escaping that expands the text is missing"
+        )
 
     def test_the_workflow_publishes_the_report_as_an_annotation(self) -> None:
         body = self._publish_step()

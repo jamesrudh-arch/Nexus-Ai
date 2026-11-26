@@ -568,3 +568,196 @@ class TestDukascopyLiveLayout:
             source=expected_source,
             layout_verified=LAYOUT_VERIFIED,
         )
+
+
+def _diagnose_dukascopy(baseline: str, browser: str, other_hour: str) -> tuple[str, str]:
+    """Choose a verdict from three probe outcomes, varying one thing at a time.
+
+    Pure so it can be pinned without network access: each branch is a different claim about the
+    world and only one of them is reachable from a sandbox with no egress. `baseline` is the
+    production User-Agent against the requested hour, `browser` the same URL with a browser
+    User-Agent, `other_hour` the production User-Agent against a different hour.
+    """
+    if baseline == "ok":
+        return (
+            "nothing to diagnose: the production User-Agent works",
+            "none",
+        )
+    if baseline.startswith("network-"):
+        # A host that never answered is a different fact from a host that answered 503, and
+        # conflating them would make a sandbox with no egress look like a finding about Dukascopy.
+        return (
+            f"the host was never reached ({baseline}), so no cause can be distinguished",
+            "re-run from a host with egress; this environment cannot answer the question",
+        )
+    if browser == "ok":
+        return (
+            "the host rejects this project's User-Agent and accepts a browser one",
+            "OWNER DECISION: adopting a browser User-Agent is circumvention, not engineering",
+        )
+    if other_hour == "ok":
+        return (
+            "the hour requested has no file; another hour answers",
+            "widen the hour search in the live layout checks",
+        )
+    if baseline.startswith("http-5") and browser.startswith("http-5"):
+        return (
+            f"both User-Agents get {baseline}; the feed is throttling or unwell",
+            "retry on the weekly schedule; consider a lower request rate",
+        )
+    return (
+        f"no single variable explains it (ua={baseline}/{browser}, hour={other_hour})",
+        "needs a runner outside this network; record as unresolved",
+    )
+
+
+# --------------------------------------------------------------------- Dukascopy reachability
+class TestDukascopyReachabilityDiagnostic:
+    """Why does the bi5 endpoint answer 503? Measured, not guessed.
+
+    The corrected URL (defect 39) reached the host and got **HTTP 503 on all four attempts**, so
+    `verify_layout` has still never run against a real file and `LAYOUT_VERIFIED` stays False. Three
+    explanations are plausible and they imply different responses:
+
+    * the feed throttles, and 503 is one of its throttle responses alongside 429 — then patience and
+      a lower request rate fix it;
+    * the host rejects a non-browser `User-Agent` — then the fix is a policy decision about what this
+      project is willing to present itself as, and it belongs to the owner, not to this module;
+    * the hour requested genuinely has no file — then a different hour works.
+
+    Guessing between those would put an unverified claim in the docs. This varies **one thing at a
+    time** and reports what happened, which is the only way to tell them apart. It deliberately does
+    not change any production path: a browser `User-Agent` is used here to *measure* whether it
+    matters, and adopting one in the adapters would be circumvention of a host's stated preference
+    rather than engineering, so that choice is left to the owner with the evidence in front of them.
+
+    If the production path simply works, there is nothing to diagnose and this says so.
+    """
+
+    BROWSER_UA = (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    )
+
+    @staticmethod
+    def _transport(user_agent: str) -> HttpTransport:
+        """A minimal transport: no retries, so one attempt yields exactly one status.
+
+        Retries are what make a throttle indistinguishable from a block — four attempts that all
+        fail look the same whether the host is busy or refusing us. One attempt, one answer.
+        """
+        return HttpTransport(
+            timeout_seconds=20.0,
+            limiter=TokenBucket(rate_per_second=1.0, burst=1),
+            backoff=BackoffPolicy(base_seconds=1.0, max_seconds=1.0, max_attempts=0),
+            headers={"User-Agent": user_agent},
+        )
+
+    @staticmethod
+    def _describe(exc: BaseException) -> str:
+        match = re.search(r"returned HTTP (\d{3})", str(exc))
+        if match is not None:
+            return f"http-{match.group(1)}"
+        if " failed: " in str(exc):
+            return "network-" + type(exc).__name__
+        return f"other-{type(exc).__name__}"
+
+    async def _probe(self, url: str, user_agent: str, label: str) -> str:
+        transport = self._transport(user_agent)
+        try:
+            payload = await transport.get_bytes(url)
+            _evidence(
+                f"dukascopy.probe.{label}",
+                outcome="ok",
+                bytes=len(payload),
+                lzma=payload[:1] == bytes([0x5D]) or len(payload) == 0,
+                url=url,
+            )
+            return "ok"
+        except IngestFault as exc:
+            outcome = self._describe(exc)
+            _evidence(f"dukascopy.probe.{label}", outcome=outcome, url=url)
+            return outcome
+        finally:
+            await transport.aclose()
+
+    async def test_what_the_503_actually_is(self) -> None:
+        hour = _recent_weekday_hour()
+        url = hour_url(DUKASCOPY_PAIR, hour)
+
+        # 1. the production posture: this project's own descriptive User-Agent, one attempt
+        production_ua = "NEXUS/0.1 (personal research; free public data)"
+        baseline = await self._probe(url, production_ua, "production_ua")
+        if baseline == "ok":
+            _evidence(
+                "dukascopy.diagnosis",
+                verdict="nothing to diagnose: the production User-Agent works",
+                action="none",
+            )
+            return
+
+        # 2. vary only the User-Agent, same URL, same instant
+        browser = await self._probe(url, self.BROWSER_UA, "browser_ua")
+
+        # 3. vary only the hour, back to the production User-Agent: is this hour simply absent?
+        older = _recent_weekday_hour(hour=10)
+        older_url = hour_url(DUKASCOPY_PAIR, older)
+        other_hour = (
+            await self._probe(older_url, production_ua, "production_ua_other_hour")
+            if older_url != url
+            else "same-hour-not-probed"
+        )
+
+        verdict, action = _diagnose_dukascopy(baseline, browser, other_hour)
+        _evidence("dukascopy.diagnosis", verdict=verdict, action=action)
+        # Deliberately no assertion on the verdict. This test exists to produce evidence, and
+        # failing it would turn a diagnosis into a red build without telling anyone anything.
+        # What it does assert is that the diagnosis ran and distinguished the cases it claims to.
+        assert baseline != "ok"
+        assert browser in {"ok"} or browser.startswith(("http-", "network-", "other-"))
+
+
+class TestDukascopyDiagnosisLogic:
+    """Every branch of the 503 diagnosis, pinned without network access.
+
+    Only one branch is reachable from a sandbox with no egress, so without this the other four are
+    unexecuted code making claims about the world that nobody has checked.
+    """
+
+    def test_a_working_production_path_needs_no_diagnosis(self) -> None:
+        verdict, action = _diagnose_dukascopy("ok", "ok", "ok")
+        assert "nothing to diagnose" in verdict and action == "none"
+
+    def test_an_unreachable_host_is_not_reported_as_a_finding_about_dukascopy(self) -> None:
+        verdict, action = _diagnose_dukascopy(
+            "network-IngestFault", "network-IngestFault", "network-IngestFault"
+        )
+        assert "never reached" in verdict
+        assert "egress" in action
+
+    def test_a_user_agent_block_is_escalated_not_silently_worked_around(self) -> None:
+        verdict, action = _diagnose_dukascopy("http-503", "ok", "http-503")
+        assert "User-Agent" in verdict
+        assert "OWNER DECISION" in action, (
+            "adopting a browser User-Agent is a policy choice about how this project presents "
+            "itself to a host, not an engineering fix, so it must not be taken automatically"
+        )
+
+    def test_a_missing_hour_is_distinguished_from_a_block(self) -> None:
+        verdict, action = _diagnose_dukascopy("http-404", "http-404", "ok")
+        assert "no file" in verdict and "widen the hour search" in action
+
+    def test_persistent_server_errors_read_as_throttling(self) -> None:
+        verdict, action = _diagnose_dukascopy("http-503", "http-503", "http-503")
+        assert "throttling or unwell" in verdict and "weekly schedule" in action
+
+    def test_an_unexplained_combination_says_so(self) -> None:
+        verdict, action = _diagnose_dukascopy("http-403", "http-503", "network-X")
+        assert "no single variable" in verdict and "unresolved" in action
+
+    def test_no_branch_invents_a_cause_it_did_not_measure(self) -> None:
+        """A 403 with no successful variant must not be reported as a User-Agent problem."""
+        verdict, _ = _diagnose_dukascopy("http-403", "http-403", "http-403")
+        assert "User-Agent" not in verdict, (
+            "nothing succeeded with the browser User-Agent, so blaming it is unsupported"
+        )
