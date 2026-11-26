@@ -230,16 +230,22 @@ def f3_table() -> str:
 # ----------------------------------------------------------------------------- 6 · the P-8 payload
 def p8_table() -> str:
     return table(
-        ["Run", "Id", "<span class='mono'>.quotes observed_at</span>",
+        ["Run", "Id", "Commit", "<span class='mono'>.quotes observed_at</span>",
          "<span class='mono'>.book observed_at</span>", "&Delta;t", "quotes mid", "book mid",
-         "<span class='mono'>gap_bps</span>", "trades"],
+         "<span class='mono'>gap_bps</span>", "<span class='mono'>gap_bps/&Delta;t</span>"],
         [
-            ("18", "<span class='cite'>45819528009</span>", "<span class='mono'>12:26:10.568</span>",
-             "<span class='mono'>12:26:11.906</span>", "<b>1.338 s</b>", "60606.25", "60606.25",
-             "<b>0.000</b>", "<span class='mono'>buy=46 sell=4</span>"),
-            ("19", "<span class='cite'>45819539643</span>", "<span class='mono'>12:26:19.069</span>",
-             "<span class='mono'>12:26:20.356</span>", "<b>1.287 s</b>", "60591.25", "60587.05",
-             "<b>0.693</b>", "<span class='mono'>buy=2 sell=48</span>"),
+            ("18", "<span class='cite'>45819528009</span>", "<span class='cite'>c48c714</span>",
+             "<span class='mono'>12:26:10.568</span>", "<span class='mono'>12:26:11.906</span>",
+             "<b>1.338 s</b>", "60606.25", "60606.25", "<b>0.000</b>", "0.000"),
+            ("19", "<span class='cite'>45819539643</span>", "<span class='cite'>c48c714</span>",
+             "<span class='mono'>12:26:19.069</span>", "<span class='mono'>12:26:20.356</span>",
+             "<b>1.287 s</b>", "60591.25", "60587.05", "<b>0.693</b>", "0.539"),
+            ("22", "<span class='cite'>45825586882</span>", "<span class='cite'>4760462</span>",
+             "<span class='mono'>13:05:02.973</span>", "<span class='mono'>13:05:04.408</span>",
+             "<b>1.435 s</b>", "60780.05", "60777.25", "<b>0.461</b>", "0.321"),
+            ("23", "<span class='cite'>45825598469</span>", "<span class='cite'>4760462</span>",
+             "<span class='mono'>13:05:09.075</span>", "<span class='mono'>13:05:10.458</span>",
+             "<b>1.383 s</b>", "60784.95", "60777.35", "<b>1.250</b>", "0.904"),
         ],
     )
 
@@ -570,12 +576,18 @@ pinned.</div>
 <h3>6 &middot; P-8 measured &mdash; and it reframed F-8<span class="tag">P-9 &middot; the batch's real finding</span></h3>
 <p>The <span class="mono">.book</span> evidence line now records <span class="mono">observed_at</span>,
 which <span class="mono">.quotes</span> always did. That is precisely the half F-8 named as missing.
-The first two runs to carry it &mdash; this commit's own <span class="mono">push</span> and
-<span class="mono">pull_request</span> pair, both <span class="mono">conclusion=success</span>:</p>
+<b>Four</b> runs have carried it &mdash; <span class="cite">c48c714</span>'s
+<span class="mono">push</span>/<span class="mono">pull_request</span> pair and
+<span class="cite">4760462</span>'s &mdash; all four <span class="mono">conclusion=success</span>:</p>
 <div class="card">{p8_table()}</div>
 <p class="cap">Convention as in §2.5: <span class="mono">gap_bps = |mid_quotes &minus; mid_book| /
 mid_quotes &times; 1e4</span>. Both timestamps come from the same annotation, so &Delta;t is measured
-rather than inferred.</p>
+rather than inferred. <b>&Delta;t is 1.287&ndash;1.435 s, mean 1.361 s &mdash; remarkably stable
+across four runs and two commits.</b> <span class="mono">gap_bps</span> is 0.000&ndash;1.250, mean
+0.601, exactly zero in 1 of 4; the implied rate is 0.000&ndash;0.904 bps/s. Every nonzero gap exceeds
+the 0.016 bps quoted spread by at least <b>29&times;</b>, which is what §2.5 could not explain and
+&Delta;t now does: the spread is a property of the book at one instant, and the gap is a property of
+<b>1.3 seconds of market</b>.</p>
 <div class="ba after"><div class="hd">WHAT THIS ESTABLISHES</div><pre>The two endpoints are fetched SEQUENTIALLY, about 1.3 s apart - not simultaneously.
 So a nonzero gap is not evidence of disagreement at all: it is evidence that the market
 moved during the fetch interval.
@@ -590,12 +602,21 @@ that window. Same interval, different market, different "gap".</pre></div>
 max <b>2.223 bps</b>, mean <b>0.515</b>, 6 of 12 above the 0.016 bps quoted spread &mdash; is not
 twelve measurements of endpoint disagreement. It is twelve measurements of <b>how far BTC moved in
 roughly 1.3 seconds</b>. A constant bps tolerance is therefore the wrong instrument: the honest bound
-is a rate, <span class="mono">gap_bps / &Delta;t</span>, and two runs cannot size a rate.
+is a rate, <span class="mono">gap_bps / &Delta;t</span>, and four runs give 0.000&ndash;0.904 bps/s
+&mdash; a range whose upper end so small a sample cannot bound.
 <b>No tolerance is asserted and none is chosen</b>, because a number picked to make the observed runs
 pass is not a measurement. §11 asks the owner to rule on the reframing rather than on a number.</div>
 <p class="cap">Nothing in <span class="mono">_assert_book</span> asserts agreement between the two
-endpoints, which is why both runs passed with gaps of 0.000 and 0.693 without either being judged.
-The measurement was added to the evidence line only &mdash; that is the whole of P-8's adopted half.</p>
+endpoints, which is why all four runs passed with gaps of 0.000, 0.693, 0.461 and 1.250 without any
+being judged. The measurement was added to the evidence line only &mdash; that is the whole of P-8's
+adopted half.</p>
+<div class="blocked"><b>One limitation this batch owes rather than hides.</b> Runs 22 and 23 both
+skipped <span class="mono">test_parsed_ticks_are_in_the_right_price_band</span> (F-5: the feed did not
+answer inside the patience budget), and that is the check which emits the renamed
+<span class="mono">layout_flag=</span> key from F-13. So that correction is <b>offline-evidenced only</b>
+and has not yet been observed in a live run &mdash; the same class of limitation as F-11.
+<span class="mono">verify_layout</span> itself passed in both runs, so the layout claim is
+live-evidenced; the renamed key is not yet.</div>
 
 <h3>7 &middot; F-12 and F-13 &mdash; the record contradicting its own evidence<span class="tag">NEW &middot; both found and fixed here</span></h3>
 <p>Found while writing this board's own §1, in the module the seed cites most. Two defects, both in
@@ -734,7 +755,8 @@ Stage 8</b>, rather than hold a stage open on a machine that does not exist yet.
 <footer>Stage 7.3 &middot; implementation &middot; D-046 &middot; commits c48c714 (L-C, P-7, P-8) and
 the F-12 correction &middot; gate 1,036 passed / 2 skipped / 0 failed, +39 tests &middot; ruff +
 format clean, mypy strict clean on 57 files, hygiene 83 &middot; CI runs 45819528009 and 45819539643
-both success, 36 passed / 0 failed / 5 geo-blocked of 41 &middot; the master now carries three
+both success, 36 passed / 0 failed / 5 geo-blocked of 41, and 4760462's pair
+45825586882 + 45825598469 both success at 35 / 0 / 5 geo-blocked / 1 skipped of 41 &middot; the master now carries three
 instruments and four venue mappings, bybit among them at SUPPORTED and not omitted &middot; verify_layout
 has passed in every venue run <i>that reached the source</i> since 2026-11-25, stated as a floor
 because each later commit adds two more attempts, and qualified because a run whose feed never answers

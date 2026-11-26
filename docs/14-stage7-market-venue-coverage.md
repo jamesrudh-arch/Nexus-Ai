@@ -957,15 +957,24 @@ evidence line now records `observed_at`, which `.quotes` always did. That is pre
 named as missing: with both timestamps in one annotation, a gap between the two mids can be attributed
 to elapsed time rather than to disagreement.
 
-The first two runs to carry it, `c48c714`'s own `push` and `pull_request` pair, both
+Four runs have now carried it — `c48c714`'s `push`/`pull_request` pair and `4760462`'s — all four
 `conclusion=success`:
 
-| Run | Id | `.quotes` `observed_at` | `.book` `observed_at` | Δt | quotes mid | book mid | `gap_bps` | trades |
-|---|---|---|---|---|---|---|---|---|
-| 18 | `45819528009` | `12:26:10.568` | `12:26:11.906` | **1.338 s** | 60606.25 | 60606.25 | **0.000** | `buy=46 sell=4` |
-| 19 | `45819539643` | `12:26:19.069` | `12:26:20.356` | **1.287 s** | 60591.25 | 60587.05 | **0.693** | `buy=2 sell=48` |
+| Run | Id | Commit | `.quotes` `observed_at` | `.book` `observed_at` | Δt | quotes mid | book mid | `gap_bps` | `gap_bps/Δt` |
+|---|---|---|---|---|---|---|---|---|---|
+| 18 | `45819528009` | `c48c714` | `12:26:10.568` | `12:26:11.906` | **1.338 s** | 60606.25 | 60606.25 | **0.000** | 0.000 |
+| 19 | `45819539643` | `c48c714` | `12:26:19.069` | `12:26:20.356` | **1.287 s** | 60591.25 | 60587.05 | **0.693** | 0.539 |
+| 22 | `45825586882` | `4760462` | `13:05:02.973` | `13:05:04.408` | **1.435 s** | 60780.05 | 60777.25 | **0.461** | 0.321 |
+| 23 | `45825598469` | `4760462` | `13:05:09.075` | `13:05:10.458` | **1.383 s** | 60784.95 | 60777.35 | **1.250** | 0.904 |
 
-*(Convention as in §2.5: `gap_bps = |mid_quotes − mid_book| / mid_quotes × 1e4`.)*
+*(Convention as in §2.5: `gap_bps = |mid_quotes − mid_book| / mid_quotes × 1e4`. Both timestamps come
+from the same annotation, so Δt is measured rather than inferred.)*
+
+**Δt is 1.287–1.435 s, mean 1.361 s — remarkably stable across four runs and two commits.** `gap_bps`
+is 0.000–1.250, mean 0.601, exactly zero in 1 of 4. The implied rate `gap_bps/Δt` is 0.000–0.904
+bps/s, mean 0.441. Every nonzero gap exceeds the 0.016 bps quoted spread by at least 29×, which is
+what §2.5 could not explain and Δt now does: the spread is a property of the book at one instant, and
+the gap is a property of **1.3 seconds of market**.
 
 **What this establishes.** The two endpoints are fetched **sequentially, about 1.3 s apart** — not
 simultaneously. So a nonzero gap is not evidence of disagreement at all; it is evidence that the
@@ -977,11 +986,19 @@ price did not move in that window.
 That reframes F-8: §2.5's distribution (exactly zero in 6 of 12, max 2.223, mean 0.515 bps) is not
 twelve measurements of endpoint disagreement, it is twelve measurements of **how far BTC moved in
 roughly 1.3 s**. A constant bps tolerance is therefore the wrong instrument — the honest bound is a
-rate (bps per second of Δt), and two runs cannot size a rate. **No tolerance is asserted and none is
+rate, and four runs give 0.000–0.904 bps/s, a range whose upper end is unbounded by so small a sample.
+Sizing it needs many more runs, or the comparison should be dropped. **No tolerance is asserted and none is
 chosen**; §3.9 asks the owner to rule on the reframing rather than on a number.
 
-Nothing in `_assert_book` asserts agreement between the two endpoints, which is why both runs passed
-with gaps of 0.000 and 0.693 without either being judged.
+Nothing in `_assert_book` asserts agreement between the two endpoints, which is why all four runs
+passed with gaps of 0.000, 0.693, 0.461 and 1.250 without any being judged.
+
+**One limitation this batch owes rather than hides.** Runs 22 and 23 both skipped
+`test_parsed_ticks_are_in_the_right_price_band` (F-5: the feed did not answer inside the patience
+budget), which is the check that emits the renamed `layout_flag=` key. So the F-13 correction to that
+evidence line is **offline-evidenced only** and has not yet been observed in a live run — the same
+class of limitation as F-11. `verify_layout` itself passed in both runs, so the layout claim is
+live-evidenced; the renamed key is not yet.
 
 ### 3.6 F-12 and F-13 — the record contradicting its own evidence
 
