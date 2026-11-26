@@ -1,6 +1,6 @@
 # 09 — Stage 2: Typography & Design System
 
-Status: **BUILT — AWAITING REVIEW** (see `docs/07-production-register.md`, Stage 2 row).
+Status: **APPROVED** 2026-11-25 (D-032, `docs/07-production-register.md`). Binding on Stage 3.
 Review artefact: `design/stage2-specimen.html` (self-contained; production fonts embedded as
 base64 woff2, all panels rendered by the generated token CSS).
 Sources of truth: `design/tokens/primitives.json`, `design/tokens/semantic.shared.json`,
