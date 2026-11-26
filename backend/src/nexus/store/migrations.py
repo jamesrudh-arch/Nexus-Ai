@@ -151,15 +151,12 @@ class MigrationRunner:
                 continue
             if not self._applicable(migration):
                 # Not applied and not recorded: a durable audit store on a later boot still needs it.
-                skipped.append(
-                    SkippedMigration(
-                        version=migration.version,
-                        reason=(
-                            f"requires table {migration.requires}, which is absent from this "
-                            "database (an ephemeral audit backend has no audit_log to protect)"
-                        ),
-                    )
+                reason = (
+                    f"requires table {migration.requires}, which is absent from this "
+                    "database (an ephemeral audit backend has no audit_log to protect)"
                 )
+                self._record_skip(migration.version, reason)
+                skipped.append(SkippedMigration(version=migration.version, reason=reason))
                 continue
             applied.append(self._apply(migration))
         return MigrationReport(
@@ -202,8 +199,11 @@ class MigrationRunner:
         # Forward-only: no holes. A hole is an applicable migration that is still pending *below*
         # one that has already been applied — the sequence moved past it. A migration that cannot
         # apply in this database (its required table is absent) is not a hole: it is a reported
-        # skip, and it stays pending for a boot that can apply it.
+        # skip, and it stays pending for a boot that can apply it. Neither is a migration this
+        # runner has already reported as skipped and therefore deferred on purpose; that is the
+        # difference between a deferral and a bypass, and only the second is fatal.
         positions = list(self._migrations)
+        deferred = self._skipped_versions()
         last_applied = max(
             (index for index, item in enumerate(positions) if item.version in recorded),
             default=-1,
@@ -212,6 +212,8 @@ class MigrationRunner:
             if migration.version in recorded or index > last_applied:
                 continue
             if not self._applicable(migration):
+                continue
+            if migration.version in deferred:
                 continue
             raise MigrationError(
                 f"migration {migration.version} is pending while later migrations are already "
@@ -223,10 +225,25 @@ class MigrationRunner:
         # True when this migration can apply here: no requirement, or the requirement is present.
         return migration.requires is None or self._table_exists(migration.requires)
 
+    def _record_skip(self, version: str, reason: str) -> None:
+        """Remember a deferral, so a later boot can tell it apart from a bypass."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO schema_migration_skips (version, reason, skipped_at) VALUES (?,?,?)",
+            (version, reason, iso_utc(utc_now())),
+        )
+        self._conn.commit()
+
+    def _skipped_versions(self) -> frozenset[str]:
+        rows = self._conn.execute("SELECT version FROM schema_migration_skips").fetchall()
+        return frozenset(str(row[0]) for row in rows)
+
     def _apply(self, migration: Migration) -> AppliedMigration:
         applied_at = iso_utc(utc_now())
         try:
             self._conn.executescript(migration.sql)
+            # Applied and no-longer-deferred commit together: a version must never be recorded as
+            # applied while a stale skip row still claims it is waiting.
+            self._conn.execute("DELETE FROM schema_migration_skips WHERE version = ?", (migration.version,))
             self._conn.execute(
                 "INSERT INTO schema_migrations (version, checksum, description, statements, applied_at) "
                 "VALUES (?, ?, ?, ?, ?)",

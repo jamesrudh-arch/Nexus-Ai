@@ -25,6 +25,7 @@ from nexus.execution.intent import TradeIntent
 from nexus.execution.orders import OrderState
 from nexus.store.operational import PersistenceError, SqliteOperationalStore
 from nexus.store.recovery import BootRefused, derive_halt_state, indeterminate_halt_state, recover
+from nexus.store.schema import MIGRATIONS
 from nexus.store.writeahead import reproject_missing, write_with_audit
 
 
@@ -338,11 +339,12 @@ class TestApiSurface:
         assert body["engine"] == "sqlite"
         assert body["ephemeral"] is False
         assert body["path"] == str(path)
+        # Derived from the declared sequence: this asserts the API reports every migration the boot
+        # applied, not that the sequence stops at a version that happened to be last when it was written.
         assert [item["version"] for item in body["migrations"]["applied"]] == [
-            "0001_operational",
-            "0002_memory",
-            "0003_audit_append_only",
+            migration.version for migration in MIGRATIONS
         ]
+        assert body["migrations"]["skipped"] == []
         assert body["boot_recovery"]["halt_active"] is False
         assert body["boot_error"] is None
         assert body["counts"]["orders"] == 0

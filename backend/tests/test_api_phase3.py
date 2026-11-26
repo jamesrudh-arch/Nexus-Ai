@@ -133,7 +133,9 @@ class TestPhaseGateStillClosed:
 
     def test_instrument_master_counts_are_reported(self, client: TestClient) -> None:
         body = client.get("/v1/status").json()["instrument_master"]
-        assert body == {"count": 1, "active": 0}  # registered but never active by default
+        # registered but never active by default; and never projected, because this client injects its
+        # own registry — the app projects what it seeded, so a test fixture stays a test fixture (L-B).
+        assert body == {"count": 1, "active": 0, "projected": 0}
 
 
 class TestInstrumentsEndpoint:

@@ -57,6 +57,11 @@ The command that produced each row is named in §2.4.
 
 ### 2.2 What is absent
 
+> Two rows below are overtaken by §9 and one number in them is wrong. `intelligence` now exists as a
+> package (§9.5), and `evidence_ref` now has a writer (§9.5). The package count reads 15 because `ls`
+> counted `__pycache__`; the tracked count was **14** (`git ls-files 'backend/src/nexus/*/__init__.py'`).
+> Left as published because it is the inventory D-050 was ruled on.
+
 | Absent thing | How it was established |
 |---|---|
 | **Any candidate or thesis generation.** No `intelligence`, `research` or `memory` package exists | `ls src/nexus/` → 15 packages: api, archive, audit, core, data, domain, events, execution, ingestion, instruments, observability, risk, secrets, store |
@@ -100,6 +105,13 @@ NEXUS_AUDIT_BACKEND=memory|sqlite python …/status    # 2.3 counts, both backen
 ## 3. Findings
 
 ### F-15 — the applied SQLite schema is not the mirror its Postgres counterpart claims
+
+> **Corrected in §9.1.** Executing the fix in Stage 8.2 required diffing every table and every column,
+> and the systematic diff showed this finding was **partly wrong**: two of the six divergences below are
+> uniform house conventions rather than drift, one table count is off by one, and the drift that is real
+> is larger and runs in both directions. The load-bearing part — `dossier.instrument_id` carrying no
+> `REFERENCES` at all — is correct and is what migration 0004 fixed. The text below is left as published
+> because it is what D-050 was ruled on.
 
 `migrations/0002_memory.sql` opens: *"Mirror of migration 0002_memory in `nexus/store/schema.py`
 (SQLite), which is the one applied today."* The mirror is not faithful. Six divergences, found by
@@ -365,3 +377,369 @@ Four questions, in dependency order:
    does), or prefix per stage (`S8-F-1`) from Stage 8 onward and leave the historical ids alone.
    **Recommendation: continue global numbering** — a prefix scheme introduced halfway creates a second
    convention to remember, and the collision is now recorded where a reader will find it.
+
+---
+
+## 9. Stage 8.2 delivered (D-050): the schemas converge, the master projects, evidence has a writer
+
+Batch **L-A + L-B + L-C**. L-D (`/v1/intelligence/dossiers`) and L-E (the dossier writer) are deferred to
+8.3 by the same ruling. This is the first batch to change `backend/` since `9e70ed3`.
+
+`git diff --stat`: **17 files changed, 2,236 insertions(+), 23 deletions(-)**. Source **14,162** LOC,
+tests **14,760** LOC. Three new source files, three new test files, one new package.
+
+### 9.0 What was ruled, and what was not
+
+D-050 answered four questions, each answered `Recommend` against exactly one marked recommendation:
+
+1. **Stage 8.1 is approved** — recorded as D-050, asked up front rather than assumed from a later
+   `Proceed`, because Stage 7.1 was left unratified for a day and needed D-047 to fix it.
+2. **8.2 = L-A + L-B + L-C**, with L-D and L-E deferred to 8.3.
+3. **F-15 = rebuild migration plus a fidelity test** — the test is what makes the fix stay fixed.
+4. **F-14 = the cheap half inside L-C**, with F-14 itself left open and re-asked on its own merits.
+
+**Not ruled.** §8's fourth question — whether finding ids should be scoped per stage from Stage 8 onward —
+was not among the four asked, so it is still open and is re-asked in §9.8. F-20 below continues the global
+numbering this document already uses; if the owner prefers a prefix scheme, F-20 is the first id that
+would move and the only one.
+
+### 9.1 Correction: F-15 as published in §3 was partly wrong
+
+§3 was written from one hand-picked pair of tables (`dossier` in both DDLs). Fixing the finding required
+parsing both DDLs and diffing **every table and every column**, and the systematic diff disagreed with
+§3 in three ways. The published text is unchanged above; this is the correction.
+
+**(a) Two of the six "divergences" are house conventions, not drift.**
+
+- The four lost `DEFAULT now()` clauses: every timestamp column in the applied schema is `TEXT NOT NULL`
+  with no default, because the writers stamp them with `iso_utc(utc_now())`. Nothing in `src/` relies on a
+  database default. Presenting these as drift implied a defect where there is a convention.
+- `confidence TEXT` against `NUMERIC(6,5)`: **26 numeric columns across 8 tables** are TEXT in the applied
+  schema, because SQLite's NUMERIC affinity stores a REAL — a float — and the house rule is that Decimals
+  travel as strings. §3 said 19 across 8 tables. **The 19 reproduces exactly** and is the count before 0004
+  created `venue_instrument_mapping`, whose seven `NUMERIC(28,12)` columns join the others: 19 + 7 = 26.
+  **The table count did not reproduce**: those 19 columns sat across **7** tables, not 8.
+
+**(b) The real drift is larger than §3 said, and it runs in both directions.** §3 described SQLite losing
+columns the target had. The diff found the target losing columns the application really writes.
+
+| Direction | What was missing | Consequence |
+|---|---|---|
+| absent from SQLite | `venue_instrument_mapping` — the entire table, declared in the target since `0001_core.sql` | the four venue mappings Stage 7.3 seeded had nowhere to be projected; F-16 was unfixable without L-A |
+| absent from the target | `halt_event.cancel_working_orders` | a field `/v1/status` really serves would not exist after a promotion |
+| absent from the target | `halt_event.seq`; `audit_ref` on `approval`, `decision`, `fills`, `orders`, `trade_intent`, `halt_event`, `venue_instrument_mapping`; `instrument.payload`; `trade_intent.payload` | 11 columns across 8 tables, every one written by `store/operational.py` today |
+| absent from the target | `schema_migrations`, and now `schema_migration_skips` | a PostgreSQL deploy following the `.sql` files could not record which migrations it had applied, so it could not refuse a changed checksum |
+
+**(c) Two apparent divergences are not divergences at all**, and §3 should have said so. `audit_log` is
+created by `SqliteAuditStore` in `src/nexus/audit/log.py`, not by a migration, because migration
+`0003_audit_append_only` *requires* it to exist already. `schema_migrations` comes from
+`SCHEMA_MIGRATIONS_DDL`, which the runner executes before applying anything.
+
+**What survives, and is the load-bearing part:** `dossier.instrument_id` carried no `REFERENCES` at all,
+so `docs/13` §2.5's "foreign keys declared but not enforced" could not reach it — it was never declared.
+Migration 0004 declares it and `TestDossierForeignKey` pins both halves: enforced when the pragma is on,
+and still *not* enforced by default (§9.7).
+
+**The lesson, recorded because it cost a batch to learn.** A divergence finding written from one
+hand-picked table pair is a guess about the whole schema. §3 diffed two tables and reported six
+divergences; the full diff found eleven columns and three tables of drift in the direction §3 never
+looked, and reclassified two of its six as conventions.
+
+### 9.2 L-A — migration 0004, and the test that keeps the fix fixed
+
+**Deviation from the approved option, disclosed.** The recommendation D-050 accepted said
+`confidence NUMERIC(6,5)` plus a `CHECK`. Writing it that way and then executing it showed the type change
+is wrong:
+
+| Probe, executed | Result |
+|---|---|
+| `CREATE TABLE t (c NUMERIC(6,5))`, insert `'0.5'`, read `typeof(c)` | **`real`** — a float, in what would be the only float-backed numeric column in the applied schema |
+| `TEXT` with `CHECK (confidence IS NULL OR CAST(confidence AS REAL) <> 0.0)` | accepts `'0.5'`, `'0.12345'`, `'1'`, `'0'`, `'0.00000'`, `'1e-9'`, NULL; rejects `'not-a-number'`, `''`, `'abc123'` |
+| the same CHECK, adversarially | **leaks `'0.5abc'` and `'1e-9'`** — `CAST` is permissive, so a CHECK is necessary and not sufficient |
+| `TEXT` with `ORDER BY CAST(confidence AS REAL)` over `0.5, 0.05, 0.9, 0.12345` | orders `0.05, 0.12345, 0.5, 0.9` |
+| `ORDER BY confidence` (no `CAST`) over the same four values | **the same order** — see the correction below |
+| the CHECK against `'12'`, `'-0.5'`, `'99999999'`, `'1.0'` | **all accepted** — it bounds nothing but "casts to a nonzero number" |
+
+So 0004 keeps `confidence TEXT` and adds only the CHECK. Changing the type would have broken the
+Decimal-as-string rule for no gain, and would not have fixed acceptance anyway.
+
+**A second correction, found while capturing the transcript for the board.** This batch first wrote that a
+bare `ORDER BY confidence` remains lexicographic and therefore wrong, and that `CAST` is what fixes it.
+Executing it says otherwise: over `0.5, 0.05, 0.9, 0.12345` the two orderings are **identical**, and they
+stay identical for the prefix tie `'0.5'` against `'0.50'`. For values in `[0,1)` — the only range a
+probability may occupy — TEXT ordering and numeric ordering coincide, because every value shares the
+`'0.'` prefix and digit-by-digit comparison then agrees with magnitude. They diverge only at ten and
+above (`ORDER BY confidence` gives `1, 12, 9`; `CAST` gives `1, 9, 12`).
+
+So `CAST` is still the correct way to order the column, but the reason is not the one first written, and
+the divergence is reachable **only because the CHECK does not bound the range**: it asks whether a value
+casts to a nonzero number, not whether it is a probability, so `'12'`, `'-0.5'` and `'99999999'` are all
+accepted. That is a larger gap than the ordering claim it replaced, and it is recorded as a limitation
+(§9.7) and pinned by `test_the_check_does_not_bound_the_range_and_that_is_recorded` rather than quietly
+fixed — bounding the range belongs to whoever writes `memory_item.confidence` in stage 10, and a
+constraint that pretended to bound it would be worse than one that says it does not.
+
+`0004_memory_fidelity`: **15 statements**, `requires="dossier"`, checksum `4c7368d407bb…`.
+
+- Rebuilds `dossier` through `dossier_0004`. SQLite refuses both `ALTER COLUMN … TYPE` and
+  `ADD CONSTRAINT … FOREIGN KEY` (§5.3), so the foreign key needs create → copy → drop → rename; all 12
+  columns are copied and `ix_dossier_created` is recreated.
+- Rebuilds `memory_item` the same way to add the CHECK, recreating `ix_memory_kind` and
+  `ix_memory_created`.
+- Creates `venue_instrument_mapping`, translating `BIGINT GENERATED ALWAYS AS IDENTITY` to
+  `INTEGER PRIMARY KEY AUTOINCREMENT` (the IDENTITY clause has no SQLite equivalent, which is the likeliest
+  reason the table was omitted when the SQLite schema was written), `NUMERIC(28,12)` to TEXT seven times,
+  `JSONB fees` to `TEXT DEFAULT '{}'`, plus `audit_ref`, `UNIQUE (instrument_id, venue, venue_symbol)` and
+  `ix_mapping_venue`.
+
+The three earlier checksums are unchanged (`fcfd79161c83…`, `5e7fafd0673e…`, `1e9ec5a5d915…`), and all four
+are now pinned literally in `test_no_applied_migration_was_edited` — because `store/migrations.py` refuses
+a moved checksum only for a database that *already applied it*. A fresh checkout, a CI runner and a new
+host apply whatever the file says, so a literal list is the only thing that makes forward-only checkable
+offline. Adding to that list is normal; changing a line already in it means history was edited.
+
+Executed proofs rather than readings of the SQL: `PRAGMA foreign_key_list(dossier)` shows the FK; on a
+fresh autocommit connection with `PRAGMA foreign_keys=1` a dangling `instrument_id` is **rejected** and a
+real one accepted; all four indexes survive the rebuild; `mapping_id` autoincrements from 1; a duplicate
+`(instrument_id, venue, venue_symbol)` is refused. And
+`test_the_rebuild_preserves_existing_rows` writes rows into the **pre-0004** schema first and then rebuilds
+over them, because a migration that is only safe on an empty table will be run against a non-empty one
+someday. Both tables are empty today; that is luck, not a property.
+
+The target was corrected in the same commit — 11 columns across 8 tables, both bookkeeping tables, and both
+file headers rewritten. `0001_core.sql` claimed *"the two are kept column-for-column compatible"*: a claim
+nothing checked, and false in both directions. It is now enforced by `tests/test_schema_fidelity.py`
+(**35 tests**), which compares the **live post-migration** SQLite schema against the target and fails on
+divergence in tables, columns, nullability, foreign keys and types.
+
+Two properties of that test are deliberate. It compares the schema *after the migrations run*, not the SQL
+text: parsing `schema.py` statically also picks up 0004's staging tables and the superseded pre-rebuild
+`dossier`, and reports divergences that do not exist. And the legitimate translations are a written-down
+map, with `test_the_translation_map_covers_every_type_the_target_declares` failing if the target starts
+using a type the map has no rule for — so a new type is a decision rather than a difference absorbed
+silently. Result: **17 tables each side, 16 compared** (`audit_log` exempt and checked separately against
+its own mirror claim), **0 divergences**.
+
+Building that test produced three false positives worth recording, because an audit that cries wolf gets
+its findings acted on: a constraint filter matching the prefix `"CHECK"` silently swallowed the column
+named `checksum`; static parsing reported 0004's staging tables as drift; and a first draft asserted
+`payload["observed_at"] not in payload`, which raises `KeyError` precisely when the assertion holds.
+
+### 9.3 F-20 — 0004 exposed a defect in the migration runner: a deferral was indistinguishable from a bypass
+
+**Found by the existing suite, not by a new test.**
+`test_migrations.py::test_a_skipped_migration_applies_once_its_table_exists` failed with
+`MIGRATION_INVALID: migration 0003_audit_append_only is pending while later migrations are already
+applied; the sequence has a hole and this runner only moves forward`.
+
+The scenario is one this repository deliberately supports and tests: boot once with an ephemeral audit
+backend, where there is no `audit_log` to protect so 0003 is *skipped*, then boot the same file with a
+durable one. Until 0004, 0003 was the last migration, so nothing could ever move past it. Adding a
+migration **behind a skippable one** made the combination fatal: the ephemeral boot applies 0004 while
+0003 waits, and the next durable boot finds an applicable migration below an applied one and refuses to
+start.
+
+The refusal is **correct**. "No holes" is how a permanently bypassed migration gets noticed, and a bypass
+is fatal. What the runner could not do was tell a hole from a deferral it had itself reported one boot
+earlier — in `schema_migrations` the two look identical, because in both cases the version is simply
+absent. That is F-20, and it is a defect in the Stage 6 runner that only a fourth migration could expose.
+
+Fix: `schema_migration_skips (version, reason, skipped_at)`, created by `SCHEMA_MIGRATIONS_DDL` — which is
+not a versioned migration, so this needed no new version and moved no checksum. The runner records a skip
+when it reports one, clears that row in the **same transaction** as the application (a version must never
+be recorded as applied while a stale skip row still claims it is waiting), and treats a recorded deferral
+as not-a-hole.
+
+Verified by execution, three ways:
+
+| Boot sequence | Result |
+|---|---|
+| ephemeral boot, no `audit_log` | applies 0001, 0002, **0004**; skips *and records* 0003; `venue_instrument_mapping` exists |
+| durable boot over the same file | applies 0003; **no `MigrationError`**; all four recorded; the skip row is cleared |
+| `DELETE FROM schema_migrations WHERE version='0002_memory'`, then run | **refused**: `the sequence has a hole` |
+
+The third row is the one that matters. The refinement must not cost the guard its teeth, so
+`test_a_genuine_hole_is_still_refused` pins that a version removed from the bookkeeping with no deferral
+recorded against it still fails the boot closed.
+
+A consequence worth stating plainly: because 0004 now applies in memory mode too,
+`venue_instrument_mapping` exists under CI's `NEXUS_AUDIT_BACKEND=memory`. Had the fix gone the other way —
+stopping the runner at the first migration it cannot apply, which is what most migration runners do —
+memory mode would have had no such table, `counts()` would have failed on it, and L-B could not have been
+wired into boot at all. The choice was between two defensible runner semantics, and only one of them left
+the rest of this batch possible.
+
+Three stale expectations were updated in the same commit, and two were made **derived** rather than
+re-hardcoded: `test_boot_recovery.py::test_status_reports_the_system_of_record` asserted a literal
+three-version list and `TestMigrationSkip` a literal two-version list. Both now derive from `MIGRATIONS`,
+so adding 0005 will not break them. This is the third time the project has had to repair a test that
+hardcoded a total which grows; the standing rule about publishing floors rather than totals applies to
+test expectations as well as to documents.
+
+### 9.4 L-B — the seeded master reaches the system of record
+
+F-16's observable, inverted. `/v1/status` reported `instrument_master.count = 3` beside
+`persistence.counts.instrument = 0`; it now reports `count 3, active 0, projected 3` with
+`persistence.counts.venue_instrument_mapping = 4`. The `projected` key was added to that block precisely
+because this pair of numbers is how the finding was found: reporting only the registry side would have
+left the fix invisible in the one place the defect was visible.
+
+The mechanism already existed. `instrument.registered` was in `PROJECTABLE`, the dispatcher routed it to
+`save_instrument`, and `reproject_missing` would have replayed it from the chain. Nothing emitted the
+event, so there was nothing to replay. L-B is therefore an emitter and not a mechanism:
+`src/nexus/instruments/projection.py`, 168 lines. Three decisions inside it:
+
+1. **The payload is built from the domain objects, not from `registry._mapping_to_dict`.** That serialiser
+   is an API read-model and omits `margin_rate` and `fees` — the two fields that make a mapping an economic
+   description rather than a symbol translation. Projecting through it would have written all four seeded
+   mappings with both columns empty, and nothing would have failed, because both are nullable.
+   `test_mapping_payload_names_every_field_the_column_set_holds` now fails if a field is added to
+   `VenueMapping` and not to the projection.
+2. **The payload carries no timestamp of its own.** A projection stamped at call time has a different
+   digest on every boot, so every boot would append three audit records for instruments that had not
+   changed — a chain that grows without describing anything. `project_master` compares canonical digests
+   and appends only for an instrument that actually moved, which is what makes "call this at every boot"
+   safe. Verified across process restarts on one durable file: `instrument.registered` stays at exactly
+   **3 over three boots**, while `api.app_created` and `boot.recovery` legitimately grow by one each.
+3. **`op_projection` is keyed on `audit_ref` alone, so a projection that writes several rows marks itself
+   complete once, after all of them.** Handing `audit_ref` to each save would have booked the event as done
+   the moment the instrument row landed; a crash before the mappings were written would then leave a hole
+   that boot recovery believes is filled — the exact failure L-2 exists to prevent.
+   `test_a_crash_between_the_instrument_and_its_mappings_leaves_a_hole_recovery_fills` simulates that crash
+   and asserts the interrupted instrument's mapping is restored from the chain alone.
+
+Wired into boot: `create_app` projects **only a master it seeded itself**, for the same reason it seeds
+only its own — an injected registry is a test fixture and stays one, which is why
+`test_api_phase3.py`'s status assertion reads `projected: 0`. A boot that cannot write the master into the
+system of record does not serve.
+
+**What the projection faithfully records as empty.** All four seeded mappings project `margin_rate = NULL`
+and `fees = {}`, because Stage 7.3's seed specs never carried them — neither word appears in
+`instruments/seed.py`. The writer no longer drops those fields; the evidence never contained them.
+Filling them in would mean inventing a margin rate and a fee schedule with nothing behind them, so they
+stay empty and `test_the_seeded_mappings_have_no_margin_rate_or_fees_to_project` pins that they are empty
+for that reason rather than by accident.
+
+The bybit row survives the trip with its reason attached: `status = SUPPORTED` and a note beginning
+`GEO-BLOCKED`, naming F-2 and the D-021 VM. The owner's Stage 7 ruling was that the row stays open *and
+visible*, and a projection that dropped the note would have made it invisible again in the system of
+record while remaining visible in the registry.
+
+### 9.5 L-C — the first `evidence_ref` writer, and the half of F-14 it does not fix
+
+`src/nexus/intelligence/` is a new package — the fifteenth under `src/nexus/`, verified by
+`git ls-files 'backend/src/nexus/*/__init__.py'`: 14 before this batch, 15 after — holding `evidence.py`
+(279 lines). `dossier` and `memory_item` remain writer-less by ruling: 8.3 and stage 10.
+
+The writer follows §5.1's contract exactly — validate the identity column and raise `PersistenceError` if
+it is absent, `assert_no_secrets`, write inside `self._transaction()`, then `_mark` into `op_projection` —
+and it is audited as `evidence.recorded`, so it is recoverable from the chain like every other write.
+`test_a_missing_projection_is_refilled_from_the_chain` deletes the row, keeps the chain, and asserts boot
+recovery restores it field for field.
+
+`dossier_id` is nullable and the writer needs no dossier: the first writer must not depend on the one 8.3
+has not built. `test_evidence_can_be_recorded_before_any_dossier_exists` pins that.
+
+**The two timestamps are the content of this batch.** Per D-050 this is F-14's cheap half, so the claim is
+narrow and deliberate:
+
+- `retrieved_at` is a **required keyword-only argument with no default**, pinned by inspecting the
+  signature. A default of `observed_at` would manufacture a latency of exactly zero; a default of "now"
+  would record write time as receipt time. Both would look like measurements, which is worse than a gap.
+- `observed_at_source` records whether the observation time really came from the venue. A snapshot with no
+  `observed_at` is **refused** unless the caller declares `LOCAL_FALLBACK`; and declaring the fallback
+  while passing two *different* timestamps is refused too, because a flag that can be contradicted by the
+  row it qualifies is decoration.
+- `apparent_latency_seconds` is stored beside them and is **not** a latency measurement. It is
+  `retrieved_at - observed_at`, which contains the offset between the venue's clock and ours as well as any
+  network delay. A negative value is recorded rather than refused: run 27 measured 1.089 s of venue time
+  against 0.298 s of wall clock, so venue clocks run both ways, and a negative interval is evidence about
+  the clock rather than an error condition.
+- The provenance fields are written **last**, so a caller's payload cannot overwrite them.
+  `test_a_caller_cannot_overwrite_the_provenance_fields` passes `apparent_latency_seconds: 999.0` and
+  asserts the stored row still carries the computed value.
+- `data_status` defaults to `UNAVAILABLE` — the schema default and the fail-closed value — and is validated
+  against `DataStatus` (A-06). No vocabulary was extended: the writer's refusals raise `ValueError`,
+  following `core.time.iso_utc`, because they are programmer errors at an internal boundary, and a
+  `RejectReason` is vocabulary the audit log and the UI both consume. `RejectReason` is unchanged and
+  `test_the_reason_vocabulary_was_not_extended` pins that.
+- `kind` is passed through as free text. **No vocabulary for it is declared anywhere in the repository** —
+  the schema says only `DEFAULT 'DATA'` — and inventing an enum here would put a plausible-looking
+  controlled list in front of a distinction nobody has yet drawn.
+- `checksum` is computed by the writer over exactly what is stored, so it cannot disagree with the payload.
+  It is an **integrity** checksum over the recorded row, not an authenticity signature over the bytes the
+  venue sent; nothing in this system can attest to those yet.
+
+One defect found while testing the writer, and fixed: a naive `observed_at` raised a bare `TypeError` from
+the timestamp subtraction, because `iso_utc`'s own refusal runs *after* the arithmetic. An unclassified
+crash at a boundary names nothing — the failure mode F-4 was about — so both timestamps are gated before
+they are used, and `test_a_naive_datetime_is_refused_by_name` pins the message.
+
+**F-14 stays OPEN (O-012).** No adapter was touched. `observed_at` is still venue time in all four and no
+receipt time exists anywhere in ingestion, so latency remains unmeasurable. What changed is that the
+evidence graph no longer *imports* the defect: a row written from now on says which of its two timestamps
+came from the venue, and carries the interval with its qualification attached.
+
+### 9.6 The gate
+
+| Check | at 8.1 | at 8.2 |
+|---|---|---|
+| `ruff format --check src tests` | 82 files | **88 files already formatted** |
+| `ruff check src tests` | clean | **clean** |
+| `mypy` (strict, `files = ["src/nexus"]`) | 57 files | **60 files, no issues** |
+| `pytest` | 1036 passed, 2 skipped | **1117 passed, 2 skipped** |
+| `tests/test_repo_hygiene.py` | 83 passed | **83 passed** |
+| `test_live_endpoints.py --collect-only` | 49 | **49** |
+| offline subset `-k "DiagnosisLogic or PatienceBehaviour or TradeSideRuling or CrossEndpoint"` | 32 | **32 passed, 17 deselected** |
+
+**+81 tests**: `test_schema_fidelity.py` 35, `test_evidence_writer.py` 27, `test_master_projection.py` 16,
+`test_migrations.py` 12 → 15. No live endpoint was called; nothing in this batch touches ingestion, so the
+live-check count is unchanged at 49 and no run number is published here.
+
+### 9.7 Limitations of this batch
+
+1. **The CHECK on `confidence` bounds nothing but "is it a number".** It accepts `'0.5abc'` (which casts
+   to 0.5) and `'1e-9'`, but also `'12'`, `'-0.5'` and `'99999999'` — it asks whether the value casts to a
+   nonzero number, not whether it is a probability. It is a floor, not a validation, and the range is
+   unguarded: whoever writes `memory_item.confidence` in stage 10 must validate the value itself. This is
+   the only reason TEXT ordering can diverge from numeric ordering at all (§9.2).
+2. **Foreign keys are declared and still not enforced.** `PRAGMA foreign_keys` stays off, for the reason
+   `docs/13` §2.5 gives: boot recovery re-projects in chain order, which is not always parent-first, and a
+   hard FK failure mid-recovery would be worse than the inconsistency it prevents. 0004 moved
+   `dossier.instrument_id` *inside* that limitation; it did not lift it.
+   `test_it_is_not_enforced_by_default_and_that_is_recorded` pins that a dangling dossier is still
+   accepted at runtime, so nobody reads the new FK as protection that does not exist.
+3. **The fidelity test compares SQLite against a target no PostgreSQL server has ever executed.** There is
+   no PostgreSQL server or driver in this sandbox, so every statement about the target is a property of
+   declared types. The `.sql` files have never been run by anything, here or in CI.
+4. **The four seeded mappings carry no economics.** `margin_rate` NULL and `fees` `{}` on all four,
+   `contract_size` on one of four. The projection is faithful; the seed evidence is not there.
+5. **Nothing calls `record_evidence` yet.** L-C delivered the writer and its contract; wiring it into the
+   four adapters is F-14's expensive half and is unauthorised. Until something calls it, `evidence_ref`
+   stays empty in production exactly as `dossier` and `memory_item` do.
+6. **`/v1/status` gained one key** (`instrument_master.projected`). Two tests asserted that block by exact
+   equality and were updated; an external consumer doing the same would see the change.
+
+### 9.8 Decision requested
+
+1. **Is Stage 8.2 approved?** L-A + L-B + L-C as described, with the deviation in §9.2 (TEXT kept, CHECK
+   added) and the runner change in §9.3 (F-20) disclosed above. **Recommendation: approve**, and record as
+   **D-051**.
+2. **What is 8.3?** L-D is the read-only `/v1/intelligence/dossiers` route; L-E is the dossier writer at
+   `stance=ABSTAIN`; F-18's cheap half is three `ADD COLUMN`s on `memory_item` (`valid_from`, `valid_until`,
+   `change_conditions`) plus `contradicts` on `evidence_ref`. **Recommendation: L-D + L-E only**, and defer
+   F-18's columns to the batch that writes `memory_item` in stage 10 — columns no writer populates are
+   columns no test can exercise, and this batch is evidence that a nullable column nobody fills is
+   indistinguishable from one that was dropped.
+3. **F-14's expensive half: authorise it, and when?** The merits, now quantified: run 29 measured the
+   wall-clock rate at 3.95× the venue-time rate, so using `observed_at` as a denominator biases a rate
+   *downward* by the skew factor rather than merely adding noise. Changing it means giving four adapters a
+   real receipt time, which changes what a persisted field means. **Recommendation: authorise it as its own
+   batch (8.4), not folded into 8.3** — it deserves its own gate and its own live runs, and folding a
+   four-adapter semantic change into a batch that also writes the dossier would make any regression
+   ambiguous between the two.
+4. **§8's question 4, still unanswered: should finding ids be scoped per stage from Stage 8 onward?**
+   F-19 records that F-1…F-7 are already ambiguous between two approved documents, and F-20 continues the
+   global sequence. **Recommendation: continue global numbering**, as §8 recommended — a prefix scheme
+   introduced halfway creates a second convention to remember, and the collision is now recorded where a
+   reader will find it.

@@ -39,6 +39,7 @@ from nexus.core.environment import EnvironmentState
 from nexus.core.errors import NexusError, RejectReason
 from nexus.core.ids import iso_utc, utc_now
 from nexus.execution.halt import HaltManager, HaltScope
+from nexus.instruments.projection import MasterProjection, project_master
 from nexus.instruments.registry import InstrumentRegistry, UnknownInstrument, coverage_report
 from nexus.instruments.seed import seed_master
 from nexus.instruments.sessions import MarketCalendar
@@ -116,6 +117,15 @@ def create_app(
     coverage routes report what has actually been proven instead of ``total=0`` (finding F-3).
     Pass ``seed=False`` to boot an empty master. An **injected** registry is never seeded — what a
     caller built is what the app serves, so a test fixture stays a test fixture.
+
+    Since Stage 8.2 (lever L-B) a seeded master is also **projected** into the system of record, and for
+    the same reason it is the only thing that gets projected: the app owns what it seeded. Before this,
+    the three seeded instruments existed only in the registry — ``/v1/status`` reported
+    ``instrument_master.count = 3`` beside ``persistence.counts.instrument = 0``, because the projector
+    for ``instrument.registered`` existed and nothing emitted the event (finding F-16). The projection is
+    idempotent at every boot and appends to the audit chain only for an instrument that actually
+    changed, so a restart does not grow the chain by three records. An injected registry is not
+    projected, exactly as it is not seeded — a test fixture stays a test fixture.
     """
     cfg = settings or get_settings()
     audit_log = audit or AuditLog(store=_default_store(cfg))
@@ -141,12 +151,17 @@ def create_app(
             affected_accounts=restored.affected_accounts,
             affected_instruments=restored.affected_instruments,
         )
+    master_projection: MasterProjection | None = None
     if registry is None:
         instrument_registry = InstrumentRegistry()
         if seed:
             # Idempotent, offline and recorded: every rung it claims carries the evidence label
             # naming the runs that proved it, and nothing seeded here becomes active (D-002).
             seed_master(instrument_registry)
+            # A boot that cannot write the master into the system of record does not serve: the
+            # intelligence memory references instruments by id, and a row pointing at an instrument the
+            # store has never held is the failure migration 0004's foreign key exists to refuse.
+            master_projection = project_master(instrument_registry, audit=audit_log, store=op_store)
     else:
         instrument_registry = registry
     market_calendar = calendar or MarketCalendar()
@@ -165,6 +180,7 @@ def create_app(
     app.state.calendar = market_calendar
     app.state.archive = archive
     app.state.store = op_store
+    app.state.master_projection = master_projection
     app.state.recovery = recovery
     app.state.boot_error = boot_error
 
@@ -243,6 +259,10 @@ def create_app(
             "instrument_master": {
                 "count": len(instrument_registry),
                 "active": len(instrument_registry.active()),
+                # How many of them the system of record actually holds. This pair is the observable
+                # F-16 was found by (3 beside 0); reporting only the registry side would have left the
+                # fix invisible in the one place the defect was visible.
+                "projected": _projected_instruments(op_store),
             },
             "archive": {"configured": archive is not None},
             "persistence": _persistence_status(op_store, recovery, boot_error),
@@ -395,6 +415,14 @@ def _boot_recovery(audit_log: AuditLog, op_store: Any) -> tuple[BootRecoveryRepo
         return recover(audit=audit_log, store=op_store), None
     except NexusError as exc:
         return None, exc
+
+
+def _projected_instruments(op_store: Any) -> int | str:
+    """Instrument rows in the system of record, or the reason there are none to count."""
+    try:
+        return int(op_store.counts().get("instrument", 0))
+    except NexusError as exc:
+        return exc.reason.value
 
 
 def _persistence_status(

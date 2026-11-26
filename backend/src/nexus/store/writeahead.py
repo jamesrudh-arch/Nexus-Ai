@@ -33,6 +33,7 @@ PROJECTABLE: dict[str, str] = {
     "intent.created": "trade_intent",
     "approval.granted": "approval",
     "instrument.registered": "instrument",
+    "evidence.recorded": "evidence_ref",
     "fill.recorded": "fills",
     "order.state": "orders",
     "risk.limit_change": "risk_limit_change",
@@ -79,7 +80,9 @@ def project(
     elif event_type == "approval.granted":
         store.save_approval_payload(payload, audit_ref=audit_ref)
     elif event_type == "instrument.registered":
-        store.save_instrument(payload, audit_ref=audit_ref)
+        _project_instrument(store, payload, audit_ref=audit_ref)
+    elif event_type == "evidence.recorded":
+        store.save_evidence_ref(payload, audit_ref=audit_ref)
     elif event_type == "fill.recorded":
         store.save_fill(payload, audit_ref=audit_ref)
     elif event_type == "risk.limit_change":
@@ -87,6 +90,32 @@ def project(
     elif event_type == "order.state":
         _project_order(store, payload, audit_ref=audit_ref)
     return True
+
+
+def _project_instrument(
+    store: OperationalStore, payload: Mapping[str, Any], *, audit_ref: str | None
+) -> None:
+    """One event, two tables: the instrument, and how it is traded on each of its venues.
+
+    ``op_projection`` is keyed on ``audit_ref`` alone, so a projection that writes several rows must
+    declare itself complete only after the last of them commits. Handing ``audit_ref`` to each save
+    would mark the event done the moment the instrument row landed, and a crash before the mappings
+    were written would leave a hole boot recovery believes is filled — the exact failure L-2 exists to
+    prevent. The saves therefore run unmarked and one :meth:`mark_projected` follows them.
+    """
+    instrument_id = str(payload.get("instrument_id") or "")
+    store.save_instrument(payload, audit_ref=None)
+    for mapping in payload.get("mappings") or ():
+        row = dict(mapping)
+        row["instrument_id"] = instrument_id
+        store.save_venue_mapping(row, audit_ref=None)
+    if audit_ref:
+        store.mark_projected(
+            audit_ref,
+            event_type="instrument.registered",
+            entity_type="instrument",
+            entity_id=instrument_id,
+        )
 
 
 def reproject_missing(*, audit: Any, store: OperationalStore) -> tuple[str, ...]:

@@ -179,7 +179,11 @@ class TestMigrationSkip:
         store = SqliteOperationalStore(":memory:", audit=audit)
         report = store.migrations
         assert report is not None
-        assert [item.version for item in report.applied] == ["0001_operational", "0002_memory"]
+        # Derived, not written out: this assertion is about 0003 being deferred, and a hardcoded list
+        # breaks every time a migration is added behind it.
+        assert [item.version for item in report.applied] == [
+            item.version for item in MIGRATIONS if item.version != "0003_audit_append_only"
+        ]
         assert len(report.skipped) == 1
         assert report.skipped[0].version == "0003_audit_append_only"
         assert "audit_log" in report.skipped[0].reason
@@ -187,6 +191,56 @@ class TestMigrationSkip:
         again = MigrationRunner(store._conn, audit=audit, migrations=MIGRATIONS).run()
         assert again.applied == ()
         assert [item.version for item in again.skipped] == ["0003_audit_append_only"]
+
+    def test_a_deferral_is_recorded_so_it_can_be_told_from_a_bypass(self) -> None:
+        """A version absent from ``schema_migrations`` is either waiting for a table this database does
+        not have, or was moved past by mistake. Only the second is fatal, and telling them apart needs
+        the first to be written down — which is what ``schema_migration_skips`` is for."""
+        audit = AuditLog(InMemoryAuditStore())
+        store = SqliteOperationalStore(":memory:", audit=audit)
+        rows = store._conn.execute("SELECT version, reason FROM schema_migration_skips").fetchall()
+        assert [str(row[0]) for row in rows] == ["0003_audit_append_only"]
+        assert "audit_log" in str(rows[0][1])
+        assert "0003_audit_append_only" not in {item.version for item in store.migrations.applied}
+
+        # and a second ephemeral boot re-records the same deferral rather than stacking it
+        MigrationRunner(store._conn, audit=audit, migrations=MIGRATIONS).run()
+        assert store._conn.execute("SELECT count(*) FROM schema_migration_skips").fetchone()[0] == 1
+        store.close()
+
+    def test_a_deferred_migration_behind_an_applied_one_is_not_a_hole(self, tmp_path: Path) -> None:
+        """The scenario migration 0004 created: a migration now sits *behind* the one that can be
+        skipped, so an ephemeral boot applies 0004 while 0003 waits. A later durable boot must then be
+        able to apply 0003 rather than refuse to start — deferral, not abandonment."""
+        path = tmp_path / "nexus.db"
+        first = SqliteOperationalStore(path)
+        assert [item.version for item in first.migrations.skipped] == ["0003_audit_append_only"]
+        assert "0004_memory_fidelity" in [item.version for item in first.migrations.applied]
+        first.close()
+
+        audit = AuditLog(SqliteAuditStore(path))
+        second = SqliteOperationalStore(path, audit=audit)
+        report = second.migrations
+        assert [item.version for item in report.applied] == ["0003_audit_append_only"]
+        assert report.skipped == ()
+        recorded = {item.version for item in MigrationRunner(second._conn, audit=audit).applied()}
+        assert recorded == {item.version for item in MIGRATIONS}, "every migration eventually applies"
+        assert second._conn.execute("SELECT count(*) FROM schema_migration_skips").fetchone()[0] == 0, (
+            "applying a migration clears its deferral in the same transaction"
+        )
+        second.close()
+
+    def test_a_genuine_hole_is_still_refused(self, tmp_path: Path) -> None:
+        """The refinement above must not cost the guard its teeth: a version removed from the
+        bookkeeping, with no deferral recorded against it, is a bypass and the boot fails closed."""
+        path = tmp_path / "nexus.db"
+        audit = AuditLog(SqliteAuditStore(path))
+        store = SqliteOperationalStore(path, audit=audit)
+        store._conn.execute("DELETE FROM schema_migrations WHERE version = '0002_memory'")
+        store._conn.commit()
+        store.close()
+        with pytest.raises(MigrationError, match="the sequence has a hole"):
+            MigrationRunner(sqlite3.connect(path), audit=audit, migrations=MIGRATIONS).run()
 
     def test_report_serialises_for_the_api(self, tmp_path: Path) -> None:
         audit, store = _durable(tmp_path)

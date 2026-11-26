@@ -58,6 +58,17 @@ class Migration:
         return len([part for part in self.sql.split(";") if part.strip()])
 
 
+# Both tables are created on every boot rather than by a versioned migration: the runner has to be
+# able to read them before it knows which migrations this database has seen.
+#
+# `schema_migration_skips` exists because a *deferral* and a *bypass* look identical in
+# `schema_migrations` — in both cases the version is simply absent. Migration 0003 is legitimately
+# skipped on an ephemeral audit backend (there is no audit_log to protect), and since 0004 there is a
+# migration behind it, so applying 0004 while 0003 waits would put an applicable migration below an
+# applied one. The runner refuses that shape as a hole, and it is right to: the refusal is how a
+# permanently bypassed migration gets noticed. What it could not tell apart was a hole from a skip it
+# had itself reported one boot earlier. Remembering the skip is what makes the two distinguishable, so
+# a deferral stays a deferral instead of becoming an unbootable database.
 SCHEMA_MIGRATIONS_DDL = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version     TEXT PRIMARY KEY,
@@ -65,6 +76,11 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     description TEXT NOT NULL,
     statements  INTEGER NOT NULL,
     applied_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS schema_migration_skips (
+    version    TEXT PRIMARY KEY,
+    reason     TEXT NOT NULL,
+    skipped_at TEXT NOT NULL
 );
 """
 
@@ -330,6 +346,97 @@ BEGIN
 END;
 """
 
+_MEMORY_FIDELITY = """
+-- 0004: make the applied schema faithful to the portable PostgreSQL target, where it was not.
+--
+-- Found by diffing both DDLs column by column (Stage 8.1, F-15). Two of the three fixes here need a
+-- table rebuild because SQLite refuses both `ALTER COLUMN ... TYPE` and `ADD CONSTRAINT` (executed and
+-- recorded in `docs/15` §5.3). Both tables are empty today — nothing has ever written to them — but the
+-- rebuild copies rows anyway, because a migration that is only safe on an empty table is a migration
+-- that will be run against a non-empty one someday.
+--
+-- Deliberately NOT changed: `confidence` stays TEXT-affinity. The PostgreSQL target says NUMERIC(6,5),
+-- but TEXT is this schema's convention for every numeric column — 19 of them across 8 tables — because
+-- SQLite's NUMERIC affinity stores a REAL, i.e. a float, and the house rule is that Decimals travel as
+-- strings so no precision is lost. Making this one column NUMERIC would make it the only float-backed
+-- numeric column in the applied schema and would break that rule. The CHECK below is what actually
+-- enforces numeric-ness; ordering must use `CAST(confidence AS REAL)`, which is asserted in
+-- tests/test_schema_fidelity.py.
+CREATE TABLE IF NOT EXISTS dossier_0004 (
+    dossier_id     TEXT PRIMARY KEY,
+    instrument_id  TEXT REFERENCES instrument (instrument_id),
+    venue          TEXT,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    state          TEXT NOT NULL DEFAULT 'DRAFT',
+    summary        TEXT NOT NULL DEFAULT '',
+    stance         TEXT NOT NULL DEFAULT 'ABSTAIN',
+    uncertainty    TEXT NOT NULL DEFAULT '',
+    sufficiency    TEXT NOT NULL DEFAULT 'INSUFFICIENT',
+    payload        TEXT NOT NULL DEFAULT '{}',
+    audit_ref      TEXT
+);
+INSERT INTO dossier_0004 (dossier_id, instrument_id, venue, created_at, updated_at, state, summary,
+                          stance, uncertainty, sufficiency, payload, audit_ref)
+    SELECT dossier_id, instrument_id, venue, created_at, updated_at, state, summary,
+           stance, uncertainty, sufficiency, payload, audit_ref FROM dossier;
+DROP TABLE dossier;
+ALTER TABLE dossier_0004 RENAME TO dossier;
+CREATE INDEX IF NOT EXISTS ix_dossier_created ON dossier (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_item_0004 (
+    memory_id     TEXT PRIMARY KEY,
+    kind          TEXT NOT NULL DEFAULT 'OBSERVATION',
+    scope         TEXT NOT NULL DEFAULT 'GLOBAL',
+    subject       TEXT NOT NULL DEFAULT '',
+    body          TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    superseded_by TEXT,
+    cited_by      TEXT NOT NULL DEFAULT '[]',
+    confidence    TEXT CHECK (confidence IS NULL OR CAST(confidence AS REAL) <> 0.0
+                              OR confidence IN ('0', '0.0', '0.00', '0.000', '0.0000', '0.00000')),
+    payload       TEXT NOT NULL DEFAULT '{}',
+    audit_ref     TEXT
+);
+INSERT INTO memory_item_0004 (memory_id, kind, scope, subject, body, created_at, superseded_by,
+                              cited_by, confidence, payload, audit_ref)
+    SELECT memory_id, kind, scope, subject, body, created_at, superseded_by,
+           cited_by, confidence, payload, audit_ref FROM memory_item;
+DROP TABLE memory_item;
+ALTER TABLE memory_item_0004 RENAME TO memory_item;
+CREATE INDEX IF NOT EXISTS ix_memory_kind    ON memory_item (kind);
+CREATE INDEX IF NOT EXISTS ix_memory_created ON memory_item (created_at DESC);
+
+-- The third fix is additive: the PostgreSQL target has declared venue_instrument_mapping since
+-- 0001_core.sql and the applied schema never had it at all, so the four venue mappings Stage 7.3
+-- seeded had nowhere to be projected (F-16). BIGINT GENERATED ALWAYS AS IDENTITY has no SQLite
+-- equivalent; INTEGER PRIMARY KEY AUTOINCREMENT is the translation, and NUMERIC(28,12) becomes TEXT
+-- for the same precision reason as confidence above.
+CREATE TABLE IF NOT EXISTS venue_instrument_mapping (
+    mapping_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    instrument_id       TEXT NOT NULL REFERENCES instrument (instrument_id) ON DELETE CASCADE,
+    venue               TEXT NOT NULL,
+    venue_symbol        TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'UNKNOWN',
+    contract_size       TEXT,
+    tick_size           TEXT,
+    tick_value          TEXT,
+    min_order_qty       TEXT,
+    max_order_qty       TEXT,
+    qty_step            TEXT,
+    quote_currency      TEXT,
+    settlement_currency TEXT,
+    trading_hours       TEXT,
+    margin_rate         TEXT,
+    fees                TEXT NOT NULL DEFAULT '{}',
+    notes               TEXT NOT NULL DEFAULT '',
+    certified_at        TEXT,
+    audit_ref           TEXT,
+    UNIQUE (instrument_id, venue, venue_symbol)
+);
+CREATE INDEX IF NOT EXISTS ix_mapping_venue ON venue_instrument_mapping (venue, venue_symbol);
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         version="0001_operational",
@@ -348,5 +455,13 @@ MIGRATIONS: tuple[Migration, ...] = (
         description="append-only triggers on audit_log (no UPDATE, no DELETE)",
         sql=_AUDIT_APPEND_ONLY,
         requires="audit_log",
+    ),
+    Migration(
+        version="0004_memory_fidelity",
+        description="restore dossier's instrument foreign key, constrain memory_item.confidence to a "
+        "numeric value, and create venue_instrument_mapping — the three places the applied schema had "
+        "diverged from the portable PostgreSQL target (F-15, F-16)",
+        sql=_MEMORY_FIDELITY,
+        requires="dossier",
     ),
 )

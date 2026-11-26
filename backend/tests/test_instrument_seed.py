@@ -389,7 +389,7 @@ class TestBootServesTheSeededMaster:
         assert sorted(body["ready_for_research"]) == sorted([BTC_PERP, BTC_SPOT, EUR_USD])
         assert body["ready_for_paper"] == []
         assert body["ready_for_live"] == []
-        assert master == {"count": 3, "active": 0}
+        assert master == {"count": 3, "active": 0, "projected": 3}
 
     def test_the_seeded_master_lists_bybit_as_supported_not_as_covered(self, settings: Settings) -> None:
         with TestClient(create_app(settings=settings)) as client:

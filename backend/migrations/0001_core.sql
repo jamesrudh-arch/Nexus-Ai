@@ -3,6 +3,23 @@
 -- kept by R-1 (D-042), not the schema that runs today: the live schema is the SQLite one in
 -- nexus/store/schema.py, applied by nexus/store/migrations.py. The two are kept column-for-column
 -- compatible so promotion under trigger conditions T-1...T-4 is a copy, not a rewrite.
+--
+-- That compatibility was a claim, and until Stage 8.2 nothing checked it: no test read this file, so
+-- it had drifted in both directions. An entire table (venue_instrument_mapping) existed only here,
+-- which left the venue mappings Stage 7.3 seeded nowhere to be projected; and columns the application
+-- really writes — halt_event.cancel_working_orders, audit_ref on six tables, instrument.payload —
+-- existed only in the SQLite schema, so a promotion following this file would have lost them.
+-- tests/test_schema_fidelity.py now compares the two and fails on divergence, with the legitimate type
+-- translations (TIMESTAMPTZ, JSONB, BOOLEAN, TEXT[], and every numeric as TEXT so Decimals survive)
+-- written down in one place a reader can argue with.
+--
+-- The version *boundaries* differ and that is not drift. SQLite applies four versioned migrations;
+-- this directory holds two files. The append-only triggers of 0003_audit_append_only are declared in
+-- this file, attached to the audit_log table they protect, because PostgreSQL binds a trigger to its
+-- table. 0004_memory_fidelity has no counterpart here at all: it exists to bring the SQLite schema
+-- back to this one, so the target needed no change to converge. What must agree is the schema the two
+-- produce, and that is what the fidelity test asserts.
+--
 -- All timestamps are TIMESTAMPTZ in UTC. Money/quantity use NUMERIC, never FLOAT.
 
 BEGIN;
@@ -53,7 +70,8 @@ CREATE TABLE IF NOT EXISTS instrument (
     data_status        TEXT NOT NULL DEFAULT 'UNAVAILABLE',
     notes              TEXT NOT NULL DEFAULT '',
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    payload             JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 
 CREATE TABLE IF NOT EXISTS venue_instrument_mapping (
@@ -75,6 +93,7 @@ CREATE TABLE IF NOT EXISTS venue_instrument_mapping (
     fees               JSONB NOT NULL DEFAULT '{}'::jsonb,
     notes              TEXT NOT NULL DEFAULT '',
     certified_at       TIMESTAMPTZ,
+    audit_ref          TEXT
     UNIQUE (instrument_id, venue, venue_symbol)
 );
 
@@ -97,7 +116,8 @@ CREATE TABLE IF NOT EXISTS decision (
     counter_evidence_refs TEXT[] NOT NULL DEFAULT '{}',
     intent_id     TEXT,
     risk_check    JSONB NOT NULL DEFAULT '{}'::jsonb,
-    expires_at    TIMESTAMPTZ
+    expires_at    TIMESTAMPTZ,
+    audit_ref          TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_decision_created ON decision (created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_decision_state   ON decision (state);
@@ -130,7 +150,9 @@ CREATE TABLE IF NOT EXISTS trade_intent (
     counter_case    TEXT NOT NULL DEFAULT '',
     exit_plan       TEXT NOT NULL DEFAULT '',
     idempotency_key TEXT NOT NULL,
-    digest          TEXT NOT NULL,               -- SHA-256 of material fields
+    digest          TEXT NOT NULL,               -- SHA-256 of material fields,
+    payload            JSONB NOT NULL DEFAULT '{}'::jsonb
+    audit_ref          TEXT
     UNIQUE (idempotency_key)
 );
 CREATE INDEX IF NOT EXISTS ix_intent_created ON trade_intent (created_at DESC);
@@ -143,7 +165,8 @@ CREATE TABLE IF NOT EXISTS approval (
     approved_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at       TIMESTAMPTZ,
     scope            JSONB NOT NULL DEFAULT '{}'::jsonb,
-    step_up_verified BOOLEAN NOT NULL DEFAULT FALSE
+    step_up_verified BOOLEAN NOT NULL DEFAULT FALSE,
+    audit_ref          TEXT
 );
 
 -- ---------------------------------------------------------------- orders & fills
@@ -162,6 +185,7 @@ CREATE TABLE IF NOT EXISTS orders (
     funding_quote   NUMERIC(28, 12) NOT NULL DEFAULT 0,
     reject_reason   TEXT,
     idempotency_key TEXT NOT NULL,
+    audit_ref          TEXT
     UNIQUE (venue, account_id, idempotency_key)
 );
 CREATE INDEX IF NOT EXISTS ix_orders_state ON orders (state);
@@ -178,7 +202,8 @@ CREATE TABLE IF NOT EXISTS fills (
     fee_quote      NUMERIC(28, 12) NOT NULL DEFAULT 0,
     fee_currency   TEXT,
     is_maker       BOOLEAN,
-    side           TEXT NOT NULL
+    side           TEXT NOT NULL,
+    audit_ref          TEXT
 );
 
 -- ---------------------------------------------------------------- risk & halts
@@ -191,7 +216,10 @@ CREATE TABLE IF NOT EXISTS halt_event (
     incident_id   TEXT,
     at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     affected_accounts   TEXT[] NOT NULL DEFAULT '{}',
-    affected_instruments TEXT[] NOT NULL DEFAULT '{}'
+    affected_instruments TEXT[] NOT NULL DEFAULT '{}',
+    seq                  BIGINT
+    cancel_working_orders BOOLEAN NOT NULL DEFAULT TRUE
+    audit_ref            TEXT
 );
 
 CREATE TABLE IF NOT EXISTS risk_limit_change (
@@ -245,3 +273,24 @@ CREATE TABLE IF NOT EXISTS op_projection (
 CREATE INDEX IF NOT EXISTS ix_projection_entity ON op_projection (entity_type, entity_id);
 
 COMMIT;
+
+-- ---------------------------------------------------------------- migration bookkeeping
+-- The runner creates this before applying anything (store/schema.py SCHEMA_MIGRATIONS_DDL). It was
+-- absent from this file, so a PostgreSQL deploy following it could not record what it had applied —
+-- and forward-only migrations are only forward-only if the versions already applied are readable.
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version     TEXT PRIMARY KEY,
+    checksum    TEXT NOT NULL,
+    description TEXT NOT NULL,
+    statements  INTEGER NOT NULL,
+    applied_at  TIMESTAMPTZ NOT NULL
+);
+
+-- Deferrals, as distinct from bypasses: a version absent from schema_migrations is either waiting for
+-- a table this database does not have, or was moved past by mistake. Only the second is fatal, and
+-- telling them apart needs the first to be written down. See store/schema.py, same name.
+CREATE TABLE IF NOT EXISTS schema_migration_skips (
+    version    TEXT PRIMARY KEY,
+    reason     TEXT NOT NULL,
+    skipped_at TIMESTAMPTZ NOT NULL
+);

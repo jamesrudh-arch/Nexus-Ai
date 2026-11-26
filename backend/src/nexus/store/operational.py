@@ -193,6 +193,8 @@ class OperationalStore(Protocol):
 
     def save_instrument(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None: ...
 
+    def save_venue_mapping(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None: ...
+
     def save_order(
         self,
         *,
@@ -259,7 +261,15 @@ class OperationalStore(Protocol):
 
     def decisions(self, *, limit: int = 50) -> tuple[dict[str, Any], ...]: ...
 
+    def save_evidence_ref(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None: ...
+
+    def evidence_refs(
+        self, *, dossier_id: str | None = None, limit: int = 50
+    ) -> tuple[dict[str, Any], ...]: ...
+
     def instruments(self) -> tuple[dict[str, Any], ...]: ...
+
+    def venue_mappings(self, *, instrument_id: str | None = None) -> tuple[dict[str, Any], ...]: ...
 
     def mark_projected(
         self, audit_ref: str, *, event_type: str, entity_type: str, entity_id: str
@@ -593,6 +603,80 @@ class SqliteOperationalStore:
             out.append(item)
         return tuple(out)
 
+    def save_venue_mapping(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None:
+        """One (instrument, venue, venue_symbol) row: how the canonical instrument is traded somewhere.
+
+        The identity triple is what makes this idempotent — re-projecting the same mapping replaces the
+        row rather than adding a second one, which matters because the projection is re-runnable by
+        design (L-2). ``certified_at`` is deliberately left NULL: the moment a mapping reached its
+        present rank is recorded in the registry's change log, with the evidence and the requester
+        beside it, and copying that timestamp here would create a second copy of a fact that can then
+        disagree with the first.
+        """
+        instrument_id = str(payload.get("instrument_id") or "")
+        venue = str(payload.get("venue") or "")
+        venue_symbol = str(payload.get("venue_symbol") or "")
+        if not instrument_id or not venue or not venue_symbol:
+            raise PersistenceError(
+                "a venue mapping needs instrument_id, venue and venue_symbol to be persisted"
+            )
+        assert_no_secrets(dict(payload))
+        with self._transaction() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO venue_instrument_mapping
+                   (instrument_id, venue, venue_symbol, status, contract_size, tick_size, tick_value,
+                    min_order_qty, max_order_qty, qty_step, quote_currency, settlement_currency,
+                    trading_hours, margin_rate, fees, notes, certified_at, audit_ref)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    instrument_id,
+                    venue,
+                    venue_symbol,
+                    str(payload.get("status") or "UNKNOWN"),
+                    _num(payload.get("contract_size")),
+                    _num(payload.get("tick_size")),
+                    _num(payload.get("tick_value")),
+                    _num(payload.get("min_order_qty")),
+                    _num(payload.get("max_order_qty")),
+                    _num(payload.get("qty_step")),
+                    _text(payload.get("quote_currency")),
+                    _text(payload.get("settlement_currency")),
+                    _text(payload.get("trading_hours")),
+                    _num(payload.get("margin_rate")),
+                    dumps_canonical(payload.get("fees") or {}),
+                    str(payload.get("notes") or ""),
+                    _text(payload.get("certified_at")),
+                    _text(audit_ref),
+                ),
+            )
+            self._mark(conn, audit_ref, "venue_mapping", f"{instrument_id}:{venue}:{venue_symbol}")
+
+    def venue_mappings(self, *, instrument_id: str | None = None) -> tuple[dict[str, Any], ...]:
+        sql = "SELECT * FROM venue_instrument_mapping"
+        args: tuple[Any, ...] = ()
+        if instrument_id is not None:
+            sql += " WHERE instrument_id = ?"
+            args = (instrument_id,)
+        sql += " ORDER BY instrument_id ASC, venue ASC, venue_symbol ASC"
+        rows = self._query(sql, args)
+        numeric = (
+            "contract_size",
+            "tick_size",
+            "tick_value",
+            "min_order_qty",
+            "max_order_qty",
+            "qty_step",
+            "margin_rate",
+        )
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            for column in numeric:
+                item[column] = decimal_or_none(item.get(column))
+            item["fees"] = loads_json(item.get("fees")) or {}
+            out.append(item)
+        return tuple(out)
+
     # -- orders & fills --------------------------------------------------
 
     def save_order(
@@ -900,6 +984,76 @@ class SqliteOperationalStore:
             out.append(item)
         return tuple(out)
 
+    # -- intelligence memory (Stage 8) -----------------------------------
+    #
+    # `evidence_ref` is the first of the three intelligence-memory tables to get a writer. `dossier` and
+    # `memory_item` are still schema-only; they arrive with Stage 8.3 and stage 10 respectively, and the
+    # writer below is deliberately usable before either exists — `dossier_id` is nullable, so evidence can
+    # be recorded without a dossier to hang it on.
+
+    def save_evidence_ref(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None:
+        """Persist one piece of evidence and when it was seen.
+
+        ``observed_at`` and ``retrieved_at`` are separate columns on purpose and both are required to be
+        non-empty. ``observed_at`` is the venue's own timestamp for the observation; ``retrieved_at`` is
+        the local clock at the moment this system received it. Collapsing the two is what makes latency
+        unmeasurable (finding F-14), and a NOT NULL column still accepts an empty string — so the refusal
+        is here rather than left to the caller, because an evidence row that cannot say when it was
+        observed cannot support a decision anyone can audit.
+        """
+        evidence_id = str(payload.get("evidence_id") or "")
+        if not evidence_id:
+            raise PersistenceError("evidence cannot be persisted without an evidence_id")
+        source = str(payload.get("source") or "")
+        if not source:
+            raise PersistenceError("evidence cannot be persisted without a source")
+        observed_at = str(payload.get("observed_at") or "")
+        retrieved_at = str(payload.get("retrieved_at") or "")
+        if not observed_at or not retrieved_at:
+            raise PersistenceError(
+                "evidence needs both observed_at (the venue's timestamp) and retrieved_at (the local "
+                "clock at receipt); an evidence row with neither cannot support an auditable decision"
+            )
+        assert_no_secrets(dict(payload))
+        with self._transaction() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO evidence_ref
+                   (evidence_id, dossier_id, source, kind, observed_at, retrieved_at, data_status,
+                    locator, checksum, payload, audit_ref)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    evidence_id,
+                    _text(payload.get("dossier_id")),
+                    source,
+                    str(payload.get("kind") or "DATA"),
+                    observed_at,
+                    retrieved_at,
+                    str(payload.get("data_status") or "UNAVAILABLE"),
+                    str(payload.get("locator") or ""),
+                    _text(payload.get("checksum")),
+                    dumps_canonical(payload.get("payload") or {}),
+                    _text(audit_ref),
+                ),
+            )
+            self._mark(conn, audit_ref, "evidence_ref", evidence_id)
+
+    def evidence_refs(self, *, dossier_id: str | None = None, limit: int = 50) -> tuple[dict[str, Any], ...]:
+        """Most recent evidence first, so a reader sees what the system has lately relied on."""
+        sql = "SELECT * FROM evidence_ref"
+        args: list[Any] = []
+        if dossier_id is not None:
+            sql += " WHERE dossier_id = ?"
+            args.append(dossier_id)
+        sql += " ORDER BY retrieved_at DESC, evidence_id ASC LIMIT ?"
+        args.append(int(limit))
+        rows = self._query(sql, tuple(args))
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = loads_json(item.get("payload")) or {}
+            out.append(item)
+        return tuple(out)
+
     # -- projection bookkeeping (L-2) ------------------------------------
 
     def _mark(
@@ -931,6 +1085,7 @@ class SqliteOperationalStore:
     def counts(self) -> dict[str, int]:
         tables = (
             "instrument",
+            "venue_instrument_mapping",
             "decision",
             "trade_intent",
             "approval",

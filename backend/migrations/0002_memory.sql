@@ -3,7 +3,15 @@
 -- today. Tables only, by design: stages 8-10 own the writers. Fixing the shape now is what makes
 -- provenance mandatory rather than optional — an evidence row that cannot say where it came from,
 -- when it was observed, and what its data status was, cannot support a decision anyone can audit.
--- All timestamps are TIMESTAMPTZ in UTC. Confidence uses NUMERIC, never FLOAT.
+--
+-- Stage 8.2 delivered the first writer: evidence_ref, in nexus/intelligence/evidence.py, audited as
+-- `evidence.recorded`. dossier and memory_item still have none; they arrive with 8.3 and stage 10.
+--
+-- All timestamps are TIMESTAMPTZ in UTC. Confidence uses NUMERIC, never FLOAT — here. The SQLite side
+-- keeps memory_item.confidence as TEXT and constrains it with a CHECK instead, because SQLite's NUMERIC
+-- affinity would store a REAL, i.e. a float, and this schema's rule is that Decimals travel as strings:
+-- 19 numeric columns across 8 tables are TEXT for that reason. Migration 0004 considered changing the
+-- type and rejected it; the CHECK is what it added.
 
 BEGIN;
 
