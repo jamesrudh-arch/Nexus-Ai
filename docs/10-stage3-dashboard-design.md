@@ -223,3 +223,53 @@ cost breakdown and benchmark comparison; calibration panel that shows under-samp
 than hiding them; append-only audit & replay stream across research, decisions, approvals,
 orders, fills, changes and incidents with replay selector and CSV/PNG export carrying a
 provenance header (window, filters, data status).
+
+---
+
+## 5. Sub-deliverable 3.5 — System Health, Settings & Controls, mobile (BUILT — AWAITING REVIEW)
+
+Board: `design/stage3-5-health-settings-mobile.html`. Two shells + mobile frame; var audit clean.
+
+### 5.1 System Health (p14 + p10)
+
+Feed/adapter/entitlement grid with registry coverage states (SUPPORTED/CONNECTED/
+DATA-AVAILABLE/TRADE-ENABLED/LIVE-VERIFIED), freshness, latency, last sync; states are measured
+and cited (the bybit row shows the real geo-block condition, not a painted tick). Alert triage
+queue over the six docs/03 p14 kinds with severity, state and incident links; delivery status for
+the $0 self-hosted channels (D-019) where a silent channel raises its own alert; incident
+timeline card with scope, actions, reconciliation state and owner-notification time. Context
+rail: versioned feed-integrity checks (failed check ⇒ feed barred + CRIT).
+
+### 5.2 Settings & Controls (p15)
+
+Environment ladder OBSERVE→RESEARCH→SHADOW→PAPER→PILOT→LIVE rendered as **state, not a toggle**:
+LIVE shown locked; promotion requires owner request + MFA + recorded mandate + rollback plan +
+independent risk-engine acknowledgement; live authority displays its DENIED state with the smoke
+evidence date. Risk mandates owner-set with audit links; data-source table carries a mandatory
+D-019 cost column that rejects paid sources at this screen; model/tool registry with hashes and
+retention; roles & security (MFA step-up surfaces, vault-only keys with tested redactor,
+sessions, retention). Context rail: settings change log and the rule that configuration changes
+carry trade-grade decision chrome.
+
+### 5.3 Mobile control surface (docs/03 §9)
+
+340px frame: 36px top band (environment, halt, UTC), compact Command hierarchy (equity, P&L,
+exposure, feeds), full-width EMERGENCY HALT at tap 1 with scope + MFA confirmation at tap 2,
+positions/no-trade summaries, offline banner (cached read-only, stale badge, no order
+submission), fixed bottom tabs Command · Markets · Positions · Alerts · More. Must-support list
+from §9 reproduced verbatim on the board; deep charting and complex configuration defer to
+responsive desktop.
+
+---
+
+## 6. Stage 3 completion summary (pending stage-level approval)
+
+Ten screens + mobile surface, all composing inside the approved 3.1 shell with approved Stage 2
+tokens: boards 3.1 (shell/IA), 3.2 (Overview, Live Markets, chart anatomy), 3.3 (Intelligence,
+Opportunities), 3.4 (Positions, Laboratory, Risk, History), 3.5 (Health, Settings, mobile).
+Cross-cutting laws restated on every board: specimen-tagged design data vs real-or-labelled
+production data; drill-down from every figure; verification gates before decisions; owner-only
+mandates; fail-closed risk; no hidden chain-of-thought; capability registry never advertises
+unsupported markets; $0 cost gate; WCAG floors from docs/09.
+Stage 3 is complete at batch level (D-033…D-036); **stage-level approval is requested next** and
+gates Stage 4 (Interaction & UX).
