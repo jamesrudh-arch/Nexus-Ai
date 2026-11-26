@@ -331,6 +331,9 @@ def p9_table() -> str:
             ("28", "<span class='cite'>45838330420</span>", "<b class='ok'>0.000</b>",
              "<span class='mono'>0.937</span>", "<span class='mono'>0.358</span>",
              "0.000", "0.000", "60777.95", "60777.95"),
+            ("29", "<span class='cite'>45840904271</span>", "<b class='neg'>0.165</b>",
+             "<span class='mono'>1.170</span>", "<span class='mono'>0.295</span>",
+             "0.141", "<b>0.557</b>", "60736.25", "60735.25"),
         ],
     )
 
@@ -975,11 +978,23 @@ bps_per_s_wall=&hellip; quoted_spread_bps=&hellip; <b>asserts_agreement=False</b
 <span class="mono">venue-verification</span> on the <span class="mono">pull_request</span> event
 alone. <b>Every commit of this batch is green on every run, 0 non-success</b> &mdash; stated as a
 property and not as a count, because a count here re-triggers on each push and goes stale the moment
-it is written, which is <b>F-12</b>: the defect this very stage closed. Five samples now &mdash;
-<b>gap 0.000 in five consecutive runs</b>, across four different prices, at intervals from 0.238 s to
-1.089 s of venue time &mdash; and five zeros is not a tolerance waiting to be sized. It is the absence
-of a phenomenon. The accumulation continues because the ruling said to accumulate, not because a bound
-looks reachable.</p>
+it is written, which is <b>F-12</b>: the defect this very stage closed. The accumulation continues
+because the ruling said to accumulate, not because a bound looks reachable.</p>
+<p><b>Run 29 ended the zero streak, and it is the most informative sample yet.</b> Five consecutive
+runs had recorded <span class="mono">gap_bps=0.000</span>; run 29
+(<span class="cite">45840904271</span>) recorded <b>0.165</b> &mdash; quotes mid 60736.25 against book
+mid 60735.25, exactly one dollar apart, which is <b>10.3&times; the 0.016 bps quoted spread</b> and so
+not a tick-rounding artefact. &ldquo;Five consecutive zeros&rdquo; was therefore five runs and not a
+property, which is the same lesson run 27 taught about skips. What replaces it is stronger than what it
+displaced: <b>both rate readings are nonzero and they differ by 3.95&times;</b> &mdash;
+<span class="mono">bps_per_s_wall=0.557</span> against
+<span class="mono">bps_per_s_observed=0.141</span>. Only the wall clock measures the interval between
+the two fetches, so 0.557 bps/s is the rate that means anything, and the venue-stamped rate
+<b>understates it fourfold</b> by dividing the same gap across 1.170 s of skew. That is <b>F-14
+quantified rather than merely demonstrated</b>: using <span class="mono">observed_at</span> as the
+denominator does not just add noise, it biases the rate <i>downward</i> by the skew factor. And 0.557
+sits inside the four-run range (0.000&ndash;0.904, mean 0.441), so the earlier samples were measuring
+the same quantity during a period when the mid happened not to move.</p>
 <p><b>Run 27 is the sharpest of the four and the one to read carefully.</b> Its venue timestamps were
 <b>1.089 s</b> apart while both responses arrived <b>0.298 s</b> apart &mdash; a 3.7&times; skew
 &mdash; and the mids were <i>still identical to the cent</i>. A full second of venue time passed

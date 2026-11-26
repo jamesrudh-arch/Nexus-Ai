@@ -1203,6 +1203,7 @@ denominator.
 | 26 | `45833872241` | **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** | **0.000** (mids identical, 60832.85) | **0.238** | **0.298** |
 | 27 | `45836112636` | **43 passed / 0 failed / 5 geo-blocked / 1 skipped of 49** | **0.000** (mids identical, 60867.95) | **1.089** | **0.298** |
 | 28 | `45838330420` | **43 passed / 0 failed / 5 geo-blocked / 1 skipped of 49** | **0.000** (mids identical, 60777.95) | 0.937 | 0.358 |
+| 29 | `45840904271` | **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** | **0.165** (60736.25 vs 60735.25) | 1.170 | 0.295 |
 
 Run 26 is `ab841c7`'s only venue run: that commit changed documents and no test, so the `push` event
 ran `ci` alone and only the `pull_request` event triggered `venue-verification`.
@@ -1220,10 +1221,31 @@ market-moving explanation predicts and what an endpoint-disagreement explanation
 samples still cannot bound a rate, which is why the accumulation continues rather than a tolerance
 being chosen.
 
-Run 28 (`45838330420`, the previous commit's own CI) adds a fifth: **gap 0.000 in five consecutive
-runs**, now across four different prices, with `dt_observed_s=0.937` against `dt_wall_s=0.358` — a 2.6×
-skew, in the same direction as run 25 and the opposite of run 26. Five zeros at intervals from 0.238 s
-to 1.089 s of venue time is not a tolerance waiting to be sized; it is the absence of a phenomenon.
+Run 28 (`45838330420`) added a fifth zero, with `dt_observed_s=0.937` against `dt_wall_s=0.358` — a
+2.6× skew, in the same direction as run 25 and the opposite of run 26.
+
+**Run 29 (`45840904271`) then ended the streak, and it is the most informative sample yet.** Its gap is
+**0.165 bps** — quotes mid 60736.25 against book mid 60735.25, exactly one dollar apart — where runs
+24 to 28 were all 0.000. So "five consecutive zeros" was five runs and not a property, the same lesson
+run 27 taught about skips. What replaces it is stronger than what it displaced:
+
+* **Both rate readings are now nonzero and they differ by 3.95×** — `bps_per_s_wall=0.557` against
+  `bps_per_s_observed=0.141`. Only the wall clock measures the interval between the two fetches, so
+  **0.557 bps/s is the rate that means anything**, and the observed-stamped rate understates it fourfold
+  by dividing the same gap across 1.170 s of venue skew. That is F-14 quantified rather than merely
+  demonstrated: using `observed_at` as the denominator does not merely add noise, it biases the rate
+  *downward* by the skew factor.
+* **0.557 bps/s sits inside the four-run range** (0.000–0.904, mean 0.441) and close to its mean, so
+  the earlier samples were not measuring something different — they were measuring the same quantity
+  during a period when the mid happened not to move.
+* **The gap is 10.3× the quoted spread** of 0.016 bps, so it is not a rounding artefact of the tick
+  size; one dollar on a 60,736 dollar price is a real difference between the two snapshots.
+
+Arithmetic re-verified before being written here: `|60736.25 − 60735.25| / 60736.25 × 1e4 = 0.164646 →
+0.165`, and both published rates are consistent with their displayed intervals once the two rounding
+steps are intersected rather than compared pointwise — `dt_wall_s` must lie in (0.29533, 0.29550) to
+display 0.295 *and* yield 0.557. A first check that compared point estimates reported a false
+mismatch, which is recorded because the check was wrong and not the evidence.
 
 **Run 27 is the sharpest of the four, and it is the one that should be read carefully.** Its venue
 timestamps were **1.089 s** apart while the two responses arrived **0.298 s** apart — a 3.7× skew —
