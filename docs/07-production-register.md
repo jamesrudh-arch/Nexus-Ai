@@ -92,9 +92,18 @@ and the fourth left open and visible rather than hidden behind a green gate.
   (`observed_at` is venue time in all four adapters, so receipt latency cannot be measured at all) and
   **P-9/F-8** (the cross-endpoint rate, now accumulating in every run).
 
-**STAGE 8 — KNOWLEDGE GRAPH.** Status: `NOT STARTED`. Named by **D-048** as the next batch, on the
-evidence that three of fourteen asset classes now have a verified free source and eleven must still
-render `UNSUPPORTED` (F-6). Stages 9 to 23 remain `NOT STARTED`.
+**STAGE 8 — scope not yet defined.** Status: `NOT STARTED`. Named by **D-048** as the next batch, but
+**no document in this repository names Stage 8 or states its mandate**, and this register will not
+invent one. What the record does establish is the chain Stage 8 sits in: `docs/12` §1.3 names knowledge
+sufficiency as **stage 10** and the three verification gates as **stage 11**, `docs/13` says the
+intelligence-memory tables (`dossier`, `evidence_ref`, `memory_item`) get their writers in **stages
+8–10**, and `design/build_board52.py` places the intelligence dossier at **stage 9**. So Stage 8 is
+the first of the three stages that give those tables writers, and its scope is the owner's to set.
+What Stage 7 hands it: three instruments seeded at `DATA_AVAILABLE`, three of fourteen asset classes
+with a verified free source and eleven rendering `UNSUPPORTED` (F-6), an archive gate reachable but
+never yet satisfied because no pipeline has run, and two findings that constrain any design — **F-14**
+(`observed_at` is venue time, so latency is unmeasurable) and **P-9/F-8** (the cross-endpoint rate,
+accumulating). Stages 9 to 23 remain `NOT STARTED`.
 
 ---
 
