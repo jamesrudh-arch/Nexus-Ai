@@ -1,6 +1,7 @@
 # 08 — Stage 1: Brand Identity — Guidelines & Evidence
 
-Status: **BUILT — AWAITING REVIEW** (see `docs/07-production-register.md`, Stage 1 row).
+Status: **APPROVED** 2026-11-25 — decisions D-030 (mark = Direction B) and D-031 (colour
+system), recorded in `docs/07-production-register.md`. This document is now binding.
 Review artefact: `brand/stage1-presentation.html` (self-contained; served or opened directly).
 Source of truth for every asset: `brand/geometry.py`, `brand/identity.py`; raster evidence via
 `brand/raster.py`. Regenerate all vector masters with `identity.write_assets(Path("brand/svg"))`.
@@ -66,7 +67,12 @@ Surfaces and neutrals:
   text pair.
 - No gradients on any brand element, in any medium.
 
-## 3. The mark — three directions, one family
+## 3. The mark — Direction B adopted (D-030)
+
+**The system mark is Direction B — Nexus N.** Directions A and C are archived
+explorations kept in `brand/geometry.py` for provenance; their masters live in
+`brand/svg/archive/` and must not be used as system assets. The evidence that decided
+it is preserved below, one family, three directions:
 
 All directions share the 96-unit field and the node motif. Masters are locked to their
 approved surface (`mark-<dir>-on-ink|on-platinum|mono-on-ink|mono-on-platinum.svg`) because
@@ -128,9 +134,9 @@ the mark goes inside a neutral plate with full clear space.
 
 | element | minimum | evidence |
 |---|---|---|
-| mark B, monochrome | 16 px | ladder: letterform legible, node reads from 24 px |
-| mark A | 24 px | 9.4% ink at 16 px — fades |
-| mark C | 32 px | blades fragment below |
+| the mark (B), monochrome | 16 px | ladder: letterform legible, node reads from 24 px |
+| archive A (not for use) | 24 px | 9.4% ink at 16 px — fades |
+| archive C (not for use) | 32 px | blades fragment below |
 | primary lockup | 96 px wide (cap ≈ 10.6 px) | below this the wordmark cap drops under legible size |
 | stacked lockup | 64 px wide | same cap rule |
 | favicons / app icons | mark B only | wordmarks never survive 16–48 px |
@@ -154,13 +160,15 @@ in at 96% → 100% width with opacity 0 → 1 (700–1200 ms). 1.2 s total, cubi
 statically. Implemented as mask reveals over finished geometry so motion never redraws the
 mark. Keyframe strip: presentation §8. Motion becomes buildable assets in Stage 2.
 
-## 10. Decisions requested (gate to Stage 2)
+## 10. Decisions (resolved)
 
-1. **Mark direction:** A, **B (recommended)**, or C.
-2. **Colour system:** Ink / Graphite / Platinum monochrome with accent #7364D8 (§2).
+1. **Mark direction — D-030:** Direction B, as recommended. 2026-11-25.
+2. **Colour system — D-031:** Ink / Graphite / Platinum monochrome with accent #7364D8, as
+   evidenced in §2. 2026-11-25.
 
-On approval: register updated in docs/07; Stage 2 begins. On rejection: the register records
-requested changes and this stage is refined — nothing downstream starts early.
+Both recorded in `docs/07-production-register.md`. Stage 2 (Typography & Design System) inherits
+these as binding constraints: the type and token system must draw its neutrals from §2, keep the
+accent out of data visuals, and honour the contrast floors restated here.
 
 ## 11. Honesty register for this stage
 

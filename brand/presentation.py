@@ -120,7 +120,7 @@ def sec_cover() -> str:
     return f"""
 <div class="lede">Nexus-AI &middot; Stage 1 of 23 &middot; Brand Identity</div>
 <h1>Identity system: mark, wordmark, colour, construction</h1>
-<div class="status">Built &mdash; awaiting review &middot; two decisions requested at the end</div>
+<div class="status">Approved 2026-11-25 &mdash; Direction B (D-030) &middot; colour system (D-031)</div>
 <div class="grid2" style="margin-top:26px">
   <div class="tile on-ink">{inline(identity.wrap(stacked, INK), width="210")}</div>
   <div class="tile on-light">{inline(identity.wrap(identity.stacked_lockup(INK), PLATINUM), width="210")}</div>
@@ -423,17 +423,17 @@ def sec_governance() -> str:
   <div><h3>Assets on disk</h3>
     <p class="mono" style="line-height:1.9">brand/svg/ &mdash; {len(assets)} vector masters:<br>
     {", ".join(a.replace(".svg", "") for a in assets)}<br>
+    brand/svg/archive/ &mdash; retired explorations A and C (D-030)<br>
     brand/png/ &mdash; measured evidence renders (ladders, lockups)<br>
     brand/geometry.py &middot; brand/identity.py &middot; brand/raster.py &mdash; the source of
     truth; every asset regenerates with
     <code>identity.write_assets()</code></p></div>
   <div><h3>Register &amp; decisions</h3>
-    <p>docs/07-production-register.md records Stage 1 as
-    <strong>BUILT &mdash; AWAITING REVIEW</strong>. Two decisions are requested:</p>
-    <ol><li><strong>Mark direction</strong> &mdash; A, B (recommended) or C.</li>
-    <li><strong>Colour system</strong> &mdash; Ink / Graphite / Platinum monochrome with
-    accent #7364D8 (&sect;2).</li></ol>
-    <p>Stage 2 (typography &amp; design system) begins only after both are approved. Nothing in
+    <p><strong>Decided 2026-11-25.</strong> D-030: the mark is Direction B; Directions A and C
+    are archived explorations (<span class="mono">brand/svg/archive/</span>, not for use).
+    D-031: colour system as &sect;2 &mdash; monochrome Ink / Graphite / Platinum with accent
+    #7364D8 on the node and the wordmark's "AI" only.</p>
+    <p>Stage 2 (typography &amp; design system) inherits both as binding constraints. Nothing in
     the backend was touched during Stage 1.</p></div>
 </div>
 <footer>Nexus-AI Stage 1 &middot; generated from brand/geometry.py + brand/identity.py &middot;
