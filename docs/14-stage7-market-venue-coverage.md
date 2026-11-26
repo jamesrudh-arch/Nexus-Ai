@@ -1147,3 +1147,144 @@ green. A guard that has never been seen to fire proves nothing.
    The remaining Stage 7 work is L-D, which needs the D-021 VM. **Recommendation: close Stage 7 with
    bybit's row open and recorded, and take the next batch to Stage 8**, rather than hold the stage
    open on a machine that does not exist yet.
+
+---
+
+## 4. Stage 7 closed — the owner's rulings, and what the mandate discharged
+
+Status: **CLOSED** (2026-11-26, **D-047** batch 7.1 approved, **D-048** stage-level). Bybit's row
+stays **open and visible** by explicit ruling; it is not a Stage 7 residue but a recorded limitation
+with a named remedy (the D-021 VM, lever L-D).
+
+### 4.0 What the owner ruled
+
+| Question (§3.10) | Answer | Recorded as |
+|---|---|---|
+| **Is batch 7.1 approved?** | **Approve** | **D-047** — nine findings F-1…F-9 and five $0 levers L-A…L-E ratified. Everything since stood on it; it is no longer unratified by drift |
+| **P-9 — what should the cross-endpoint check do?** | **`Recommend`** | **D-048**. The recommendation as published offered two paths, so the ambiguity is resolved here rather than hidden: **accumulate the rate, and keep recording.** Dropping the comparison would discard the only instrument that can distinguish a 1.3-second market move from a venue serving a stale ticker beside a live book — which is the defect F-8 was originally raised about. Implemented in `7929a96` |
+| **Dukascopy's rank** | **`Recommend`** → keep **`DATA_AVAILABLE`** | **D-048**. Argued in §3.1 from `pipeline.py:47-49`; the alternative would apply equally to okx and empty the master |
+| **What comes next?** | **Close Stage 7, go to Stage 8** | **D-048**. Bybit's row stays open and recorded rather than holding a stage on a machine that does not exist yet |
+
+### 4.1 P-9 implemented — and its first live run corrected its own interpretation
+
+`7929a96` adds the recording the ruling asked for. A new live check fetches quotes and book
+**back-to-back**, because the interval measured across the whole test class (1.287–1.435 s) spanned
+the trades and candles fetches in between; adjacent calls measure the endpoints themselves, which is
+the denominator the rate needs. The arithmetic sits in three pure functions — `_mid`, `_gap_bps`
+(§2.5's convention `|qm − bm| / qm × 1e4`, in exactly one place), `_rate_bps_per_second` (`None` when
+the interval is not measurable, because dividing by zero would invent a denominator) — so the
+convention can be pinned without a venue.
+
+`TestCrossEndpointRateArithmetic` (7 offline tests) re-derives run `45819539643`'s published 0.693 bps
+over 1.287 s and requires 0.539 bps/s back, pins that the denominator is the *quotes* mid and not the
+book mid, and pins the ruling itself: **a 5,064 bps divergence — the book at half the price — must
+pass.** `_record_cross_endpoint` contains no assertion about the gap and says so in its docstring.
+
+Writing that test caught an arithmetic error of mine: I expected `gap_bps=5064.713` and the helper
+produced `5064.56`. The verified value is hardcoded with its arithmetic shown beside it, because a
+magic number that matches the convention today is exactly what should fail when somebody changes the
+denominator.
+
+**The first live exercise, both events of `7929a96`, both `conclusion=success`:**
+
+| Run | Id | Result | `gap_bps` | `dt_observed_s` | `dt_wall_s` |
+|---|---|---|---|---|---|
+| 24 | `45829853116` | **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** | **0.000** (mids identical, 60804.15) | 0.439 | 0.300 |
+| 25 | `45829842623` | **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** | **0.000** (mids identical, 60804.15) | 0.739 | 0.294 |
+
+Fetched adjacently, the two endpoints **agreed exactly** — gap 0.000 in both runs. That is the
+strongest confirmation of P-9's reframing available: shrink the interval and the "disagreement"
+disappears, which is what a market-moving explanation predicts and what an endpoint-disagreement
+explanation does not.
+
+These runs also close two things the previous batch owed. **No skips at all**, so `verify_layout` and
+`parsed_ticks` both ran and F-13's renamed `layout_flag=` key is **live-evidenced at last** (it had
+been offline-only because runs 22 and 23 both skipped the check that emits it). And the trade list
+came back **`buy=0 sell=50`** — fully one-sided — and **passed**, which is P-7 vindicated live for the
+second time (run `45759709313` was 50 buys; this is 50 sells).
+
+### 4.2 F-14 — `observed_at` is venue time, not observation time, in all four adapters
+
+Found by the dual recording above, on its first run. `dt_observed_s=0.739` beside `dt_wall_s=0.294`
+is not possible if both measure the same interval: the venue-stamped gap was **2.5× the wall clock**.
+Reading the adapters explains it, and the explanation is not local to okx:
+
+| Adapter | `observed_at` bound to |
+|---|---|
+| `okx.py:216, :380` | the response's `ts` field — venue time |
+| `bybit.py:353, :416, :439` | `ts`/`time`, falling back to `server_time` — venue time |
+| `binance_vision.py:339` | `transact_time` — venue time |
+| `dukascopy.py:253` | `base + timedelta(milliseconds=offset_ms)` — derived from the file's own hour and tick offset |
+
+**No adapter records when this process received the response.** The field is named `observed_at`, and
+in every adapter it carries what the *venue* says, with `venue_timestamp` holding the same value
+beside it. Two consequences:
+
+1. **§3.5's Δt column measured venue-timestamp skew, not the harness's fetch interval.** The
+   *mechanism* stated there — "fetched sequentially, about 1.3 s apart" — is wrong: the true adjacent
+   fetch interval is ~0.3 s wall clock, and the ~1.3 s was skew between two endpoints' venue
+   timestamps across non-adjacent tests. **The conclusion stands and is strengthened**: the gap tracks
+   elapsed market time, and venue timestamps are the more meaningful measure of how stale each
+   snapshot is. Run 25 shows okx's ticker `ts` lagging its book `ts` by 0.739 s while both responses
+   arrived within 0.294 s of each other — the ticker endpoint is simply updated less often than the
+   book.
+2. **Latency cannot be measured at all** as things stand, because nothing records receipt time. Any
+   future staleness or latency gate would be computing against venue time and calling it ours.
+
+**Not fixed here, deliberately.** Changing what `observed_at` means touches four adapters, every
+record type, and every test that asserts on those fields — a semantic change that deserves its own
+authorisation rather than riding along inside a stage closure. It is recorded as a finding with its
+cost, which is how Stage 7.1 handled every finding needing code. The mitigation that *is* in place:
+the dual recording makes the discrepancy visible in every run instead of hidden inside a single
+ambiguous field, which is why it surfaced on the first attempt rather than in a month.
+
+### 4.3 What the mandate discharged, per venue and per asset class
+
+The mandate (`docs/12` §1.4) was to retire the unverified rows market by market with evidence per
+market, and to state what is verified **per venue and per asset class**. Final state:
+
+| Venue | Asset class | Verified | Rank | Evidence |
+|---|---|---|---|---|
+| **OKX** | `CRYPTO_PERP` | **Yes** — 5 public endpoints against live responses, instrument economics read off the listing | `DATA_AVAILABLE` | every run read; `ctVal=0.01 tickSz=0.1 minSz=0.01` |
+| **BINANCE (vision)** | `CRYPTO_SPOT` | **Yes** — real 71,720-byte daily ZIP, **1,440 of 1,440** 1m bars, 0 rejected | `DATA_AVAILABLE` | every run read; `timestamp_units=us` |
+| **DUKASCOPY** | `FX_SPOT` | **Yes for EURUSD only** — 25,761 → 101,480 bytes = **5,074 × 20** exactly, prices in band | `DATA_AVAILABLE` | layout verified in every run that reached the source; **12 of 13 divisors still unverified** |
+| **BYBIT** | `CRYPTO_PERP` | **No** — 403 geo-blocked from every hosted runner | `SUPPORTED` | **open by ruling**; needs the D-021 VM (L-D) |
+
+Both honesty rows carried since Stage 5 are therefore retired **or** accounted for: dukascopy's
+`LAYOUT_VERIFIED = False` is retired for EURUSD (F-1 closed), and bybit's geo-block is not retired
+but is now visible in the API with its reason, finding id and remedy attached (§3.4) rather than
+living only in a document.
+
+**Per asset class:** 3 of 14 classes have a verified free source (`CRYPTO_PERP`, `CRYPTO_SPOT`,
+`FX_SPOT`). The other eleven must still render `UNSUPPORTED` per D-019, and `len(AssetClass) == 14`
+is asserted so that growth forces the scope to be re-argued rather than silently widening a claim
+(F-6 stays open).
+
+### 4.4 What Stage 7 leaves open
+
+| Item | State | Remedy |
+|---|---|---|
+| **F-2** bybit geo-block | **OPEN, visible** | L-D from the D-021 VM as a self-hosted runner; the `runner` dispatch input already exists |
+| **F-14** `observed_at` is venue time | **NEW, OPEN** | A semantic change across four adapters and every record type; needs its own authorisation (§4.2) |
+| **F-8 / P-9** cross-endpoint rate | **OPEN, accumulating** | `okx.cross_endpoint` now records `gap_bps`, both Δt readings and both rates every run; a bound needs many more samples |
+| **F-5** intermittent feed | **OPEN** | Five probe patterns, no cause established; runs 24–25 had no skips at all, runs 22–23 had one each |
+| **F-6** 3 of 14 asset classes | **OPEN, visible** | The eleven uncovered classes render `UNSUPPORTED`; widening needs evidence per class |
+| **F-11** half the fix offline-evidenced | **OPEN as a limitation** | The `http-*`-beside-a-network-fault path has still not recurred live |
+
+Closed in Stage 7: **F-1** (dukascopy layout, for EURUSD) · **F-3** (empty master) · **F-4** (venue
+vocabulary) · **F-7** (`CONNECTED` as a definition) · **F-9/P-7** (one-sidedness) · **F-10** (the
+self-contradicting verdict) · **F-12** (run counts in source) · **F-13** (a floor that counted a skip
+as a pass).
+
+### 4.5 Gate evidence at closure
+
+| Gate | Result |
+|---|---|
+| Suite | **1,036 passed, 2 skipped, 0 failed** |
+| Live module collected | **49** (36 at the start of 7.3 → 41 → 49); live-source checks **12** |
+| Live module offline subset | **32 passed** |
+| CI, final commit `7929a96` | runs `45829853116` + `45829842623`, both `success`: **44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49** |
+| CI, every commit of the batch | green on all four commits, all events, 0 non-success |
+| Lint / format / types | ruff + format clean (82 files); **mypy strict Success on 57 source files** |
+| Repo hygiene | **83 passed** |
+| Boards | both re-audited: 0 undefined CSS vars, 0 external refs, 0 unstyled classes, tags balanced |

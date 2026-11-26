@@ -64,20 +64,34 @@ Implemented+tested: the twelve Phase 2–4 packages above. **Connected and verif
 data**: okx (five public endpoints) and binance vision (end-to-end, µs-timestamp defect found and
 fixed). Their rank is `DATA_AVAILABLE`, **not** `LIVE_VERIFIED` — in this codebase that rank means a
 live pilot with reconciliation proven, which needs credentials and orders, and neither venue has it.
-**Connected, layout verified for EURUSD**: dukascopy — `LAYOUT_VERIFIED=True` since Stage 7.2 on
-twelve live runs, the other 12 point divisors still provisional and named by
-`LAYOUT_VERIFIED_PAIRS`; 503 throttling characterised, its cause not established.
+**Connected, layout verified for EURUSD**: dukascopy — `LAYOUT_VERIFIED=True` since Stage 7.2 and
+verified in every venue run *that reached the source* since (a run whose feed never answered *skips*
+the check, and a skip is not a pass — F-13), the other 12 point divisors still provisional and named
+by `LAYOUT_VERIFIED_PAIRS`; 503 throttling characterised, its cause not established.
 **Connected-but-untested**: bybit v5 from hosted runners (403 geo-block; code exercised against
 public docs only) — still open, still reported every run, and it needs the D-021 VM as a self-hosted
 runner. Planned: NATS production bus; intelligence/verification/lab/
 learning/notify/ops/portfolio contexts — nothing simulated to look built.
 
 Stage 7's mandate was *"Stage 7 retires the unverified rows market by market with evidence per
-market."* As of Stage 7.2 the dukascopy row **is** retired for EURUSD and the bybit row **is not**,
-and cannot be from a hosted runner at any cost. The evidence, the two findings this batch found in
-its own diagnostic (F-10, F-11) and the five that remain open are in `docs/14` §2. The wording above
-was corrected there too: this document described okx as "live-verified", which in this codebase
-means something okx does not have.
+market."* **Stage 7 is CLOSED (2026-11-26, D-047 + D-048).** The dukascopy row **is** retired for
+EURUSD and the bybit row **is not**, and cannot be from a hosted runner at any cost — so bybit is
+left open and *visible* rather than holding a stage on a machine that does not exist yet: it ranks
+`SUPPORTED` with `GEO-BLOCKED`, `F-2` and `D-021` in its notes, and the API renders that reason
+instead of an empty `configured=false`. Per venue and per asset class, which is what the mandate
+asked for: okx `CRYPTO_PERP`, binance-vision `CRYPTO_SPOT` and dukascopy `FX_SPOT` are verified at
+`DATA_AVAILABLE`; 3 of 14 asset classes are covered and the other eleven must still render
+`UNSUPPORTED` per D-019. The instrument master is seeded (L-C) from evidence only, so coverage
+stopped reporting zero — and three instruments sit at `DATA_AVAILABLE` with none tradeable.
+
+Two findings outlive the stage. **F-14**: `observed_at` is venue-supplied time in all four adapters
+and nothing records our own receipt time, so latency cannot be measured at all. **P-9/F-8**: the two
+okx endpoints are not simultaneous, so a constant bps tolerance would measure market movement rather
+than disagreement; the pair is now recorded every run (`okx.cross_endpoint`, both mids, both interval
+readings, both rates) and nothing asserts agreement. The evidence for all of it, the findings Stage 7
+closed (F-1, F-3, F-4, F-7, F-9, F-10, F-12, F-13) and the ones it left open are in `docs/14` §2–§4.
+The wording above was corrected in Stage 7.2 as well: this document had described okx as
+"live-verified", which in this codebase means something okx does not have.
 
 ---
 

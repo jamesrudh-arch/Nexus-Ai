@@ -231,7 +231,9 @@ def f3_table() -> str:
 def p8_table() -> str:
     return table(
         ["Run", "Id", "Commit", "<span class='mono'>.quotes observed_at</span>",
-         "<span class='mono'>.book observed_at</span>", "&Delta;t", "quotes mid", "book mid",
+         "<span class='mono'>.book observed_at</span>",
+         "&Delta;t <span class='neg'>(F-14: venue skew, not fetch time)</span>",
+         "quotes mid", "book mid",
          "<span class='mono'>gap_bps</span>", "<span class='mono'>gap_bps/&Delta;t</span>"],
         [
             ("18", "<span class='cite'>45819528009</span>", "<span class='cite'>c48c714</span>",
@@ -246,6 +248,139 @@ def p8_table() -> str:
             ("23", "<span class='cite'>45825598469</span>", "<span class='cite'>4760462</span>",
              "<span class='mono'>13:05:09.075</span>", "<span class='mono'>13:05:10.458</span>",
              "<b>1.383 s</b>", "60784.95", "60777.35", "<b>1.250</b>", "0.904"),
+        ],
+    )
+
+
+# ----------------------------------------------------------------- 11 · what was asked, what was ruled
+def ruled_table() -> str:
+    return table(
+        ["Question as asked", "Owner's answer", "Recorded as", "What it changed"],
+        [
+            ("<b>Is batch 7.1 approved?</b> Still <span class='mono'>PENDING</span> with no decision id",
+             "<span class='ok'><b>Approve</b></span>", "<b>D-047</b>",
+             "Its nine findings (F-1&hellip;F-9) and five $0 levers (L-A&hellip;L-E) are ratified rather "
+             "than unratified by drift. The register row flips <span class='mono'>AWAITING REVIEW</span> "
+             "&rarr; <span class='mono'>APPROVED</span>, and every lever delivered since stands on a "
+             "ratified research base"),
+            ("<b>P-9</b> &mdash; accumulate a rate bound, or stop comparing the mids at all?",
+             "<span class='mono'>Recommend</span>", "<b>D-048</b>",
+             "Two paths were on offer, so the ambiguity is resolved explicitly rather than hidden: "
+             "<b>accumulate, and keep recording</b>. Implemented in <span class='cite'>7929a96</span> "
+             "&mdash; &sect;12"),
+            ("<b>Dukascopy's rank</b> &mdash; <span class='mono'>DATA_AVAILABLE</span> or "
+             "<span class='mono'>CONNECTED</span>?",
+             "<span class='mono'>Recommend</span>", "<b>D-048</b>",
+             "Stays <span class='mono'>DATA_AVAILABLE</span>. "
+             "<span class='cite'>pipeline.py:47-49</span> reserves the higher rung for a source that has "
+             "actually produced stored bars, and dukascopy has produced none; read the other way it would "
+             "apply equally to okx and empty the master"),
+            ("<b>What comes next?</b> Close Stage 7 with bybit's row open, or hold the stage on the D-021 VM?",
+             "<span class='mono'>stage8</span>", "<b>D-048</b>",
+             "<b>Stage 7 closed</b>, bybit left open and <i>visible</i> at "
+             "<span class='mono'>SUPPORTED</span>/<span class='mono'>GEO-BLOCKED</span> with "
+             "<span class='mono'>F-2</span> and <span class='mono'>D-021</span> in its notes and rendered "
+             "in the API. Stage 8 named as the next batch"),
+            ("<b>The D-046 reading</b> &mdash; was any part of &sect;0's reading of "
+             "<span class='mono'>Proceed</span> wrong?",
+             "Not contested", "&mdash;",
+             "&sect;0's reading stands: <span class='mono'>Proceed</span> pointed forward, and 7.1's "
+             "approval came separately as D-047 rather than being inferred from it. That is why it was "
+             "written down instead of assumed"),
+        ],
+    )
+
+
+# ----------------------------------------------------------------------- 12 · P-9 implemented, and F-14
+def p9_table() -> str:
+    return table(
+        ["Run", "Id", "<span class='mono'>gap_bps</span>",
+         "<span class='mono'>dt_observed_s</span>", "<span class='mono'>dt_wall_s</span>",
+         "<span class='mono'>bps_per_s_observed</span>", "<span class='mono'>bps_per_s_wall</span>",
+         "quotes mid", "book mid"],
+        [
+            ("24", "<span class='cite'>45829853116</span>", "<b class='ok'>0.000</b>",
+             "<span class='mono'>0.439</span>", "<span class='mono'>0.300</span>",
+             "0.000", "0.000", "60804.15", "60804.15"),
+            ("25", "<span class='cite'>45829842623</span>", "<b class='ok'>0.000</b>",
+             "<span class='mono'>0.739</span>", "<span class='mono'>0.294</span>",
+             "0.000", "0.000", "60804.15", "60804.15"),
+        ],
+    )
+
+
+def f14_table() -> str:
+    return table(
+        ["Adapter", "<span class='mono'>observed_at</span> bound to", "Site"],
+        [
+            ("<b>okx</b>", "the response's <span class='mono'>ts</span> field &mdash; venue time",
+             "<span class='cite'>okx.py:216, :380</span>"),
+            ("<b>bybit</b>", "<span class='mono'>ts</span>/<span class='mono'>time</span>, falling back "
+             "to <span class='mono'>server_time</span> &mdash; venue time",
+             "<span class='cite'>bybit.py:353, :416, :439</span>"),
+            ("<b>binance-vision</b>", "<span class='mono'>transact_time</span> &mdash; venue time",
+             "<span class='cite'>binance_vision.py:339</span>"),
+            ("<b>dukascopy</b>", "<span class='mono'>base + timedelta(milliseconds=offset_ms)</span> "
+             "&mdash; derived from the file's own hour and tick offset",
+             "<span class='cite'>dukascopy.py:253</span>"),
+        ],
+    )
+
+
+def mandate_table() -> str:
+    return table(
+        ["Venue", "Asset class", "Verified?", "Rank", "What the evidence actually says"],
+        [
+            ("<b>OKX</b>", "<span class='mono'>CRYPTO_PERP</span>", "<span class='ok'><b>Yes</b></span>",
+             "<span class='mono'>DATA_AVAILABLE</span>",
+             "Five public endpoints against live responses, instrument economics read off the listing "
+             "(<span class='mono'>ctVal=0.01 tickSz=0.1 minSz=0.01</span>)"),
+            ("<b>BINANCE (vision)</b>", "<span class='mono'>CRYPTO_SPOT</span>",
+             "<span class='ok'><b>Yes</b></span>", "<span class='mono'>DATA_AVAILABLE</span>",
+             "Real 71,720-byte daily ZIP, <b>1,440 of 1,440</b> 1m bars, 0 rejected, "
+             "<span class='mono'>timestamp_units=us</span>"),
+            ("<b>DUKASCOPY</b>", "<span class='mono'>FX_SPOT</span>",
+             "<span class='warn'><b>EURUSD only</b></span>", "<span class='mono'>DATA_AVAILABLE</span>",
+             "25,761 &rarr; 101,480 bytes = <b>5,074 &times; 20</b> exactly, prices in band; layout "
+             "verified in every run <i>that reached the source</i>; <b>12 of 13 divisors still "
+             "unverified</b> and named by <span class='mono'>LAYOUT_VERIFIED_PAIRS</span>"),
+            ("<b>BYBIT</b>", "<span class='mono'>CRYPTO_PERP</span>",
+             "<span class='neg'><b>No</b></span>", "<span class='mono'>SUPPORTED</span>",
+             "403 geo-blocked from every hosted runner; <b>open by ruling</b>, needs the D-021 VM as a "
+             "self-hosted runner (lever L-D). Visible in the API with its reason rather than omitted"),
+        ],
+    )
+
+
+def close_table() -> str:
+    return table(
+        ["Finding", "State at closure", "Remedy or reason"],
+        [
+            ("<b>F-2</b> bybit geo-block", "<span class='neg'>OPEN, visible</span>",
+             "L-D from the D-021 VM; the <span class='mono'>runner</span> dispatch input already exists"),
+            ("<b>F-14</b> <span class='mono'>observed_at</span> is venue time",
+             "<span class='neg'>NEW, OPEN</span>",
+             "A semantic change across four adapters, every record type and every test asserting on "
+             "them &mdash; needs its own authorisation"),
+            ("<b>F-8 / P-9</b> cross-endpoint rate", "<span class='warn'>OPEN, accumulating</span>",
+             "<span class='mono'>okx.cross_endpoint</span> now records the gap, both &Delta;t readings "
+             "and both rates every run; a bound needs many more samples"),
+            ("<b>F-5</b> intermittent feed", "<span class='warn'>OPEN</span>",
+             "Five probe patterns, no cause established. Runs 24&ndash;25 had <b>no skips at all</b>, "
+             "runs 22&ndash;23 had one each &mdash; which is why the F-13 qualifier is permanent"),
+            ("<b>F-6</b> 3 of 14 asset classes", "<span class='warn'>OPEN, visible</span>",
+             "The eleven uncovered classes render <span class='mono'>UNSUPPORTED</span> per D-019; "
+             "<span class='mono'>len(AssetClass) == 14</span> is asserted so growth forces the scope to "
+             "be re-argued"),
+            ("<b>F-11</b> half the fix offline-evidenced", "<span class='warn'>OPEN as a limitation</span>",
+             "The <span class='mono'>http-*</span>-beside-a-network-fault path has still not recurred "
+             "live"),
+            ("<b>F-1, F-3, F-4, F-7, F-9/P-7, F-10, F-12, F-13</b>",
+             "<span class='ok'>CLOSED in Stage 7</span>",
+             "Dukascopy layout (EURUSD) &middot; empty master &middot; venue vocabulary &middot; "
+             "<span class='mono'>CONNECTED</span> as a definition &middot; one-sidedness &middot; the "
+             "self-contradicting verdict &middot; run counts in source &middot; a floor that counted a "
+             "skip as a pass"),
         ],
     )
 
@@ -408,7 +543,7 @@ def main() -> pathlib.Path:
 {fonts_css()}
 {CSS}</style></head><body><div class='wrap'>
 <div class="lede">Nexus-AI &middot; Stage 7 of 23 &middot; sub-deliverable 7.3 (implementation) &middot;
-authorised by D-046</div>
+authorised by D-046 &middot; <b>closed by D-047 + D-048 on 2026-11-26</b></div>
 <h1 style="font-size:var(--font-size-heading);font-weight:var(--font-weight-semibold);margin:6px 0 0">
 The instrument master is seeded &mdash; three instruments, four venues, and eleven ranks it declines</h1>
 <div class="ribbon">IMPLEMENTATION BATCH &mdash; lever <b>L-C</b>, the last one deliverable from here.
@@ -420,6 +555,13 @@ sight. Gate <b>1,036 passed / 2 skipped / 0 failed</b>, CI green on both events 
 rulings landed with it &mdash; <b>P-7</b> adopted and pinned, <b>P-8</b> measured, and that
 measurement reframed F-8 as <b>P-9</b>. One new finding, <b>F-12</b>: the file the seed cites most
 had been disagreeing with itself about its own evidence.</div>
+<div class="gate" style="margin-top:14px"><b>REVIEWED AND CLOSED &mdash; 2026-11-26.</b> The five
+questions in &sect;11 were answered: batch 7.1 is <b>approved (D-047)</b>, and <b>D-048</b> ruled
+P-9, confirmed dukascopy&rsquo;s rank, and closed Stage 7 with bybit&rsquo;s row left open and
+visible. &sect;12 records what the rulings produced as code &mdash; the cross-endpoint pair is now
+recorded rather than reconstructed by hand &mdash; and the new finding its first live run exposed,
+<b>F-14</b>: <code>observed_at</code> is venue time in all four adapters, so receipt latency cannot
+be measured at all. Stage 8 is named as the next batch.</div>
 
 <h3>0 &middot; How one word was read<span class="tag">docs/14 §3.0 &middot; D-046</span></h3>
 <p>The owner answered §2.9's three questions with <span class="mono">Proceed</span>. One word cannot
@@ -721,7 +863,11 @@ anything that re-triggers per push is stated as a floor or a bound, never as a t
 <h3>10 &middot; Limitations of this batch<span class="tag">docs/14 §3.9</span></h3>
 <div class="card">{limits_table()}</div>
 
-<h3>11 &middot; Decision requested<span class="tag">docs/14 §3.10</span></h3>
+<h3>11 &middot; Decision requested &mdash; and answered<span class="tag">docs/14 §3.10 &middot; §4.0</span></h3>
+<p class="cap">These five were asked when this board was first presented. All five are now ruled, so
+the request is kept as asked and the answer is written beside it &mdash; a question that was answered
+should still show what was actually being decided.</p>
+<div class="card">{ruled_table()}</div>
 <div class="ask">
 <ol>
 <li><b>The D-046 reading.</b> §0 records how <span class="mono">Proceed</span> was read. If any part
@@ -752,7 +898,60 @@ Stage 8</b>, rather than hold a stage open on a machine that does not exist yet.
 </ol>
 </div>
 
-<footer>Stage 7.3 &middot; implementation &middot; D-046 &middot; commits c48c714 (L-C, P-7, P-8) and
+<h3>12 &middot; What the rulings produced<span class="tag">commit 7929a96 &middot; docs/14 §4</span></h3>
+<p>The owner answered P-9 with <span class="mono">Recommend</span>, but the recommendation as
+published offered two paths &mdash; accumulate a rate bound, or stop comparing the mids at all. That
+ambiguity is mine, so it is resolved here rather than hidden: <b>accumulate the rate, and keep
+recording.</b> Dropping the comparison would discard the only instrument that can tell a
+1.3-second market move from a venue serving a stale ticker beside a live book, which is the defect
+F-8 was originally raised about.</p>
+<p>A ruling that is not implemented is prose, so the pair is now recorded properly instead of being
+reconstructed by hand from two separate evidence lines. A live check fetches quotes and book
+<b>back-to-back</b> &mdash; the interval measured across the whole test class spanned the trades and
+candles fetches in between, and adjacent calls measure the endpoints themselves, which is the
+denominator the rate needs:</p>
+<div class="ev"><span class="mono">EVIDENCE okx.cross_endpoint quotes_mid=&hellip; book_mid=&hellip;
+gap_bps=&hellip; dt_observed_s=&hellip; dt_wall_s=&hellip; bps_per_s_observed=&hellip;
+bps_per_s_wall=&hellip; quoted_spread_bps=&hellip; <b>asserts_agreement=False</b></span></div>
+<div class="card">{p9_table()}</div>
+<p class="cap">Three pure functions hold the arithmetic so it can be pinned without a venue:
+<span class="mono">_gap_bps</span> is &sect;2.5&rsquo;s convention
+<span class="mono">|qm &minus; bm| / qm &times; 1e4</span> in exactly one place, and
+<span class="mono">_rate_bps_per_second</span> returns <span class="mono">None</span> rather than
+dividing by a non-positive interval &mdash; a rate with no denominator is the same defect F-8 named.
+Seven offline tests re-derive run <span class="mono">45819539643</span>&rsquo;s published 0.693 bps
+over 1.287 s and require 0.539 bps/s back, and one of them <i>is</i> the ruling: <b>a 5,064 bps
+divergence, the book at half the price, must pass.</b> Writing that test caught an arithmetic error
+of mine &mdash; I expected <span class="mono">5064.713</span>, the helper produced
+<span class="mono">5064.56</span> &mdash; so the verified value is hardcoded with its arithmetic
+shown beside it.</p>
+<div class="blocked"><b>F-14 &mdash; found by the dual recording, on its first run.</b>
+<span class="mono">dt_observed_s=0.739</span> beside <span class="mono">dt_wall_s=0.294</span> is not
+possible if both measure one interval: the venue-stamped gap was <b>2.5&times; the wall clock</b>.
+Reading the adapters explains it, and the explanation is not local to okx.</div>
+<div class="card">{f14_table()}</div>
+<p class="cap"><b>Not fixed here, deliberately.</b> Changing what
+<span class="mono">observed_at</span> means touches four adapters, every record type and every test
+that asserts on those fields &mdash; a semantic change that deserves its own authorisation rather
+than riding along inside a stage closure. It is recorded with its cost, which is how Stage 7.1
+handled every finding needing code. The mitigation that <i>is</i> in place is the dual recording
+itself: it made the discrepancy visible on the first attempt instead of hiding it inside one
+ambiguous field for a month.</p>
+<div class="gate"><b>It also corrects &sect;6&rsquo;s mechanism, though not its conclusion &mdash; and
+strengthens the conclusion.</b> The &asymp;1.3 s in that table was venue-timestamp skew between two
+endpoints across non-adjacent tests; the true adjacent fetch interval is &asymp;0.3 s wall clock.
+Fetched adjacently the two endpoints <b>agreed exactly</b>, gap 0.000 bps in both runs. Shrink the
+interval and the &ldquo;disagreement&rdquo; disappears, which is what a market-movement explanation
+predicts and what an endpoint-disagreement explanation does not. No tolerance is asserted, and none
+should be.</div>
+<div class="card">{mandate_table()}</div>
+<p class="cap">Both honesty rows carried since Stage 5 are therefore retired <b>or</b> accounted for:
+dukascopy&rsquo;s <span class="mono">LAYOUT_VERIFIED = False</span> is retired for EURUSD, and
+bybit&rsquo;s geo-block is not retired but is now visible in the API with its reason, finding id and
+remedy attached rather than living only in a document.</p>
+<div class="card">{close_table()}</div>
+
+<footer>Stage 7.3 &middot; implementation &middot; D-046 &middot; closed by D-047 + D-048 &middot; commits c48c714 (L-C, P-7, P-8) and
 the F-12 correction &middot; gate 1,036 passed / 2 skipped / 0 failed, +39 tests &middot; ruff +
 format clean, mypy strict clean on 57 files, hygiene 83 &middot; CI runs 45819528009 and 45819539643
 both success, 36 passed / 0 failed / 5 geo-blocked of 41, and 4760462's pair
@@ -760,8 +959,12 @@ both success, 36 passed / 0 failed / 5 geo-blocked of 41, and 4760462's pair
 instruments and four venue mappings, bybit among them at SUPPORTED and not omitted &middot; verify_layout
 has passed in every venue run <i>that reached the source</i> since 2026-11-25, stated as a floor
 because each later commit adds two more attempts, and qualified because a run whose feed never answers
-skips rather than passes (F-13) &middot; F-3 closed, F-12 and F-13 closed, F-8 reframed as P-9, F-2 F-5
-F-6 F-11 still open</footer>
+skips rather than passes (F-13) &middot; and 7929a96's pair 45829853116 + 45829842623 both success at
+44 passed / 0 failed / 5 geo-blocked / <b>0 skipped</b> of 49, which is the first run with no skips at
+all and so live-evidences F-13's renamed layout_flag= key at last, and returned a fully one-sided
+trade list (buy=0 sell=50) that passed &mdash; P-7 vindicated live a second time &middot; F-3 closed,
+F-12 and F-13 closed, F-8 reframed as P-9 and now ruled and implemented, <b>F-14 found</b>, F-2 F-5
+F-6 F-11 F-14 still open</footer>
 </div></body></html>"""
     out = HERE / "stage7-3-master-seeded.html"
     out.write_text(html)
