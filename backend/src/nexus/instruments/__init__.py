@@ -5,6 +5,9 @@ and *what has been proven about it*; the calendar decides *whether it should be 
 """
 
 from nexus.instruments.registry import (
+    AUTH_DECLARATIONS,
+    AUTH_NOT_APPLICABLE,
+    AUTH_VERIFIED,
     CERTIFICATION_ORDER,
     CertificationRejected,
     CoverageReport,
@@ -32,6 +35,9 @@ from nexus.instruments.sessions import (
 )
 
 __all__ = [
+    "AUTH_DECLARATIONS",
+    "AUTH_NOT_APPLICABLE",
+    "AUTH_VERIFIED",
     "CERTIFICATION_ORDER",
     "EXCHANGE_HOURS",
     "CalendarConfidence",

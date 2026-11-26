@@ -20,12 +20,23 @@ from nexus.audit.log import AuditLog
 from nexus.core.config import Settings
 from nexus.domain.instrument import AssetClass, Venue, VenueMapping, VenueStatus
 from nexus.execution.halt import HaltManager
-from nexus.instruments.registry import InstrumentRegistry, build_instrument
+from nexus.instruments.registry import AUTH_NOT_APPLICABLE, InstrumentRegistry, build_instrument
 from nexus.instruments.sessions import HolidaySet, MarketCalendar
 
 D = Decimal
 NOW = datetime(2026, 11, 25, 12, 0, 0, tzinfo=UTC)
 BTC_ID = "INS-BTC-USDT-USDT"
+
+
+def _auth_for(status: VenueStatus) -> str | None:
+    """The auth declaration a certification to ``status`` must carry (Stage 7.2, lever L-E).
+
+    ``CONNECTED`` no longer means "auth verified", so certifying to it requires an explicit
+    declaration; every other rung makes no claim about authentication and refuses one. Every venue
+    in these tests is a credential-free public feed, so the honest declaration is
+    ``AUTH_NOT_APPLICABLE``.
+    """
+    return AUTH_NOT_APPLICABLE if status is VenueStatus.CONNECTED else None
 
 
 def make_registry(*, certify_to: VenueStatus = VenueStatus.DATA_AVAILABLE) -> InstrumentRegistry:
@@ -56,7 +67,7 @@ def make_registry(*, certify_to: VenueStatus = VenueStatus.DATA_AVAILABLE) -> In
         VenueStatus.LIVE_VERIFIED,
     ]
     for step in ladder[1 : ladder.index(certify_to) + 1]:
-        registry.certify(BTC_ID, Venue.BYBIT, step, evidence=f"proved {step.value}")
+        registry.certify(BTC_ID, Venue.BYBIT, step, evidence=f"proved {step.value}", auth=_auth_for(step))
     return registry
 
 

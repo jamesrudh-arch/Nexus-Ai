@@ -13,9 +13,20 @@ from decimal import Decimal
 
 import pytest
 
+from nexus.core.errors import RejectReason
 from nexus.core.ids import iso_utc
-from nexus.domain.instrument import AssetClass, Venue, VenueMapping, VenueStatus
+from nexus.domain.instrument import (
+    AssetClass,
+    CanonicalInstrument,
+    InstrumentDefinitionError,
+    Venue,
+    VenueMapping,
+    VenueStatus,
+)
 from nexus.instruments.registry import (
+    AUTH_DECLARATIONS,
+    AUTH_NOT_APPLICABLE,
+    AUTH_VERIFIED,
     CERTIFICATION_ORDER,
     CertificationRejected,
     InstrumentRegistry,
@@ -28,6 +39,17 @@ from nexus.instruments.registry import (
 
 D = Decimal
 FIXED_NOW = datetime(2026, 11, 25, 12, 0, 0, tzinfo=UTC)
+
+
+def _auth_for(status: VenueStatus) -> str | None:
+    """The auth declaration a certification to ``status`` must carry (Stage 7.2, lever L-E).
+
+    ``CONNECTED`` no longer means "auth verified", so certifying to it requires an explicit
+    declaration; every other rung makes no claim about authentication and refuses one. Every venue
+    in these tests is a credential-free public feed, so the honest declaration is
+    ``AUTH_NOT_APPLICABLE``.
+    """
+    return AUTH_NOT_APPLICABLE if status is VenueStatus.CONNECTED else None
 
 
 def _mapping(
@@ -215,7 +237,13 @@ class TestCertification:
     def test_full_ladder_walk(self, registry: InstrumentRegistry) -> None:
         registry.register(_btc_instrument())
         for status in CERTIFICATION_ORDER[1:]:
-            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, status, evidence=f"proved {status.value}")
+            registry.certify(
+                "INS-BTC-USDT-USDT",
+                Venue.BYBIT,
+                status,
+                evidence=f"proved {status.value}",
+                auth=_auth_for(status),
+            )
         instrument = registry.require("INS-BTC-USDT-USDT")
         mapping = instrument.mapping_for(Venue.BYBIT)
         assert mapping is not None
@@ -238,7 +266,7 @@ class TestCertification:
         """Losing access is not an error to hide — it must be recorded."""
         registry.register(_btc_instrument())
         for status in CERTIFICATION_ORDER[1:4]:
-            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, status, evidence="ok")
+            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, status, evidence="ok", auth=_auth_for(status))
         registry.certify(
             "INS-BTC-USDT-USDT",
             Venue.BYBIT,
@@ -268,7 +296,7 @@ class TestCertification:
         """Seeing a price is not permission to trade on it."""
         registry.register(_btc_instrument())
         for status in CERTIFICATION_ORDER[1:4]:  # up to DATA_AVAILABLE
-            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, status, evidence="ok")
+            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, status, evidence="ok", auth=_auth_for(status))
         instrument = registry.require("INS-BTC-USDT-USDT")
         mapping = instrument.mapping_for(Venue.BYBIT)
         assert mapping is not None
@@ -328,14 +356,14 @@ class TestStagedActivation:
         """The key property: data availability never buys trading activation."""
         registry.register(_btc_instrument())
         for status in CERTIFICATION_ORDER[1:4]:
-            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, status, evidence="ok")
+            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, status, evidence="ok", auth=_auth_for(status))
         with pytest.raises(CertificationRejected, match="cannot be activated for trading"):
             registry.activate("INS-BTC-USDT-USDT", for_trading=True, reason="owner wants to trade")
 
     def test_trading_activation_allowed_once_trade_enabled(self, registry: InstrumentRegistry) -> None:
         registry.register(_btc_instrument())
         for status in CERTIFICATION_ORDER[1:5]:
-            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, status, evidence="ok")
+            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, status, evidence="ok", auth=_auth_for(status))
         updated = registry.activate("INS-BTC-USDT-USDT", for_trading=True, reason="sandbox lifecycle proved")
         assert updated.active is True
         assert registry.tradeable() == (updated,)
@@ -418,7 +446,7 @@ class TestCoverageReport:
     def test_readiness_follows_certification(self, registry: InstrumentRegistry) -> None:
         registry.register(_btc_instrument())
         for status in CERTIFICATION_ORDER[1:5]:
-            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, status, evidence="ok")
+            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, status, evidence="ok", auth=_auth_for(status))
         report = coverage_report(registry)
         assert report.ready_for_research == ("INS-BTC-USDT-USDT",)
         assert report.ready_for_paper == ("INS-BTC-USDT-USDT",)
@@ -471,3 +499,286 @@ class TestSnapshot:
         assert len(registry) == 1
         assert "INS-BTC-USDT-USDT" in registry
         assert 12345 not in registry  # a non-string is simply not present
+
+
+class TestVenueVocabularyIsEnforced:
+    """Finding F-4 / lever L-B: the declared vocabularies are now enforced at the boundary.
+
+    Before Stage 7.2 a dataclass annotation was the only thing standing between a caller and a venue
+    that does not exist, and annotations do nothing at runtime: ``VenueMapping(venue="DUKASCOPY")``
+    constructed happily and then raised an unclassified ``AttributeError`` inside
+    ``InstrumentRegistry.register`` at the first ``m.venue.value`` — through the API, a 500 where
+    every comparable condition is a named refusal.
+    """
+
+    def test_dukascopy_is_a_venue(self) -> None:
+        """The only free FX source is now representable, which is what made FX coverage unrecordable."""
+        assert Venue("DUKASCOPY") is Venue.DUKASCOPY
+
+    def test_the_fx_adapter_venue_string_resolves_to_a_member(self) -> None:
+        from nexus.ingestion.dukascopy import VENUE as ADAPTER_VENUE
+
+        assert Venue(ADAPTER_VENUE) is Venue.DUKASCOPY
+
+    def test_a_venue_outside_the_enum_is_refused_at_construction(self) -> None:
+        with pytest.raises(InstrumentDefinitionError) as exc:
+            VenueMapping(venue="DUKASCOPYX", venue_symbol="EURUSD")  # type: ignore[arg-type]
+        assert exc.value.reason is RejectReason.INSTRUMENT_DEFINITION_INVALID
+        assert "Venue member" in exc.value.detail
+        assert "DUKASCOPYX" in exc.value.detail  # names the offending value
+
+    def test_a_bare_string_status_is_refused(self) -> None:
+        """Same fail-open, same boundary: ``coverage_report`` reads ``mapping.status.value``."""
+        with pytest.raises(InstrumentDefinitionError, match="VenueStatus member"):
+            VenueMapping(venue=Venue.OKX, venue_symbol="BTC-USDT", status="DATA_AVAILABLE")  # type: ignore[arg-type]
+
+    def test_a_bare_string_asset_class_is_refused(self) -> None:
+        with pytest.raises(InstrumentDefinitionError, match="AssetClass member"):
+            CanonicalInstrument(
+                instrument_id="INS-EUR-USD",
+                canonical_symbol="EUR/USD",
+                asset_class="FX_SPOT",  # type: ignore[arg-type]
+                base_currency="EUR",
+                quote_currency="USD",
+                settlement_currency="USD",
+            )
+
+    def test_a_mapping_that_is_not_a_mapping_is_refused(self) -> None:
+        with pytest.raises(InstrumentDefinitionError, match="VenueMapping instances"):
+            CanonicalInstrument(
+                instrument_id="INS-EUR-USD",
+                canonical_symbol="EUR/USD",
+                asset_class=AssetClass.FX_SPOT,
+                base_currency="EUR",
+                quote_currency="USD",
+                settlement_currency="USD",
+                mappings=[Venue.DUKASCOPY],  # type: ignore[list-item]
+            )
+
+    def test_certify_refuses_a_venue_outside_the_enum(self, registry: InstrumentRegistry) -> None:
+        registry.register(_btc_instrument())
+        with pytest.raises(InstrumentDefinitionError, match="Venue member"):
+            registry.certify(
+                "INS-BTC-USDT-USDT",
+                "BYBIT",
+                VenueStatus.SUPPORTED,
+                evidence="x",  # type: ignore[arg-type]
+            )
+
+    def test_certify_refuses_a_status_outside_the_enum(self, registry: InstrumentRegistry) -> None:
+        registry.register(_btc_instrument())
+        with pytest.raises(InstrumentDefinitionError, match="VenueStatus member"):
+            registry.certify(
+                "INS-BTC-USDT-USDT",
+                Venue.BYBIT,
+                "SUPPORTED",
+                evidence="x",  # type: ignore[arg-type]
+            )
+
+    def test_fx_coverage_is_recordable_end_to_end(self, registry: InstrumentRegistry) -> None:
+        """The closure of F-4, at every step that used to be impossible.
+
+        Register an FX instrument on the venue that actually serves it, certify it to the rank its
+        evidence supports, and read it back through the coverage report — with data still not
+        implying permission.
+        """
+        fx = build_instrument(
+            canonical_symbol="EUR/USD",
+            asset_class=AssetClass.FX_SPOT,
+            base_currency="EUR",
+            quote_currency="USD",
+            mappings=[VenueMapping(venue=Venue.DUKASCOPY, venue_symbol="EURUSD")],
+            notes="Dukascopy bi5 tick history; layout verified 2026-11-26 (docs/14 F-1)",
+        )
+        registry.register(fx, source="LIVE_VERIFICATION")
+        for status in CERTIFICATION_ORDER[1:4]:  # UNKNOWN -> SUPPORTED -> CONNECTED -> DATA_AVAILABLE
+            registry.certify(
+                "INS-EUR-USD",
+                Venue.DUKASCOPY,
+                status,
+                evidence=f"run 45759709313: {status.value} on a real bi5 hour",
+                auth=_auth_for(status),
+            )
+
+        report = coverage_report(registry)
+        assert report.by_asset_class == {"FX_SPOT": 1}
+        assert report.by_venue_status == {"DATA_AVAILABLE": 1}
+        assert report.ready_for_research == ("INS-EUR-USD",)
+        assert report.ready_for_paper == ()  # TRADE_ENABLED not reached: data is not permission
+        assert report.ready_for_live == ()
+        mapping = registry.require("INS-EUR-USD").mapping_for(Venue.DUKASCOPY)
+        assert mapping is not None
+        assert mapping.is_tradeable is False
+        assert registry.require("INS-EUR-USD").active is False  # D-002: never active by default
+
+
+class TestConnectedDeclaresItsAuthCase:
+    """Finding F-7 / lever L-E: ``CONNECTED`` declares its authentication case instead of assuming it.
+
+    The rung meant "auth verified". All four sources this system uses are credential-free public
+    feeds, so none could occupy it honestly — and because the ladder never skips, ``DATA_AVAILABLE``
+    was unreachable for every one of them, which is what made ``MINIMUM_STATUS_FOR_ARCHIVE``
+    unsatisfiable (F-3). The rung now means "the venue answered and its responses normalised", and a
+    certification to it must say which case applies.
+    """
+
+    def _to_supported(self, registry: InstrumentRegistry) -> None:
+        registry.register(_btc_instrument())
+        registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, VenueStatus.SUPPORTED, evidence="adapter exists")
+
+    def test_the_vocabulary_is_exactly_two_declarations(self) -> None:
+        assert AUTH_DECLARATIONS == (AUTH_VERIFIED, AUTH_NOT_APPLICABLE)
+
+    def test_connecting_without_a_declaration_is_refused(self, registry: InstrumentRegistry) -> None:
+        self._to_supported(registry)
+        with pytest.raises(CertificationRejected, match="requires an explicit auth declaration"):
+            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, VenueStatus.CONNECTED, evidence="it answered")
+
+    def test_the_refusal_names_both_options_and_why(self, registry: InstrumentRegistry) -> None:
+        """A refusal that does not say how to comply just produces a retry with the same mistake."""
+        self._to_supported(registry)
+        with pytest.raises(CertificationRejected) as exc:
+            registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, VenueStatus.CONNECTED, evidence="it answered")
+        detail = str(exc.value)
+        assert AUTH_VERIFIED in detail
+        assert AUTH_NOT_APPLICABLE in detail
+        assert "no longer assumes auth was verified" in detail
+
+    def test_an_unknown_declaration_is_refused(self, registry: InstrumentRegistry) -> None:
+        self._to_supported(registry)
+        with pytest.raises(CertificationRejected, match="must be one of"):
+            registry.certify(
+                "INS-BTC-USDT-USDT",
+                Venue.BYBIT,
+                VenueStatus.CONNECTED,
+                evidence="it answered",
+                auth="PROBABLY_AUTHENTICATED",
+            )
+
+    def test_a_public_source_declares_not_applicable_and_it_is_recorded(
+        self, registry: InstrumentRegistry
+    ) -> None:
+        self._to_supported(registry)
+        registry.certify(
+            "INS-BTC-USDT-USDT",
+            Venue.BYBIT,
+            VenueStatus.CONNECTED,
+            evidence="public unauthenticated endpoints answered; no credential exists or was used",
+            auth=AUTH_NOT_APPLICABLE,
+        )
+        change = registry.changes[-1]
+        assert change.kind == "CERTIFY"
+        assert change.to_status == "CONNECTED"
+        assert change.auth_state == AUTH_NOT_APPLICABLE
+        # It must survive into the audit payload, not only the in-memory record.
+        assert change.to_audit_payload()["auth_state"] == AUTH_NOT_APPLICABLE
+
+    def test_a_credentialed_source_declares_verified(self, registry: InstrumentRegistry) -> None:
+        self._to_supported(registry)
+        registry.certify(
+            "INS-BTC-USDT-USDT",
+            Venue.BYBIT,
+            VenueStatus.CONNECTED,
+            evidence="demo credential accepted by the venue",
+            auth=AUTH_VERIFIED,
+        )
+        assert registry.changes[-1].auth_state == AUTH_VERIFIED
+        assert registry.changes[-1].to_audit_payload()["auth_state"] == AUTH_VERIFIED
+
+    def test_a_declaration_on_any_other_rung_is_refused(self, registry: InstrumentRegistry) -> None:
+        """Cargo-culting the field would imply an authentication claim the rung does not make."""
+        registry.register(_btc_instrument())
+        with pytest.raises(CertificationRejected, match="belongs to the CONNECTED rung only"):
+            registry.certify(
+                "INS-BTC-USDT-USDT",
+                Venue.BYBIT,
+                VenueStatus.SUPPORTED,
+                evidence="adapter exists",
+                auth=AUTH_NOT_APPLICABLE,
+            )
+
+    def test_demotion_to_connected_also_requires_the_declaration(self, registry: InstrumentRegistry) -> None:
+        self._to_supported(registry)
+        registry.certify(
+            "INS-BTC-USDT-USDT",
+            Venue.BYBIT,
+            VenueStatus.CONNECTED,
+            evidence="public endpoints answered",
+            auth=AUTH_NOT_APPLICABLE,
+        )
+        registry.certify(
+            "INS-BTC-USDT-USDT",
+            Venue.BYBIT,
+            VenueStatus.DATA_AVAILABLE,
+            evidence="feed observed",
+        )
+        with pytest.raises(CertificationRejected, match="requires an explicit auth declaration"):
+            registry.certify(
+                "INS-BTC-USDT-USDT",
+                Venue.BYBIT,
+                VenueStatus.CONNECTED,
+                evidence="entitlement withdrawn",
+            )
+        registry.certify(
+            "INS-BTC-USDT-USDT",
+            Venue.BYBIT,
+            VenueStatus.CONNECTED,
+            evidence="entitlement withdrawn; public data only",
+            auth=AUTH_NOT_APPLICABLE,
+        )
+        assert registry.changes[-1].kind == "DE_CERTIFY"
+        assert registry.changes[-1].auth_state == AUTH_NOT_APPLICABLE
+
+    def test_restatement_needs_no_declaration_because_it_records_nothing(
+        self, registry: InstrumentRegistry
+    ) -> None:
+        self._to_supported(registry)
+        registry.certify(
+            "INS-BTC-USDT-USDT",
+            Venue.BYBIT,
+            VenueStatus.CONNECTED,
+            evidence="public endpoints answered",
+            auth=AUTH_NOT_APPLICABLE,
+        )
+        before = len(registry.changes)
+        registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, VenueStatus.CONNECTED, evidence="unchanged")
+        assert len(registry.changes) == before  # a no-op makes no claim, so it needs no declaration
+
+    def test_a_credential_free_source_can_now_reach_the_archive_gate(
+        self, registry: InstrumentRegistry
+    ) -> None:
+        """The point of the ruling: F-3's gate becomes reachable without lying about authentication.
+
+        ``MINIMUM_STATUS_FOR_ARCHIVE`` is ``DATA_AVAILABLE``, and nothing could reach it while the
+        rung below it demanded an auth verification that public feeds cannot provide.
+        """
+        from nexus.ingestion.pipeline import MINIMUM_STATUS_FOR_ARCHIVE
+
+        self._to_supported(registry)
+        registry.certify(
+            "INS-BTC-USDT-USDT",
+            Venue.BYBIT,
+            VenueStatus.CONNECTED,
+            evidence="public unauthenticated endpoints answered and normalised; no credential exists",
+            auth=AUTH_NOT_APPLICABLE,
+        )
+        registry.certify(
+            "INS-BTC-USDT-USDT",
+            Venue.BYBIT,
+            VenueStatus.DATA_AVAILABLE,
+            evidence="run 45759709313: instruments/quotes/trades/candles/book normalised",
+        )
+        mapping = registry.require("INS-BTC-USDT-USDT").mapping_for(Venue.BYBIT)
+        assert mapping is not None
+        assert certification_rank(mapping.status) >= certification_rank(MINIMUM_STATUS_FOR_ARCHIVE)
+        report = coverage_report(registry)
+        assert report.ready_for_research == ("INS-BTC-USDT-USDT",)
+        assert report.ready_for_paper == ()  # still no trade authority
+        assert mapping.is_tradeable is False
+
+    def test_non_connected_changes_carry_no_auth_state(self, registry: InstrumentRegistry) -> None:
+        """Absence must stay meaningful: a null here says the rung makes no auth claim."""
+        registry.register(_btc_instrument())
+        registry.certify("INS-BTC-USDT-USDT", Venue.BYBIT, VenueStatus.SUPPORTED, evidence="adapter exists")
+        assert registry.changes[-1].auth_state is None
+        assert registry.changes[-1].to_audit_payload()["auth_state"] is None

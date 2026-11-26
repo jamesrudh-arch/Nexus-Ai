@@ -5,7 +5,13 @@ raw venue symbol (Section 11.6).
 """
 
 from nexus.domain.decision import DecisionRecord, DecisionState, DecisionVerb
-from nexus.domain.instrument import AssetClass, CanonicalInstrument, InstrumentId, Venue
+from nexus.domain.instrument import (
+    AssetClass,
+    CanonicalInstrument,
+    InstrumentDefinitionError,
+    InstrumentId,
+    Venue,
+)
 
 __all__ = [
     "AssetClass",
@@ -13,6 +19,7 @@ __all__ = [
     "DecisionRecord",
     "DecisionState",
     "DecisionVerb",
+    "InstrumentDefinitionError",
     "InstrumentId",
     "Venue",
 ]

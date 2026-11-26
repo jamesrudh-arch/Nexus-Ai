@@ -31,6 +31,10 @@ class RejectReason(StrEnum):
     VENUE_DISCONNECTED = "VENUE_DISCONNECTED"
     INSTRUMENT_NOT_CERTIFIED = "INSTRUMENT_NOT_CERTIFIED"
     INSTRUMENT_UNKNOWN = "INSTRUMENT_UNKNOWN"
+    #: An instrument or venue mapping was built from a value outside the declared vocabularies
+    #: (Stage 7.2, finding F-4: a dataclass does not enforce its annotations, so an out-of-scope
+    #: venue used to be accepted silently and crash later where nothing named the condition).
+    INSTRUMENT_DEFINITION_INVALID = "INSTRUMENT_DEFINITION_INVALID"
 
     # Risk limits (Section 10.1 hard limits)
     RISK_PER_TRADE_EXCEEDED = "RISK_PER_TRADE_EXCEEDED"

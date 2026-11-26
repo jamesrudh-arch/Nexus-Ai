@@ -12,6 +12,11 @@ Governance properties enforced here (and pinned by tests):
 * **Capability states never skip.** ``UNKNOWN -> SUPPORTED -> CONNECTED -> DATA_AVAILABLE
   -> TRADE_ENABLED -> LIVE_VERIFIED`` advances exactly one step at a time, each step
   requiring evidence. De-escalation is always allowed and always recorded.
+* **``CONNECTED`` declares its authentication case.** That rung means "the venue answered and its
+  responses normalised", not "auth verified" (redefined in Stage 7.2, lever L-E): certifying to it
+  requires ``auth=AUTH_VERIFIED`` or ``auth=AUTH_NOT_APPLICABLE``, and the declaration is recorded on
+  the change. Without it, the four credential-free sources this system actually uses could never
+  reach ``DATA_AVAILABLE`` at all, because the ladder does not skip.
 * **Data is not permission.** ``DATA_AVAILABLE`` never implies ``TRADE_ENABLED``.
 * **Reverse lookups are unique.** A ``(venue, venue_symbol)`` pair resolves to exactly one
   canonical instrument; a collision is refused rather than silently overwritten.
@@ -32,6 +37,7 @@ from nexus.core.ids import iso_utc, new_id, utc_now
 from nexus.domain.instrument import (
     AssetClass,
     CanonicalInstrument,
+    InstrumentDefinitionError,
     InstrumentId,
     Venue,
     VenueMapping,
@@ -47,6 +53,15 @@ CERTIFICATION_ORDER: tuple[VenueStatus, ...] = (
     VenueStatus.TRADE_ENABLED,
     VenueStatus.LIVE_VERIFIED,
 )
+
+#: What a certification to ``CONNECTED`` must declare about authentication (lever L-E, Stage 7.2).
+#: ``CONNECTED`` no longer means "auth verified" — see ``VenueStatus``. All four sources this system
+#: actually uses are credential-free public feeds, so the honest declaration for them is
+#: ``AUTH_NOT_APPLICABLE``; the rung would otherwise be unoccupiable and, because the ladder advances
+#: one step at a time, ``DATA_AVAILABLE`` would be unreachable for every free source.
+AUTH_VERIFIED = "AUTH_VERIFIED"  # a credential was presented and the venue accepted it
+AUTH_NOT_APPLICABLE = "AUTH_NOT_APPLICABLE"  # public endpoint; there is no credential to verify
+AUTH_DECLARATIONS: tuple[str, ...] = (AUTH_VERIFIED, AUTH_NOT_APPLICABLE)
 
 
 def certification_rank(status: VenueStatus) -> int:
@@ -83,7 +98,13 @@ class CertificationRejected(InstrumentError):
 @dataclass(frozen=True, slots=True)
 class RegistryChange:
     """Append-only record of one registry mutation. Audit-safe: evidence is a short
-    label, never a credential, a balance or a position."""
+    label, never a credential, a balance or a position.
+
+    ``venue`` is a plain string because the change log is a record of what was written, not a live
+    reference — but since Stage 7.2 it can only ever hold a ``Venue`` member's value: both
+    ``VenueMapping`` and ``certify`` refuse anything else at the boundary (finding F-4), so this
+    field no longer has to be defended against an arbitrary string arriving here.
+    """
 
     change_id: str
     kind: str  # REGISTER | ACTIVATE | DEACTIVATE | CERTIFY | DE_CERTIFY | REMAP
@@ -95,6 +116,9 @@ class RegistryChange:
     evidence: str
     changed_at: datetime
     requested_by: str = "SYSTEM"
+    #: Set only on a change to ``CONNECTED``: ``AUTH_VERIFIED`` or ``AUTH_NOT_APPLICABLE``. The rung
+    #: no longer means "auth verified", so which case applied is recorded rather than implied.
+    auth_state: str | None = None
 
     def to_audit_payload(self) -> dict[str, Any]:
         return {
@@ -108,6 +132,7 @@ class RegistryChange:
             "evidence": self.evidence[:200],  # bounded: evidence is a label, not a payload
             "changed_at": iso_utc(self.changed_at),
             "requested_by": self.requested_by,
+            "auth_state": self.auth_state,
         }
 
 
@@ -358,6 +383,7 @@ class InstrumentRegistry:
         to_status: VenueStatus,
         *,
         evidence: str,
+        auth: str | None = None,
         requested_by: str = "SYSTEM",
         now: datetime | None = None,
     ) -> CanonicalInstrument:
@@ -366,7 +392,26 @@ class InstrumentRegistry:
         A promotion must advance exactly one rung and must carry evidence. A demotion
         (or restatement of the same status) is always permitted and is recorded as
         ``DE_CERTIFY`` — losing access is never an error to hide.
+
+        ``auth`` is **required** when ``to_status`` is ``CONNECTED`` and refused otherwise. That rung
+        used to mean "auth verified", which no credential-free public feed can occupy, and because
+        the ladder never skips, ``DATA_AVAILABLE`` was unreachable for every source this system
+        actually uses (finding F-7). It now means "the venue answered and its responses normalised",
+        and the certification must say which case it is in: ``AUTH_VERIFIED`` or
+        ``AUTH_NOT_APPLICABLE``. The registry cannot judge an evidence label — it only checks the
+        label is non-empty — so the declaration is its own recorded field, carried into the change
+        log and the audit payload, rather than a sentence somebody might forget to write.
         """
+        if not isinstance(venue, Venue):
+            raise InstrumentDefinitionError(
+                f"certification needs a Venue member (D-007 scope); got {venue!r} of type "
+                f"{type(venue).__name__}",
+            )
+        if not isinstance(to_status, VenueStatus):
+            raise InstrumentDefinitionError(
+                f"certification needs a VenueStatus member; got {to_status!r} of type "
+                f"{type(to_status).__name__}",
+            )
         if not evidence.strip():
             raise CertificationRejected("certification requires evidence; an empty label is not proof")
 
@@ -378,6 +423,27 @@ class InstrumentRegistry:
         current = mapping.status
         if to_status == current:
             return instrument  # no-op, nothing to audit
+
+        if to_status is VenueStatus.CONNECTED:
+            if auth is None:
+                raise CertificationRejected(
+                    f"{venue.value} on {instrument_id}: certifying CONNECTED requires an explicit "
+                    f"auth declaration — {AUTH_VERIFIED} (a credential was presented and accepted) "
+                    f"or {AUTH_NOT_APPLICABLE} (public, credential-free, and the evidence label must "
+                    "say why). CONNECTED no longer assumes auth was verified",
+                )
+            if auth not in AUTH_DECLARATIONS:
+                raise CertificationRejected(
+                    f"{venue.value} on {instrument_id}: auth must be one of "
+                    f"{list(AUTH_DECLARATIONS)}, got {auth!r}",
+                )
+        elif auth is not None:
+            raise CertificationRejected(
+                f"{venue.value} on {instrument_id}: an auth declaration belongs to the CONNECTED "
+                f"rung only, not to {to_status.value}; recording it here would imply a claim about "
+                "authentication that this rung does not make",
+            )
+
         if certification_rank(to_status) < certification_rank(current):
             return self._set_status(
                 instrument,
@@ -385,6 +451,7 @@ class InstrumentRegistry:
                 to_status,
                 kind="DE_CERTIFY",
                 evidence=evidence,
+                auth_state=auth,
                 requested_by=requested_by,
                 now=now,
             )
@@ -399,6 +466,7 @@ class InstrumentRegistry:
             to_status,
             kind="CERTIFY",
             evidence=evidence,
+            auth_state=auth,
             requested_by=requested_by,
             now=now,
         )
@@ -411,6 +479,7 @@ class InstrumentRegistry:
         *,
         kind: str,
         evidence: str,
+        auth_state: str | None = None,
         requested_by: str,
         now: datetime | None,
     ) -> CanonicalInstrument:
@@ -428,6 +497,7 @@ class InstrumentRegistry:
             from_status=mapping.status.value,
             to_status=to_status.value,
             evidence=evidence,
+            auth_state=auth_state,
             requested_by=requested_by,
             now=now,
         )
@@ -545,6 +615,7 @@ class InstrumentRegistry:
         from_status: str | None,
         to_status: str | None,
         evidence: str,
+        auth_state: str | None = None,
         requested_by: str = "SYSTEM",
         now: datetime | None = None,
     ) -> None:
@@ -560,6 +631,7 @@ class InstrumentRegistry:
                 evidence=evidence,
                 changed_at=now or self._now_fn(),
                 requested_by=requested_by,
+                auth_state=auth_state,
             ),
         )
 
@@ -672,6 +744,9 @@ def build_instrument(
 
 
 __all__ = [
+    "AUTH_DECLARATIONS",
+    "AUTH_NOT_APPLICABLE",
+    "AUTH_VERIFIED",
     "CERTIFICATION_ORDER",
     "CertificationRejected",
     "CoverageReport",

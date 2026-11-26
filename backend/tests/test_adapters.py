@@ -8,8 +8,11 @@ captured responses.
 
 That is a real limitation and is recorded as such: correct parsing of a synthetic payload
 proves the normalisation logic, it does **not** prove the live endpoint still returns that
-shape. Phase 3's exit gate includes a live-endpoint verification step that must run from a
-host with egress, and ``DUKASCOPY.LAYOUT_VERIFIED`` stays ``False`` until it does.
+shape. Phase 3's exit gate included a live-endpoint verification step that had to run from a host
+with egress; it runs from CI, and on 2026-11-26 it produced the evidence that flipped
+``DUKASCOPY.LAYOUT_VERIFIED`` to ``True`` (four consecutive runs against a real bi5 hour — see
+``docs/14`` §1.4 F-1). The fixtures below are still synthetic, so they still prove parsing and not
+the live shape; the live module is what proves that, and it is the only place a real payload appears.
 
 What these tests do guarantee:
 * every adapter is structurally credential-free and cannot place an order;
@@ -54,6 +57,8 @@ from nexus.ingestion.dukascopy import (
     LAYOUT_VERIFIED,
     POINT_DIVISORS,
     SIDES,
+    SOURCE_UNVERIFIED,
+    SOURCE_VERIFIED,
     DukascopyHistorical,
     hour_url,
     parse_bi5,
@@ -139,10 +144,23 @@ class TestNoCredentialSurface:
     def test_historical_sources_are_also_credential_free(self, adapter_cls: type) -> None:
         assert adapter_cls.requires_credentials is False
 
-    def test_dukascopy_layout_is_declared_unverified(self) -> None:
-        """Honesty: the bi5 layout has not been checked against a real download."""
-        assert LAYOUT_VERIFIED is False
-        assert source_label() == "DUKASCOPY_BI5_UNVERIFIED"
+    def test_dukascopy_layout_is_declared_verified(self) -> None:
+        """The flag follows the evidence, in both directions.
+
+        It was ``False`` from Phase 3 until 2026-11-26 because no real file had ever been downloaded.
+        ``verify_layout`` then passed against a genuine ``EURUSD/2026-10-24/12h_ticks.bi5`` in four
+        consecutive CI runs (``45754638978``, ``45756716181``, ``45758610197``, ``45759709313``):
+        25,761 compressed bytes → 101,480 decompressed = 5,074 ticks × 20 exactly, no failed check,
+        parsed prices 1.09502–1.0964. Evidence in ``docs/14`` §1.4 F-1 and ``docs/00`` O-010.
+
+        This test pins the verified state so that flipping the flag back is a deliberate act that
+        breaks something, rather than a constant nobody re-reads — which is how it stayed stale for a
+        day after CI had already produced the evidence.
+        """
+        assert LAYOUT_VERIFIED is True
+        assert source_label() == "DUKASCOPY_BI5"
+        # The unverified label must survive as a constant: it is what the flag falls back to.
+        assert SOURCE_UNVERIFIED == "DUKASCOPY_BI5_UNVERIFIED"
 
 
 class TestDecimalExactness:
@@ -1332,10 +1350,11 @@ class TestDukascopyParsing:
         ticks = parse_bi5(payload, pair="EURUSD", hour_start=datetime(2026, 11, 25, 14, 0, tzinfo=UTC))
         assert ticks[0].side is None
 
-    def test_source_is_labelled_unverified(self) -> None:
+    def test_source_is_labelled_with_the_layout_state(self) -> None:
+        """Every tick carries the layout's verification state, so downstream cannot lose it."""
         payload = _bi5_payload([(0, 10_850_100, 10_850_000, 1.0, 1.0)])
         ticks = parse_bi5(payload, pair="EURUSD", hour_start=datetime(2026, 11, 25, 14, 0, tzinfo=UTC))
-        assert ticks[0].source == "DUKASCOPY_BI5_UNVERIFIED"
+        assert ticks[0].source == SOURCE_VERIFIED == "DUKASCOPY_BI5"
 
     def test_instrument_id_is_left_for_the_registry(self) -> None:
         payload = _bi5_payload([(0, 10_850_100, 10_850_000, 1.0, 1.0)])
@@ -1376,6 +1395,39 @@ class TestDukascopyLayoutVerification:
         assert result["passed"] is False
         assert any("DECOMPRESSED_EMPTY" in r for r in result["reasons"])
 
+    def test_the_verified_scope_is_machine_readable(self) -> None:
+        """What the flag does and does not claim, as data rather than prose.
+
+        ``LAYOUT_VERIFIED`` is a claim about the bi5 **record layout**, which is the same for every
+        pair, so it generalises. The **point divisor** is pair-specific and a wrong one is a silent
+        100x error: only EURUSD has met a real file (prices 1.09502–1.0964, inside the band the live
+        module asserts). The coverage summary carries both halves so no report can imply that all
+        thirteen pairs are verified — the failure mode this stage exists to prevent.
+        """
+        from nexus.ingestion.dukascopy import LAYOUT_VERIFIED_PAIRS, DukascopyHour, summarise
+
+        assert LAYOUT_VERIFIED is True
+        assert LAYOUT_VERIFIED_PAIRS == ("EURUSD",)
+
+        hour = DukascopyHour(
+            "EURUSD",
+            "BID",
+            NOW,
+            (),
+            "https://datafeed.dukascopy.com/datafeed/EURUSD/2026-10-24/12h_ticks.bi5",
+            25_761,
+            101_480,
+            True,  # layout_verified, from the module constant the parser copies
+            False,  # empty
+        )
+        summary = summarise([hour])
+        assert summary["layout_verified"] is True
+        assert summary["layout_verified_pairs"] == ["EURUSD"]
+        unverified = summary["divisor_unverified_pairs"]
+        assert set(unverified) == set(POINT_DIVISORS) - {"EURUSD"}
+        assert len(unverified) == len(POINT_DIVISORS) - 1  # the two halves partition the table
+        assert "XAUUSD" in unverified  # metals share this feed and are equally unproven
+
 
 class TestDukascopyFetch:
     async def test_fetch_hour_reports_provenance(self) -> None:
@@ -1390,7 +1442,9 @@ class TestDukascopyFetch:
         assert result.side == "BID"
         assert result.hour_start == hour
         assert len(result.ticks) == 1
-        assert result.layout_verified is False
+        # The report must agree with the module constant, whichever way it is set: a report that
+        # claimed verification the parser did not have would be worse than no report at all.
+        assert result.layout_verified is LAYOUT_VERIFIED is True
         assert result.empty is False
         assert result.raw_bytes > 0
 
@@ -1467,8 +1521,8 @@ class TestDukascopyFetch:
         summary = summarise(hours)
         assert summary["hours_requested"] == 2
         assert summary["hours_empty"] == 2
-        assert summary["layout_verified"] is False
-        assert summary["source"] == "DUKASCOPY_BI5_UNVERIFIED"
+        assert summary["layout_verified"] is True
+        assert summary["source"] == "DUKASCOPY_BI5"
         assert "weekends" in summary["coverage_note"]
 
     def test_summarise_of_empty_range(self) -> None:

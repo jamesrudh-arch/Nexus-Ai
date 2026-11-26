@@ -6,8 +6,10 @@ Every adapter test in this repository runs against a ``RecordingTransport`` hold
 responses written from published API contracts. That proves the normalisation logic is internally
 consistent and proves nothing about the world: it cannot notice that a venue renamed a field,
 changed a divisor, started returning strings where it returned numbers, or that a URL shape was
-misread. For Dukascopy the gap is wider — the bi5 binary layout was implemented from documentation
-alone and ``LAYOUT_VERIFIED`` is ``False`` because no real file has ever been downloaded.
+misread. For Dukascopy the gap was wider still — the bi5 binary layout was implemented from
+documentation alone, and ``LAYOUT_VERIFIED`` stayed ``False`` until this module downloaded a real
+hour file and ``verify_layout`` passed against it (2026-11-26, four consecutive CI runs; the flag is
+``True`` now and cites that evidence — ``docs/14`` §1.4 F-1, ``docs/00`` O-010).
 
 This module closes that gap by running the **real adapters** against the **real endpoints** over a
 real ``HttpTransport``. It is not part of the ordinary suite: it needs network egress, which the
@@ -590,8 +592,9 @@ class TestDukascopyLiveLayout:
         )
         assert result["passed"], (
             f"the real bi5 file failed the layout check: {result['reasons']}. Either the layout "
-            f"assumption (LZMA, 20 bytes per tick, big-endian) is wrong or the hour was empty — "
-            f"and LAYOUT_VERIFIED must stay False until this passes."
+            f"assumption (LZMA, 20 bytes per tick, big-endian) is wrong or the hour was empty. "
+            f"LAYOUT_VERIFIED is True on the strength of this check, so a failure here means the "
+            f"flag goes back to False — the check is what makes the flag falsifiable."
         )
         assert result.get("tick_count", 0) > 0, "a real mid-week hour contained no ticks"
 
@@ -670,9 +673,13 @@ def _diagnose_dukascopy(baseline: str, browser: str, other_hour: str) -> tuple[s
 class TestDukascopyReachabilityDiagnostic:
     """Why does the bi5 endpoint answer 503? Measured, not guessed.
 
-    The corrected URL (defect 39) reached the host and got **HTTP 503 on all four attempts**, so
-    `verify_layout` has still never run against a real file and `LAYOUT_VERIFIED` stays False. Three
-    explanations are plausible and they imply different responses:
+    History: with the corrected URL (defect 39) the host answered HTTP 503 on all four attempts in
+    run `45726585354`, so `verify_layout` had still never seen a real file. It has since — four
+    consecutive runs passed and `LAYOUT_VERIFIED` is True. What this diagnostic has *not* settled is
+    why the feed answers intermittently: across runs `45754638978`, `45756716181`, `45758610197` and
+    `45759709313` the probes produced three different patterns, including one where the browser
+    `User-Agent` succeeded and the next where the production one did, so no single variable explains
+    it (`docs/14` §1.4 F-5). Three explanations are plausible and they imply different responses:
 
     * the feed throttles, and 503 is one of its throttle responses alongside 429 — then patience and
       a lower request rate fix it;

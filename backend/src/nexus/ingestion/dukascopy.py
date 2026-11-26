@@ -3,19 +3,28 @@
 This is the free route to deep FX tick history, which is what makes the EURUSD/GOLD legs of
 the research plan possible at $0. It is a **bulk historical** source, not a real-time one.
 
-⚠️ **Layout verification status: UNVERIFIED.** This sandbox has no network egress to
-``datafeed.dukascopy.com`` (confirmed 2026-11-25: connection fails). The bi5 binary layout
-implemented below is the widely documented one — LZMA-compressed, 20 bytes per tick — but it
-has **not** been checked against a real download. `LAYOUT_VERIFIED` is therefore ``False``
-and the parser refuses to hand back data silently marked as trustworthy: every record it
-produces carries ``source="DUKASCOPY_BI5_UNVERIFIED"`` until the layout check passes.
+⚠️ **Layout verification status: VERIFIED for EURUSD, 2026-11-26.** The bi5 binary layout below —
+LZMA-compressed, 20 bytes per tick, big-endian — was implemented from documentation and stayed
+UNVERIFIED through Phases 3 and 4 because this sandbox has no egress to ``datafeed.dukascopy.com``.
+It has now been checked against a real download: :func:`verify_layout` passed on a genuine
+``EURUSD/2026/10/24/12h_ticks.bi5`` in **four consecutive CI runs** (``45754638978``, ``45756716181``,
+``45758610197``, ``45759709313``; 2026-11-26 04:21Z–05:10Z), each returning 25,761 compressed bytes →
+101,480 decompressed = **5,074 ticks × 20 exactly**, no failed check, and parsed prices of
+1.09502–1.0964 inside EURUSD's real band — the assertion that exists to catch a wrong point divisor,
+the silent 100x error warned about below. ``LAYOUT_VERIFIED`` is therefore ``True`` and every record
+carries ``source="DUKASCOPY_BI5"``. Evidence: ``docs/14`` §1.4 F-1 and ``docs/00`` O-010.
 
-Phase 3 exit gate item: download one real hour file, run :func:`verify_layout`, and flip
-``LAYOUT_VERIFIED`` with the evidence recorded in the ledger. Until then, FX tick history
-must be treated as PROVISIONAL and never used to size a live position.
+What is still **NOT** verified, and must not be inferred from the above: only EURUSD has been checked,
+so **12 of the 13 divisors** in ``POINT_DIVISORS`` have never met a real file; the feed is intermittent
+(503s and network faults, with no cause established across those four runs — ``docs/14`` F-5), so a
+failed hour says nothing about the layout; and layout verification is not price verification — nothing
+here reconciles Dukascopy against a second source. FX tick history for any pair other than EURUSD
+remains PROVISIONAL and must never be used to size a live position.
 
 URL shape (note the **0-indexed month**, a classic off-by-one trap):
-``/datafeed/{PAIR}/{YYYY}/{MM-1:02d}/{DD}/{BID|ASK}/{HH}h_ticks.bi5``
+``/datafeed/{PAIR}/{YYYY}/{MM-1:02d}/{DD}/{HH}h_ticks.bi5`` — one file per instrument-hour holds
+**both** sides. Defect 39 removed an invented ``{BID|ASK}`` segment from this path, which is why no FX
+tick could be downloaded at all before Phase 4; ``side`` is a parse-time choice, never a URL dimension.
 
 Point divisors: prices are stored as integer points. EURUSD uses 100000 (5-digit quoting),
 JPY pairs use 1000 (3-digit). Getting this wrong scales prices by 100x, so the divisor is
@@ -41,8 +50,21 @@ VENUE = "DUKASCOPY"
 SOURCE_UNVERIFIED = "DUKASCOPY_BI5_UNVERIFIED"
 SOURCE_VERIFIED = "DUKASCOPY_BI5"
 
-#: Set only after :func:`verify_layout` passes against a real download.
-LAYOUT_VERIFIED = False
+#: Set only after :func:`verify_layout` passes against a real download. It passed on 2026-11-26
+#: against ``EURUSD/2026/10/24/12h_ticks.bi5`` in four consecutive CI runs (``45754638978``,
+#: ``45756716181``, ``45758610197``, ``45759709313``): 25,761 bytes → 101,480 = 5,074 × 20 exactly,
+#: no failed check, prices 1.09502–1.0964. Recorded in ``docs/14`` §1.4 F-1 and ``docs/00`` O-010.
+#: Flip this back to ``False`` if a real download ever fails the check again — the honest state is
+#: worth more than the convenient one, and ``SOURCE_UNVERIFIED`` exists for exactly that.
+LAYOUT_VERIFIED = True
+
+#: Which pairs have had their **point divisor** confirmed against real prices. The record layout is
+#: the same for every pair, so ``LAYOUT_VERIFIED`` legitimately generalises; the divisor is not — a
+#: wrong one is a silent 100x error, and only EURUSD has met a real file (parsed prices
+#: 1.09502–1.0964, inside the band the live module asserts). The other twelve pairs in
+#: ``POINT_DIVISORS`` are transcribed from documentation and remain PROVISIONAL. Kept as data rather
+#: than prose so a coverage summary can show it instead of implying every pair is verified.
+LAYOUT_VERIFIED_PAIRS: tuple[str, ...] = ("EURUSD",)
 
 #: Bytes per tick: uint32 offset-ms, uint32 ask points, uint32 bid points, float32 ask vol,
 #: float32 bid vol.
@@ -109,7 +131,7 @@ def hour_url(pair: str, hour: datetime, *, base_url: str = DUKASCOPY_BASE) -> st
 
 
 def source_label() -> str:
-    """Honest provenance string, so downstream can see the layout is unverified."""
+    """Honest provenance string, so downstream can see whether the layout has been verified."""
     return SOURCE_VERIFIED if LAYOUT_VERIFIED else SOURCE_UNVERIFIED
 
 
@@ -221,6 +243,12 @@ def verify_layout(payload: bytes) -> dict[str, Any]:
 
     Passing these is the evidence required to flip ``LAYOUT_VERIFIED`` to ``True``. They are
     deliberately mechanical: size divisibility, offset monotonicity, sane price range.
+
+    It passed on 2026-11-26, four runs in a row, which is what ``LAYOUT_VERIFIED = True`` cites. The
+    function stays for two reasons: the weekly live run keeps calling it, so an upstream change to the
+    bi5 record layout is caught by the next real download instead of being assumed away; and the flag
+    is a claim about the world rather than about this file, so it must be falsifiable by re-running
+    this. A failure here means the flag goes back to ``False``, not that the check gets relaxed.
     """
     result: dict[str, Any] = {"payload_bytes": len(payload), "passed": False, "reasons": []}
     reasons: list[str] = []
@@ -386,6 +414,8 @@ def summarise(hours: Sequence[DukascopyHour]) -> dict[str, Any]:
         "hours_empty": len(empty),
         "total_ticks": total_ticks,
         "layout_verified": LAYOUT_VERIFIED,
+        "layout_verified_pairs": list(LAYOUT_VERIFIED_PAIRS),
+        "divisor_unverified_pairs": [p for p in POINT_DIVISORS if p not in LAYOUT_VERIFIED_PAIRS],
         "source": source_label(),
         "first": iso_utc(hours[0].hour_start) if hours else None,
         "last": iso_utc(hours[-1].hour_start) if hours else None,
@@ -400,6 +430,7 @@ def summarise(hours: Sequence[DukascopyHour]) -> dict[str, Any]:
 __all__ = [
     "DUKASCOPY_BASE",
     "LAYOUT_VERIFIED",
+    "LAYOUT_VERIFIED_PAIRS",
     "POINT_DIVISORS",
     "SIDES",
     "SOURCE_UNVERIFIED",
