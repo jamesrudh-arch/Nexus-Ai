@@ -1426,3 +1426,57 @@ both halves exist.
 
 **Ledger row:** `O-014`. **Sequence:** the global numbering D-051 ruled on, so F-22 follows F-21 and the next
 finding is **F-23**.
+
+### 10.11 The image gate went red on a documents-only push — an upstream Debian CVE, fixed rather than suppressed
+
+**Status: fixed in `backend/Dockerfile` and proven in the test suite; the build that proves it in the image is CI's, and had not run when this was written.**
+
+§10.8 set the rule that a number re-triggered by a push is stale on arrival, and §10.10 recorded a gap the owner asked to have written down rather than closed. This section is the third kind of thing a batch has to report: **a gate that failed for a reason the batch did not cause**, and what was done about it. The standing rule it exercises is the one that says CI can go red on a documents-only push, so every push gets polled and triaged before anybody assumes the batch broke something.
+
+**What failed.** `a065b40` — the D-052 record, six documentation and design files, +185/−17, nothing under `backend/src` or `backend/tests` — produced three runs. The `pull_request` run carrying `Live public endpoints (O-009 / O-010)` was `success`. The other two were `failure`, and in both the job list is identical: `Backend (lint · types · tests)`, `Runtime smoke test`, `Compose config valid` and `Secret scanning` all `success`, and **`Container image (amd64 + arm64 build)` failed**. Reading that job's annotations rather than its logs — logs are served from a host outside this environment's egress allowlist, which is exactly why O-011 built the annotation publisher — named the cause in one packed warning:
+
+> `4 findings (0 CRITICAL), each with an available fix. The scan fails the build until every one is fixed or explicitly justified.`
+
+All four are **HIGH CVE-2025-6020** against `libpam-modules`, `libpam-modules-bin`, `libpam-runtime` and `libpam0g` at `1.5.2-6+deb12u2`, each with the fix at `1.5.2-6+deb12u3`, in `nexus-core:ci (debian 12.15)`.
+
+**Why it is not this batch's fault, and why that is not an excuse.** Nothing in this repository installs a PAM package; all four ship inside `python:3.12-slim-bookworm`. The finding is upstream drift between rebuilds — Debian published a point release after the last successful build — which is precisely what the nightly `schedule: cron "20 3 * * *"` in `.github/workflows/ci.yml` exists to catch, and what any push can surface anyway because the image is rebuilt from a moving tag on every one. So the batch did not cause it and could not have prevented it. What the batch could choose is **what to do about it**, and that choice is the content of this section.
+
+**Fix, not suppress — and the reason is the file's own history.** Suppression was available in principle and was not taken:
+
+- `ignore-unfixed: true` is set on both Trivy steps, which means every finding the scan reports is one an upgrade can clear. "Justify it" is therefore never the necessary option for these; it is only ever the lazy one.
+- No `.trivyignore` exists in the repository (`git ls-files | grep -i trivy` returns nothing), and creating one to hold a fixable HIGH would be the first entry in a file whose only purpose would be to stop the gate from working.
+- The precedent in `backend/Dockerfile` runs the other way. The previous HIGH, CVE-2025-47273 against `setuptools 70.3.0`, was **proved false by measurement** — pip was removed from both interpreters and six assertions with exit codes 21–26 verify the removal, its non-importability and the absence of the vendored SBOM the scanner actually reads. A finding was answered with evidence, not with an ignore rule.
+- Reachability was **not established, and that is the argument rather than a weakness in it.** What the Dockerfile guarantees is that the process runs as the non-root `nexus` user (uid 1001) with `/usr/sbin/nologin`, and nothing this repository installs provides a login path, an `sshd` or a `sudo`. Whether the base image nevertheless carries `su` or any other PAM consumer was never checked, because no Docker daemon exists here to check it with. So the honest form of the claim is "probably unreachable, unverified" — and `apt-get dist-upgrade` costs one rebuild step. **Where the free option removes the need for an unverified judgement, take it and do not publish the judgement in its place.**
+
+**What changed.** One `RUN` in the runtime stage only — the builder stage's packages never reach the image, so upgrading them would change nothing that is scanned:
+
+```
+apt-get update
+apt-get install -y --no-install-recommends curl tzdata
+apt-get dist-upgrade -y
+! dpkg-query -W -f='${Package} ${Version}\n' 'libpam*' | grep -q 'deb12u2$' || exit 27
+rm -rf /var/lib/apt/lists/*
+groupadd … ; useradd …
+```
+
+Three choices in it are load-bearing.
+
+1. **`dist-upgrade`, not `upgrade`.** Plain `apt-get upgrade` refuses to install a new dependency and silently holds back any package whose fix needs one — a skipped security fix, which is the exact failure being prevented. The list is removed afterwards as before, and the ordering is unchanged: upgrade before `rm -rf /var/lib/apt/lists/*`, and both long before `USER nexus`.
+2. **The assertion is targeted, and the generic version is asserted absent.** Trivy *is* the generic gate: it fails this build on any HIGH with an available fix, in any package, forever, so restating "nothing is left to upgrade" here would add no coverage. What a scanner cannot say is whether the upgrade that was meant to clear a *named* finding ran at all — a `dist-upgrade` that silently did nothing would leave the build green today and red tomorrow for a reason nobody could see. So the assertion checks the four packages CVE-2025-6020 was reported against and nothing else. A generic `apt-get -s upgrade | grep -q '^0 upgraded'` would fire on any package held back for a reason nobody here can act on, which is the failure `ignore-unfixed` exists to prevent; `test_repo_hygiene.py` now asserts `apt-get -s` does not appear in the runtime stage at all.
+3. **Exit code 27 joins a documented legend, in its own `RUN`.** CI publishes the failing command line but not the build log, so an undocumented code can only report that something failed. 27 is therefore named in the comment block above its `RUN` — and it is deliberately *not* folded into the pip-removal block's 21–26 sequence even though it appears earlier in the file, because `test_the_image_checks_exit_with_distinct_documented_codes` pins that range as a property and renumbering six working codes to make room for one new one would break a test that has already caught a real defect.
+
+**What was measured, and what was not.** No Docker daemon exists in the environment this was written in, so the build could not be run here — which is why the pip-removal block asserts its own outcome instead of trusting it, and why the new assertion is treated the same way. The shell semantics were measured rather than argued for: `test_the_runtime_stage_upgrades_and_proves_the_named_finding_is_gone` extracts the assertion line from the Dockerfile and executes it under `/bin/sh` against a model of `dpkg-query` that **honours the package pattern it is handed**. That detail matters — the first version of the model was a stub that ignored its arguments, and it made the collateral case fail, because a stub that does not filter cannot distinguish a targeted assertion from a blanket one. Eight fixtures then run, and each outcome is asserted:
+
+| Fixture | Expected | What it proves |
+|---|---|---|
+| all four named packages at `deb12u2` | `exit 27` | the assertion fires on the finding as Trivy reported it |
+| each of the four at `deb12u2`, the other three at `deb12u3` (four runs) | `exit 27` | the `libpam*` pattern covers **every** package the finding named, not just one of them |
+| all four at `deb12u3` | `0` | the fixed image passes |
+| all four at `deb12u9` | `0` | a **later** point release passes — the check does not go stale the next time Debian publishes and nobody remembers to edit this file |
+| all four fixed, `libpython3.12` at `deb12u2` | `0` | a package outside the finding cannot fail the build; this is why the assertion is targeted |
+
+The version comparison is a suffix match on `deb12u2`, not an expected-version pin, for the reason the fourth row exists: a pinned version in a Dockerfile is a build that fails for no reason anybody can see, and this repository has already paid for stale expectations twice (§10.4's counts, §10.8's series).
+
+**What this section cannot claim.** It cannot claim the image builds. `dist-upgrade` in a slim bookworm image can in principle pull a package that breaks the entrypoint, and nothing here would catch that except the build itself — which is also the only place the assertion can actually run against a real `dpkg-query`. The next batch reads that run before writing anything of its own, and 8.4 needs live runs before and after its change in any case, so the cost of reading it is already paid. **This is a gate change, so it is recorded here and in `docs/00` (O-011 recurred, posture unchanged) and `docs/07`; it does not reopen O-011, which closed on readability, and readability is what made this triage possible in one step.**
+
+**Gate at this commit:** `1259 passed / 2 skipped / 0 failed` (+1, the new hygiene test), hygiene **84**, ruff clean, **91** files formatted, mypy strict clean on **61**. No finding id is consumed: this is not a defect in Nexus-AI's code but an upstream package version, so it is recorded against **O-011**, not against F-22's sequence. **The next finding id remains F-23.**

@@ -847,6 +847,110 @@ reported into <span class="mono">/v1/status</span>, which the owner reads; into 
 append-only and cannot retract a false alarm; or into an alert channel, and D-020 fixed that set as Telegram +
 Web Push + Brevo + in-app with none of them wired yet. F-22 stays open until both halves exist.</p>
 
+
+<h3>15 &middot; The image gate went red on the commit that recorded this ruling<span class="tag">NEW &middot; docs/15 &sect;10.11 &middot; O-011 recurred</span></h3>
+<div class="blocked"><b>Fixed in <span class="mono">backend/Dockerfile</span> and proven in the test suite;
+the build that proves it in an image is CI&rsquo;s, and had not run when this was written.</b> This section
+exists because &sect;11 reports CI green &mdash; for <span class="mono">ffc4128</span>, which is true and
+stays true &mdash; and a reader who stopped there would believe the gate that recorded this ruling passed
+it. It did not.</div>
+<p><b>What failed.</b> <span class="mono">a065b40</span> &mdash; the D-052 record, six documentation and
+design files, +185/&minus;17, nothing under <span class="mono">backend/src</span> or
+<span class="mono">backend/tests</span> &mdash; produced three runs. The
+<span class="mono">pull_request</span> run carrying <b>Live public endpoints</b> was
+<span class="mono">success</span>. The other two were <span class="mono">failure</span>, identically:
+<span class="mono">Backend (lint &middot; types &middot; tests)</span>, <span class="mono">Runtime smoke
+test</span>, <span class="mono">Compose config valid</span> and <span class="mono">Secret scanning</span>
+all passed, and <b>Container image (amd64 + arm64 build) failed</b>. Its annotation &mdash; read rather
+than the log, because logs are served from a host outside this environment&rsquo;s egress allowlist, which
+is exactly why O-011 built the publisher &mdash; named the cause in one packed warning: <i>&ldquo;4
+findings (0 CRITICAL), each with an available fix. The scan fails the build until every one is fixed or
+explicitly justified.&rdquo;</i> All four are <b>HIGH CVE-2025-6020</b> against
+<span class="mono">libpam-modules</span>, <span class="mono">libpam-modules-bin</span>,
+<span class="mono">libpam-runtime</span> and <span class="mono">libpam0g</span> at
+<span class="mono">1.5.2-6+deb12u2</span>, fix at <span class="mono">deb12u3</span>, in
+<span class="mono">nexus-core:ci (debian 12.15)</span>.</p>
+<p><b>Not this batch&rsquo;s doing, and not an excuse either.</b> Nothing here installs a PAM package: all
+four ship inside <span class="mono">python:3.12-slim-bookworm</span>. This is upstream drift between
+rebuilds &mdash; Debian published a point release after the last successful build &mdash; which is what
+the nightly <span class="mono">schedule</span> in <span class="mono">ci.yml</span> exists to catch and
+what any push can surface anyway, because the image is rebuilt from a moving tag every time. What the
+batch could choose is what to do about it.</p>
+<p><b>Fix, not suppress.</b> Suppression was available and was not taken.
+<span class="mono">ignore-unfixed: true</span> is set on both Trivy steps, so every finding the scan
+reports is one an upgrade can clear &mdash; &ldquo;justify it&rdquo; is never the necessary option for
+these, only the lazy one. No <span class="mono">.trivyignore</span> has ever existed in this repository,
+and creating one to hold a fixable HIGH would make its first entry a rule whose only purpose is to stop
+the gate working. And the precedent in this very file runs the other way: the previous HIGH,
+CVE-2025-47273 against <span class="mono">setuptools 70.3.0</span>, was <b>proved false by
+measurement</b> &mdash; pip removed from both interpreters, six assertions with exit codes 21&ndash;26
+verifying the removal, its non-importability and the absence of the vendored SBOM the scanner actually
+reads. A finding was answered with evidence, not with an ignore rule.</p>
+<p><b>Reachability was never established, and that is the argument.</b> The Dockerfile guarantees a
+non-root <span class="mono">nexus</span> user (uid 1001) with
+<span class="mono">/usr/sbin/nologin</span>, and nothing this repository installs provides a login path,
+an <span class="mono">sshd</span> or a <span class="mono">sudo</span>. Whether the base image
+nevertheless carries <span class="mono">su</span> or another PAM consumer was <b>not checked</b>, because
+no Docker daemon exists here to check it with. So the honest claim is &ldquo;probably unreachable,
+unverified&rdquo; &mdash; against a one-step upgrade. Where the free option removes the need for an
+unverified judgement, take it and do not publish the judgement in its place.</p>
+<p><b>What changed</b> &mdash; one RUN, in the runtime stage only, because the builder stage&rsquo;s
+packages never reach the image:</p>
+<div class="ba"><div class="hd">backend/Dockerfile &mdash; the runtime stage&rsquo;s apt-get RUN, read from the file at build time</div><pre>RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends curl tzdata; \
+    apt-get dist-upgrade -y; \
+    ! dpkg-query -W -f=&#x27;${Package} ${Version}\n&#x27; &#x27;libpam*&#x27; | grep -q &#x27;deb12u2$&#x27; || exit 27; \
+    rm -rf /var/lib/apt/lists/*; \
+    groupadd --system --gid 1001 nexus; \
+    useradd --system --uid 1001 --gid nexus --home-dir /app --shell /usr/sbin/nologin nexus</pre></div>
+<p>Three choices in it are load-bearing. <b>1. <span class="mono">dist-upgrade</span>, not
+<span class="mono">upgrade</span></b> &mdash; plain <span class="mono">upgrade</span> refuses a new
+dependency and silently holds back any package whose fix needs one, which is a skipped security fix and
+the exact failure being prevented. <b>2. The assertion is targeted, and the generic version is asserted
+absent.</b> Trivy <i>is</i> the generic gate: it fails this build on any HIGH with an available fix, in
+any package, forever, so restating &ldquo;nothing is left to upgrade&rdquo; adds no coverage. What a
+scanner cannot say is whether the upgrade meant to clear a <i>named</i> finding ran at all &mdash; a
+<span class="mono">dist-upgrade</span> that silently did nothing would leave the build green today and
+red tomorrow for a reason nobody could see. A generic
+<span class="mono">apt-get -s upgrade</span> assertion, by contrast, fires on any package held back for
+reasons nobody here can act on: the failure <span class="mono">ignore-unfixed</span> exists to prevent.
+<span class="mono">test_repo_hygiene.py</span> now asserts <span class="mono">apt-get -s</span> does not
+appear in the runtime stage at all. <b>3. Exit 27 joins a documented legend, in its own RUN</b> &mdash;
+CI publishes the failing command line but not the log, so an undocumented code reports only that
+something failed. It is deliberately <i>not</i> folded into the pip block&rsquo;s 21&ndash;26 sequence
+even though it appears earlier in the file, because
+<span class="mono">test_the_image_checks_exit_with_distinct_documented_codes</span> pins that range as a
+property, and renumbering six working codes to make room for one new one would break a test that has
+already caught a real defect.</p>
+<p><b>Measured, not argued.</b> No Docker daemon exists here, so the build could not be run &mdash; the
+reason the pip block asserts its own outcome instead of trusting it, and the reason this one is treated
+the same way. <span class="mono">test_the_runtime_stage_upgrades_and_proves_the_named_finding_is_gone</span>
+extracts the assertion line from the Dockerfile and executes it under
+<span class="mono">/bin/sh</span> against a model of <span class="mono">dpkg-query</span> that
+<b>honours the package pattern handed to it</b>. That detail is the whole test: the first model ignored
+its arguments, and the collateral case then failed, because a stub that does not filter cannot tell a
+targeted assertion from a blanket one. Eight fixtures follow, each outcome asserted.</p>
+<div class="card"><table><thead><tr><th>Fixture handed to the modelled <span class='mono'>dpkg-query</span></th><th>Exit</th><th>What it proves</th></tr></thead><tbody><tr><td>all four named packages at <span class='mono'>1.5.2-6+deb12u2</span></td><td><b>27</b></td><td>the assertion fires on the finding exactly as Trivy reported it</td></tr><tr><td>each one of the four at <span class='mono'>deb12u2</span> with the other three fixed (four fixtures)</td><td><b>27</b> each</td><td>the <span class='mono'>libpam*</span> pattern covers <b>every</b> package the finding named, not whichever one happened to be first</td></tr><tr><td>all four at <span class='mono'>deb12u3</span></td><td><b>0</b></td><td>the fixed image passes</td></tr><tr><td>all four at <span class='mono'>deb12u9</span></td><td><b>0</b></td><td>a <b>later</b> point release passes &mdash; the check does not go stale the next time Debian publishes and nobody remembers to edit the file</td></tr><tr><td>all four fixed, <span class='mono'>libpython3.12</span> at <span class='mono'>deb12u2</span></td><td><b>0</b></td><td>a package outside the finding cannot fail the build &mdash; the collateral failure that makes a generic assertion unsafe</td></tr></tbody></table></div>
+<p class="cap">The comparison is a suffix match on <span class="mono">deb12u2</span>, not an
+expected-version pin, for the reason the fourth row exists: a pinned version in a Dockerfile is a build
+that fails for no reason anybody can see, and this record has already paid twice for stale expectations
+(&sect;10&rsquo;s counts, &sect;10&rsquo;s series).</p>
+<p><b>Gate at this commit:</b> <b>1,259 passed / 2 skipped / 0 failed</b> (+1, this test), hygiene
+<b>84</b>, ruff and format clean on <b>91</b> files, mypy strict clean on <b>61</b>. Nothing under
+<span class="mono">backend/src</span> changed, so no migration checksum moved and no route count did.</p>
+<p><b>What this section cannot claim.</b> It cannot claim the image builds.
+<span class="mono">dist-upgrade</span> in a slim bookworm image can in principle pull a package that
+breaks the entrypoint, and nothing here would catch that except the build itself &mdash; which is also
+the only place the assertion runs against a real <span class="mono">dpkg-query</span>. The next batch
+reads that run before writing anything of its own, and 8.4 needs live runs before and after its change
+in any case, so the cost of reading it is already paid. This is a gate change, so it is recorded in
+<span class="mono">docs/15</span> &sect;10.11, <span class="mono">docs/00</span> (O-011 recurred, posture
+unchanged) and <span class="mono">docs/07</span>. It does not reopen O-011, which closed on
+<i>readability</i> &mdash; and readability is what made this triage a single step. It consumes <b>no
+finding id</b>: an upstream package version is not a defect in this code, so the next finding id is still
+<b>F-23</b>.</p>
+
 <footer>Stage 8.3 &middot; L-D + L-E &middot; authorised by D-051, <b>approved as D-052</b> &middot;
 11 files in <span class="mono">backend/</span>, +2,079 / &minus;24, gate <b>1,258 passed / 2 skipped / 0
 failed</b> (+141 tests: dossier writer 87, routes 39, F-21 15), mypy strict clean on 61, ruff and format clean
@@ -860,6 +964,11 @@ the <span class="mono">pull_request</span> one carrying <b>run 31</b> &mdash; 44
 <b>2.35&times;</b>, <span class="mono">layout_flag=True</span>, <span class="mono">buy=50 sell=0</span>
 &middot; two published numbers corrected as inserted pointers: the checksum&rsquo;s coverage (&sect;9) and the
 skew series, now a <b>range</b> rather than a count (&sect;10) &middot; <b>F-22 opened by ruling 4</b>
-(&sect;14, ledger <span class="mono">O-014</span>), so the next finding id is <b>F-23</b> &middot; 8.4 =
+(&sect;14, ledger <span class="mono">O-014</span>), so the next finding id is <b>F-23</b> &middot;
+<b>post-ruling: the image gate went red on <span class="mono">a065b40</span></b> &mdash; HIGH
+CVE-2025-6020 in four Debian PAM packages the base image ships, on a push that changed documents only
+&mdash; <b>fixed by upgrading the runtime stage, not suppressed</b>, with the assertion&rsquo;s semantics
+measured over eight fixtures in the suite and the image build left to CI to prove (&sect;15,
+<span class="mono">docs/15</span> &sect;10.11, O-011 recurred) &middot; 8.4 =
 F-14&rsquo;s expensive half alone, then stage 10&rsquo;s <span class="mono">memory_item</span> writer</footer>
 </div></body></html>

@@ -46,11 +46,57 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # IANA database that import raises ZoneInfoNotFoundError and the container dies before it binds a
 # port. Installing it explicitly rather than relying on whatever the base image happens to ship:
 # `slim` variants have dropped it before, and correctness must not depend on an incidental package.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl tzdata \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 1001 nexus \
-    && useradd --system --uid 1001 --gid nexus --home-dir /app --shell /usr/sbin/nologin nexus
+#
+# `apt-get dist-upgrade` is here because the base image carries Debian's own packages and they go stale
+# between rebuilds. On 2026-11-26 the scan blocked the build on CVE-2025-6020, reported against four
+# PAM packages at `1.5.2-6+deb12u2` with the fix at `1.5.2-6+deb12u3`: libpam0g, libpam-runtime,
+# libpam-modules and libpam-modules-bin, all of them shipped by `python:3.12-slim-bookworm` and none
+# of them installed by anything in this file. Nothing in this commit changed the image, so the finding
+# is upstream drift — exactly what the nightly schedule in `ci.yml` exists to catch, and what a
+# documents-only push surfaced anyway.
+#
+# The fix is to upgrade, not to justify. The scanner's own annotation says a fixed version exists, and
+# `ignore-unfixed: true` means every finding it reports is one that upgrading can clear; suppressing a
+# fixable HIGH would be the one move this file's history argues against (see the setuptools finding
+# below, which was proven a false positive by measurement rather than ignored).
+#
+# Reachability is NOT claimed here, because it was never established. What this file guarantees is a
+# non-root user (uid 1001) with a nologin shell, and nothing in this repository installs a login path, an
+# sshd or a sudo; whether the base image nevertheless carries `su` or another PAM consumer was never
+# checked, because no Docker daemon exists here to check it with. So the honest claim is "probably
+# unreachable, unverified" — and a one-step upgrade beats an unverified judgement about an image this
+# file does not control.
+# Only this stage upgrades: the builder stage's packages never reach the image, so upgrading them
+# would cost build time and change nothing the scanner reads.
+#
+# `dist-upgrade` rather than `upgrade` because `upgrade` silently skips a package whose fix needs a new
+# dependency, and a skipped security fix is precisely the failure being prevented here.
+#
+# The assertion is targeted at the finding rather than generic, and that division of labour is deliberate:
+# Trivy is already the generic gate — it fails this build if any HIGH with an available fix survives, for
+# any package, forever, so nothing here needs to restate it. What a scanner cannot say is whether the
+# upgrade that was supposed to clear a *named* finding actually ran, and a `dist-upgrade` that silently
+# did nothing would leave the build green today and red tomorrow for a reason nobody could see. So this
+# checks the four packages CVE-2025-6020 was reported against and no others: it passes on any later point
+# release (`deb12u3`, `u4`, …), it cannot fail on an unrelated hold, and if it does fail the message names
+# the package. Exit code 27 is named in the legend line below and continues the numbering the
+# pip-removal block uses (21–26); it is deliberately not folded into that block, which appears later in
+# this file, because a test pins 21–26 there as a property and renumbering six working codes to make room
+# for one new one would break a check that has already caught a real defect. No Docker daemon exists in
+# the environment this file is written in, so the CI build is the only place this assertion can run
+# against a real dpkg-query — the same reason that block asserts its outcome instead of trusting it. Its
+# shell semantics are nevertheless measured rather than argued for:
+# tests/test_repo_hygiene.py::test_the_runtime_stage_upgrades_and_proves_the_named_finding_is_gone
+# extracts the assertion below and executes it against a model of dpkg-query over eight fixtures.
+#   27 a libpam package is still at the version CVE-2025-6020 was reported against
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends curl tzdata; \
+    apt-get dist-upgrade -y; \
+    ! dpkg-query -W -f='${Package} ${Version}\n' 'libpam*' | grep -q 'deb12u2$' || exit 27; \
+    rm -rf /var/lib/apt/lists/*; \
+    groupadd --system --gid 1001 nexus; \
+    useradd --system --uid 1001 --gid nexus --home-dir /app --shell /usr/sbin/nologin nexus
 
 WORKDIR /app
 

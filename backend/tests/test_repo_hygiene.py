@@ -798,6 +798,146 @@ class TestTrivyFindingsAreReadable:
             "base image that does not happen to ship it"
         )
 
+    def test_the_runtime_stage_upgrades_and_proves_the_named_finding_is_gone(self, tmp_path: Path) -> None:
+        """A documents-only push went red on an upstream Debian CVE that nothing here installed.
+
+        `a065b40` changed six documentation and design files, and the `Container image` job failed on
+        both events while every other job passed: Trivy reported four HIGH findings, all
+        **CVE-2025-6020**, against `libpam0g`, `libpam-runtime`, `libpam-modules` and
+        `libpam-modules-bin` at `1.5.2-6+deb12u2` in `nexus-core:ci (debian 12.15)`, each with a fix
+        at `deb12u3`. They ship inside `python:3.12-slim-bookworm` — this repository installs no PAM
+        package — so the finding is drift between rebuilds, which is what the nightly schedule exists
+        to catch and what any push can surface anyway.
+
+        The remedy is an upgrade, not a suppression: `ignore-unfixed: true` means every finding the
+        scan reports is one an upgrade can clear, so "justify it" is never the available option, and
+        the file's own history argues against it — the previous HIGH (CVE-2025-47273) was proven a
+        false positive by measurement rather than ignored. Reachability was never established: the
+        process runs as the non-root `nexus` user with `/usr/sbin/nologin` and nothing here installs
+        a login path, but whether the base image carries `su` or another PAM consumer could not be
+        checked, because no Docker daemon exists here. "Probably unreachable, unverified" against a
+        one-step upgrade is not a contest, so no judgement was required.
+
+        Three properties are asserted, and the third is the one that makes the check safe to keep:
+
+        1. `dist-upgrade`, not `upgrade` — plain `upgrade` skips a package whose fix needs a new
+           dependency, and a silently skipped security fix is the failure being prevented.
+        2. The assertion is negated (`!`), so it fails *because a survivor exists*, not because the
+           query failed. A non-vacuous check has already cost a red build in this file once.
+        3. It is **targeted**, not generic. Trivy is the generic gate: it fails the build on any HIGH
+           with an available fix, for any package, forever, so restating that here adds nothing. What
+           a scanner cannot say is whether the upgrade that was meant to clear a *named* finding ran
+           at all. A generic `apt-get -s upgrade` assertion would fire on a package held back for a
+           reason nobody here can act on — the exact failure `ignore-unfixed` exists to prevent — so
+           the targeted form is asserted and the generic one is asserted absent.
+
+        The semantics are then measured rather than read: the extracted assertion is executed under
+        `/bin/sh` against a model of `dpkg-query` that honours the package pattern it is handed, for
+        eight fixtures — the finding as reported, each of the four packages surviving alone, all four
+        fixed, a later point release, and an unrelated package held back. No Docker daemon exists in
+        this environment, so the test suite is the only place the command can be proven to behave.
+        """
+        dockerfile = (BACKEND / "Dockerfile").read_text()
+        runtime = dockerfile.split("AS runtime", 1)[1]
+        assert "apt-get dist-upgrade -y" in runtime, (
+            "the runtime stage no longer upgrades the base image's packages, so a Debian point "
+            "release with a security fix does not reach the image until the base tag moves"
+        )
+        assert "apt-get upgrade -y" not in runtime, (
+            "plain `upgrade` skips a package whose fix needs a new dependency, silently leaving a "
+            "security fix unapplied; `dist-upgrade` is the form that actually clears the finding"
+        )
+        assert "apt-get -s" not in runtime, (
+            "a generic 'nothing left to upgrade' assertion has appeared; it fails the build on a "
+            "package held back for reasons nobody here can act on, and Trivy is already the generic "
+            "gate. Assert the named finding instead"
+        )
+        # The targeted assertion: negated, names the package family and the flagged release.
+        assert r"! dpkg-query -W -f='${Package} ${Version}\n' 'libpam*' | grep -q 'deb12u2$'" in runtime, (
+            "the runtime stage no longer proves the packages CVE-2025-6020 was reported against "
+            "moved off the version it was reported against"
+        )
+        assert "27 a libpam package is still at the version CVE-2025-6020" in runtime, (
+            "exit code 27 is not documented; CI publishes the failing command line but not the log, "
+            "so an undocumented code reports only that something failed"
+        )
+        # Ordering: upgrade before the apt lists are removed and before privileges are dropped.
+        assert (
+            runtime.index("apt-get dist-upgrade -y")
+            < runtime.index("rm -rf /var/lib/apt/lists/*")
+            < runtime.index("USER nexus")
+        ), "the upgrade must run before the apt lists are deleted and before `USER nexus`"
+
+        # Measured, not read: run the extracted assertion against a model of `dpkg-query`. The model
+        # honours the package pattern it is given, because a stub that ignored its arguments could not
+        # distinguish a targeted assertion from a blanket one — and targeting is the property under
+        # test. Every code was verified reachable this way rather than argued for.
+        line = next(line for line in runtime.splitlines() if "dpkg-query" in line and "grep -q" in line)
+        assertion = line.strip().removesuffix("\\").strip()
+        stub = tmp_path / "dpkg-query"
+        stub.write_text(
+            "#!/bin/sh\n"
+            "# Model of `dpkg-query -W -f=... <pattern>`: keep the fixture lines whose package name\n"
+            "# matches the glob actually passed, and print them in the requested format.\n"
+            'pattern=""\n'
+            'for arg in "$@"; do\n'
+            '  case "$arg" in\n'
+            "    -*) ;;\n"
+            '    *) pattern="$arg" ;;\n'
+            "  esac\n"
+            "done\n"
+            "while read -r pkg ver; do\n"
+            '  case "$pkg" in\n'
+            '    $pattern) printf \'%s %s\\n\' "$pkg" "$ver" ;;\n'
+            "  esac\n"
+            'done < "$NEXUS_DPKG_FIXTURE"\n',
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+        env = dict(os.environ)
+        env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
+
+        def run(fixture: dict[str, str]) -> int:
+            path = tmp_path / "fixture.txt"
+            path.write_text(
+                "".join(f"{name} {version}\n" for name, version in sorted(fixture.items())),
+                encoding="utf-8",
+            )
+            env["NEXUS_DPKG_FIXTURE"] = str(path)
+            return subprocess.run(  # noqa: S603 - the command is read from this repo's Dockerfile
+                ["/bin/sh", "-e", "-c", assertion], env=env, capture_output=True, check=False
+            ).returncode
+
+        flagged = "1.5.2-6+deb12u2"
+        fixed_version = "1.5.2-6+deb12u3"
+        named = ("libpam0g", "libpam-runtime", "libpam-modules", "libpam-modules-bin")
+
+        # The finding as Trivy reported it: all four at the flagged version.
+        assert run(dict.fromkeys(named, flagged)) == 27, (
+            "the assertion does not fire on the finding it was written for"
+        )
+        # And on each one alone — this is what proves the pattern covers all four packages rather
+        # than happening to match one of them.
+        for package in named:
+            others = {name: fixed_version for name in named if name != package}
+            assert run({**others, package: flagged}) == 27, (
+                f"a survivor in {package} alone must fail the build; the dpkg-query pattern does "
+                "not cover every package the finding was reported against"
+            )
+        # Once fixed, and once a *later* point release arrives: both must pass, so the check does not
+        # go stale the next time Debian publishes and nobody remembers to edit this file.
+        assert run(dict.fromkeys(named, fixed_version)) == 0, "the finding is fixed; it must pass"
+        assert run(dict.fromkeys(named, "1.5.2-6+deb12u9")) == 0, (
+            "a later point release must pass; pinning an expected version would make this fail on "
+            "an improvement"
+        )
+        # And the collateral case: a package outside the finding held back for reasons nobody here
+        # can act on must not fail the build. This is the failure `ignore-unfixed` exists to prevent.
+        assert run({**dict.fromkeys(named, fixed_version), "libpython3.12": flagged}) == 0, (
+            "a version held back in a package outside the finding must not fail the build — that "
+            "collateral failure is why the assertion is targeted"
+        )
+
     def test_the_image_asserts_its_own_entrypoint_still_imports(self) -> None:
         """Removing pip is only safe to do blind if the build proves the venv still works.
 
