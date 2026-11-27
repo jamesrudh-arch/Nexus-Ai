@@ -1477,6 +1477,26 @@ Three choices in it are load-bearing.
 
 The version comparison is a suffix match on `deb12u2`, not an expected-version pin, for the reason the fourth row exists: a pinned version in a Dockerfile is a build that fails for no reason anybody can see, and this repository has already paid for stale expectations twice (§10.4's counts, §10.8's series).
 
-**What this section cannot claim.** It cannot claim the image builds. `dist-upgrade` in a slim bookworm image can in principle pull a package that breaks the entrypoint, and nothing here would catch that except the build itself — which is also the only place the assertion can actually run against a real `dpkg-query`. The next batch reads that run before writing anything of its own, and 8.4 needs live runs before and after its change in any case, so the cost of reading it is already paid. **This is a gate change, so it is recorded here and in `docs/00` (O-011 recurred, posture unchanged) and `docs/07`; it does not reopen O-011, which closed on readability, and readability is what made this triage possible in one step.**
+**What this section could not claim when it was written.** It could not claim the image builds. `dist-upgrade` in a slim bookworm image can in principle pull a package that breaks the entrypoint, and nothing here would catch that except the build itself — which is also the only place the assertion can actually run against a real `dpkg-query`. The next batch reads that run before writing anything of its own, and 8.4 needs live runs before and after its change in any case, so the cost of reading it is already paid.
 
-**Gate at this commit:** `1259 passed / 2 skipped / 0 failed` (+1, the new hygiene test), hygiene **84**, ruff clean, **91** files formatted, mypy strict clean on **61**. No finding id is consumed: this is not a defect in Nexus-AI's code but an upstream package version, so it is recorded against **O-011**, not against F-22's sequence. **The next finding id remains F-23.**
+**Resolved — and the resolution is the part that was not knowable from inside the sandbox.** `8482179`
+produced three runs and all three are `success`: the `push` run `45952230903`, the `pull_request` run
+`45952239831` carrying the same five jobs, and the `pull_request` run `45952239684` carrying
+`Live public endpoints (O-009 / O-010)` — **whose numbers are not read here, by §10.8's rule**. In *both*
+builds the `Container image (amd64 + arm64 build)` job passed, so `apt-get dist-upgrade` completed inside a
+slim bookworm image and the targeted assertion held against a real `dpkg-query`; the image scan's annotation
+now reads, verbatim:
+
+> `notice: no HIGH or CRITICAL fixable vulnerabilities in nexus-core%3Aci`
+
+(`%3A` is the encoded colon in the image reference, published as the step writes it.) The one risk this
+section could not rule out — that `dist-upgrade` pulls a package which breaks the entrypoint — is discharged
+by a different job: `Runtime smoke test (container actually serves)` passed on both runs, and it is the only
+check anywhere that starts the container and asks it for a response. **A limit stays, and it predates this
+batch:** Trivy scans the **amd64 image only**, because a multi-platform image cannot be loaded into a daemon
+(`docs/05` §3.6), so the arm64 half is proven to build and not proven to be clean — true of every scan this
+repository has ever run, and not changed by anything here.
+
+**This is a gate change, so it is recorded here and in `docs/00` (O-011 recurred, posture unchanged) and `docs/07`; it does not reopen O-011, which closed on readability, and readability is what made this triage possible in one step.**
+
+**Gate at `8482179`:** `1259 passed / 2 skipped / 0 failed` (+1, the new hygiene test), hygiene **84**, ruff clean, **91** files formatted, mypy strict clean on **61**. No finding id is consumed: this is not a defect in Nexus-AI's code but an upstream package version, so it is recorded against **O-011**, not against F-22's sequence. **The next finding id remains F-23.**

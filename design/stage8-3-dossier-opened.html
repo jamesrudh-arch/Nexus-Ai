@@ -849,11 +849,13 @@ Web Push + Brevo + in-app with none of them wired yet. F-22 stays open until bot
 
 
 <h3>15 &middot; The image gate went red on the commit that recorded this ruling<span class="tag">NEW &middot; docs/15 &sect;10.11 &middot; O-011 recurred</span></h3>
-<div class="blocked"><b>Fixed in <span class="mono">backend/Dockerfile</span> and proven in the test suite;
-the build that proves it in an image is CI&rsquo;s, and had not run when this was written.</b> This section
-exists because &sect;11 reports CI green &mdash; for <span class="mono">ffc4128</span>, which is true and
-stays true &mdash; and a reader who stopped there would believe the gate that recorded this ruling passed
-it. It did not.</div>
+<div class="blocked"><b>Fixed in <span class="mono">backend/Dockerfile</span>, proven in the test suite, and
+verified in the image by CI.</b> Runs <span class="mono">45952230903</span> (push) and
+<span class="mono">45952239831</span> (pull_request) are both <span class="mono">success</span>, the image
+job green on both events, and the scan now publishes <i>&ldquo;<span class="mono">notice: no HIGH or
+CRITICAL fixable vulnerabilities in nexus-core%3Aci</span>&rdquo;</i>. This section exists because
+&sect;11 reports CI green &mdash; for <span class="mono">ffc4128</span>, which is true and stays true &mdash;
+and a reader who stopped there would believe the gate that recorded this ruling passed it. It did not.</div>
 <p><b>What failed.</b> <span class="mono">a065b40</span> &mdash; the D-052 record, six documentation and
 design files, +185/&minus;17, nothing under <span class="mono">backend/src</span> or
 <span class="mono">backend/tests</span> &mdash; produced three runs. The
@@ -939,7 +941,7 @@ that fails for no reason anybody can see, and this record has already paid twice
 <p><b>Gate at this commit:</b> <b>1,259 passed / 2 skipped / 0 failed</b> (+1, this test), hygiene
 <b>84</b>, ruff and format clean on <b>91</b> files, mypy strict clean on <b>61</b>. Nothing under
 <span class="mono">backend/src</span> changed, so no migration checksum moved and no route count did.</p>
-<p><b>What this section cannot claim.</b> It cannot claim the image builds.
+<p><b>What this section could not claim when it was written.</b> It could not claim the image builds.
 <span class="mono">dist-upgrade</span> in a slim bookworm image can in principle pull a package that
 breaks the entrypoint, and nothing here would catch that except the build itself &mdash; which is also
 the only place the assertion runs against a real <span class="mono">dpkg-query</span>. The next batch
@@ -950,6 +952,19 @@ unchanged) and <span class="mono">docs/07</span>. It does not reopen O-011, whic
 <i>readability</i> &mdash; and readability is what made this triage a single step. It consumes <b>no
 finding id</b>: an upstream package version is not a defect in this code, so the next finding id is still
 <b>F-23</b>.</p>
+<p><b>Resolved.</b> <span class="mono">8482179</span> produced three runs and all three are
+<span class="mono">success</span>: <span class="mono">45952230903</span> (push),
+<span class="mono">45952239831</span> (pull_request, the same five jobs) and
+<span class="mono">45952239684</span> (pull_request, carrying <b>Live public endpoints</b> &mdash; whose
+numbers are not read here, by &sect;10&rsquo;s own rule). In <i>both</i> builds the image job passed, so
+<span class="mono">apt-get dist-upgrade</span> completed inside a slim bookworm image and the targeted
+assertion held against a real <span class="mono">dpkg-query</span>. The risk this section could not rule out
+&mdash; that the upgrade pulls something which breaks the entrypoint &mdash; is discharged by a different
+job: <span class="mono">Runtime smoke test (container actually serves)</span> passed on both runs, and it is
+the only check anywhere that starts the container and asks it for a response. <b>One limit stays, and it
+predates this batch</b>: Trivy scans the <b>amd64</b> image only, because a multi-platform image cannot be
+loaded into a daemon (<span class="mono">docs/05</span> &sect;3.6), so the arm64 half is proven to build and
+not proven to be clean &mdash; true of every scan this repository has run.</p>
 
 <footer>Stage 8.3 &middot; L-D + L-E &middot; authorised by D-051, <b>approved as D-052</b> &middot;
 11 files in <span class="mono">backend/</span>, +2,079 / &minus;24, gate <b>1,258 passed / 2 skipped / 0
@@ -968,7 +983,9 @@ skew series, now a <b>range</b> rather than a count (&sect;10) &middot; <b>F-22 
 <b>post-ruling: the image gate went red on <span class="mono">a065b40</span></b> &mdash; HIGH
 CVE-2025-6020 in four Debian PAM packages the base image ships, on a push that changed documents only
 &mdash; <b>fixed by upgrading the runtime stage, not suppressed</b>, with the assertion&rsquo;s semantics
-measured over eight fixtures in the suite and the image build left to CI to prove (&sect;15,
-<span class="mono">docs/15</span> &sect;10.11, O-011 recurred) &middot; 8.4 =
+measured over eight fixtures in the suite because no Docker daemon exists here &mdash; and <b>CI then proved
+the build</b>: both image jobs green, the runtime smoke test passing with them, and the scan reporting no
+HIGH or CRITICAL fixable vulnerabilities (&sect;15, <span class="mono">docs/15</span> &sect;10.11, O-011
+recurred, posture unchanged) &middot; 8.4 =
 F-14&rsquo;s expensive half alone, then stage 10&rsquo;s <span class="mono">memory_item</span> writer</footer>
 </div></body></html>
