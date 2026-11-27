@@ -1358,6 +1358,35 @@ Every pair re-read from its own check annotation and every ratio recomputed, not
 evidence 8.4 starts from, and it is the reason 8.4 needs its own live runs before and after: the quantity it
 changes is the one that has moved 5.0× between runs while nothing in the code did.
 
+> **Restated by Stage 8.4 (D-053's ruling 2, §11.14): the series continues under the renamed key, and the
+> range is now `skew_venue_over_wall` 0.673×–3.97× across eleven pairs.** The eight rows above are left
+> exactly as published, because D-051 and D-052 were both ruled on them. What moved is the key and the
+> floor, not the quantity: every value above was computed as `dt_observed_s / dt_wall_s` where
+> `dt_observed_s` was read from a field holding venue stamps, which is venue-interval over wall-interval —
+> the quantity the harness now publishes directly as `skew_venue_over_wall`. So 8.4's three pairs are
+> admitted as its ninth, tenth and eleventh rather than starting a second series:
+>
+> | pair | commit | run id | trigger | `dt_venue_s` | `dt_wall_s` | `skew_venue_over_wall` |
+> |---|---|---|---|---|---|---|
+> | 9 | `bbfe95f` | `45964962991` | `push` | 0.498 | 0.244 | **2.037×** |
+> | 10 | `bbfe95f` | `45964969570` | `pull_request` | 0.239 | 0.355 | **0.673×** — the new floor, below 1 |
+> | 11 | `ec0dd09` | `45996139111` | `pull_request` | 1.083 | 0.301 | **3.604×** — inside the old ceiling |
+>
+> **The floor moves and the ceiling does not: 0.673×–3.97×, a 5.9× spread across eleven pairs, with two runs
+> below one.** Run 26's 0.80× was the only published reading under one until pair 10; pair 11 sits inside
+> the 3.97× that run 29 set. Nothing above is contradicted and one of its two bounds is. The ratios quoted
+> are the harness's published values, computed from unrounded intervals; recomputing from the three-decimal
+> inputs shown differs in the third place (2.041 against 2.037, 3.598 against 3.604), and the published
+> value is quoted rather than the recomputation because the recomputation inherits a rounding the harness
+> did not make.
+>
+> These three rows are keyed on **commit and run id** rather than on a sequential run number, deliberately.
+> This section's own rule is that a count re-triggering per push is stale on arrival, and the numbering
+> already shows the cost of ignoring it: this section calls the run triggered by the commit carrying it
+> "run 32", while §10.9 counts **two** runs, 32 and 33, for `9dad6b7` and `9664c7b` — §10.8 was written
+> across both commits, so "the commit that carried this section" has no single answer. A run id does. **The
+> next batch picks the series up by run id too.**
+
 **Where the series stops being quoted, and why.** The commit that carried this section triggered its own
 `Live public endpoints` run — run 32, `conclusion=success`, on a commit that changed documents and design
 files and no code — and its numbers are deliberately **not** quoted here. Quoting them would require another
@@ -2209,3 +2238,39 @@ carries F-18's three columns plus `evidence_ref.contradicts`. The alternative is
 first, closing §11.12's limitation 1 by giving the receipt time a destination; that is a smaller batch and
 it would make 8.4's number durable, but it writes evidence rows for data nobody has decided to collect,
 which is the step ruling 3 declined.
+
+### 11.14 D-053 — the four rulings
+
+All four questions in §11.13 were answered `Recommend`, each against exactly one marked recommendation, and
+are recorded as **D-053**. §11.13 is left as it was put; this section is the ruling.
+
+| # | Question as put | Ruled | What it changes |
+|---|---|---|---|
+| 1 | Is Stage 8.4 approved? | **Approved, recorded as D-053**, with F-23 disclosed (§11.7) and with **all four** of this record's self-corrections disclosed rather than rewritten | Both 8.4 rows in `docs/07` move to `REVIEWED — APPROVED 2026-11-27`, the Stage 8 header reads 8.4 `APPROVED`, and **F-14 and `O-012` move to `CLOSED`**. The four disclosures are §11.6 (the tamper count, eight → fifteen), §11.7 (`bbfe95f`'s Dukascopy claim), §11.1 (the LZMA ratio) and §11.9 (the run-count mechanism) |
+| 2 | Does the skew series continue under the renamed key, and what happens to its floor? | **It continues**, and §10.8's range is restated as `skew_venue_over_wall` **0.673×–3.97×** across **eleven** pairs | The restatement is an **inserted pointer in §10.8**, not a rewrite: those eight rows were ruled on by D-051 and D-052 and stand as published. 8.4's three readings are its ninth, tenth and eleventh pairs. **The floor moves and the ceiling does not** — the spread widens from 5.0× to **5.9×** and two runs now sit below one. The new pairs are keyed on commit and run id, not on a sequential run number, for the reason given in that pointer |
+| 3 | Is F-23's gate the right posture? | **Keep the AST scan; do not move the wrapper** | Nothing changes in the code, which is the point: the scan already names file and line, runs in the ordinary CI job, and was proven load-bearing by tampering. Both alternatives were declined on the record — into `src/` puts test scaffolding in the shipped package, and into an importable test helper lets `_CapturingTransport` be imported but not exercised, which proves only that a class exists. A `runtime_checkable` `isinstance` assertion was named and declined too: it checks the same thing and cannot run against a module that skips at import |
+| 4 | What is the next batch? | **Stage 10's `memory_item` writer**, as D-052's ruling 3 already ordered | Nothing in §11 changed the ordering, because 8.4 added no tables and no wiring, so ruling 3's reason still holds. That batch carries F-18's three columns plus `evidence_ref.contradicts`. Wiring `retrieved_at` first was offered and **not** taken |
+
+**What this ruling does not do**, stated so nobody has to infer it. It does **not** close §11.12's
+limitation 1: `evidence_ref.retrieved_at` still has no caller, so the receipt time 8.4 built is still
+produced and dropped, and that limitation stays published *beside* the closure rather than being retired by
+it. `O-012` closes on the defect F-14 named — four adapters recording nothing about arrival — and not on the
+system. It does **not** touch **F-22** (`O-014`), which D-052's ruling 4 recorded precisely so it would not
+be closed by accident. It does **not** fill the `view_gap` that changed kind: §11.4 records that a receipt
+time says when *we got* something and not when the source *published* it, so J-04's first of three times is
+exactly as unrecordable as it was, and the route's corrected text says so. And it does **not** bound
+anything §11.12 left unbounded — limitations 5, 6, 7 and 8 all stand as published.
+
+**Finding ids.** F-14 `CLOSED` (delivered by 8.4, approved by D-053). F-23 `CLOSED` (found and closed in
+the same batch, disclosed in the ruling that approves it). `O-012` `CLOSED`. `O-014`/F-22 stays `OPEN`.
+**The next finding id is F-24.**
+
+**The regress §10.8 predicted, arrived at once.** `8d3973d` — the commit carrying §11.1's and §11.9's
+corrections, documents and design files only — triggered its own `Live public endpoints` run,
+`45998848348`, `conclusion=success`, against a backend tree byte-identical to `bbfe95f`'s. Its numbers are
+**not read here**, by §10.8's rule and by the precedent it set for runs 32 and 33: reading them would need
+another commit, which triggers another run, whose numbers would be unread for the same reason. The commit
+carrying *this* section does the same thing again. So the property is stated instead of the count: **every
+push to this PR produces another live reading of the same adapter code until an adapter changes**, which is
+§11.9's mechanism seen from the other end — and it is why pair 11 in §10.8's restatement is the last one
+this record will number.

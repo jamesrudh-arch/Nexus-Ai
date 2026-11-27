@@ -774,6 +774,75 @@ def questions_table() -> str:
     )
 
 
+def rulings_table() -> str:
+    return table(
+        ["#", "question as put", "ruled", "what it changes"],
+        [
+            ("1", "Is Stage 8.4 approved?",
+             "<b>Approved, recorded as D-053</b>, with F-23 disclosed and with <b>all four</b> of this "
+             "record&rsquo;s self-corrections disclosed rather than rewritten.",
+             "Both 8.4 rows in <span class='mono'>docs/07</span> move to <span class='ok'>REVIEWED &mdash; "
+             "APPROVED 2026-11-27</span>, the Stage 8 header reads 8.4 <span class='ok'>APPROVED</span>, and "
+             "<b>F-14 and <span class='mono'>O-012</span> move to CLOSED</b>. The four disclosures are "
+             "&sect;9 (the tamper count), &sect;10 (the Dukascopy claim), &sect;3 (the LZMA ratio) and "
+             "&sect;12 (the run-count mechanism)."),
+            ("2", "Does the skew series continue under the renamed key, and what happens to its floor?",
+             "<b>It continues</b>, and &sect;10.8&rsquo;s range is restated as "
+             "<span class='mono'>skew_venue_over_wall</span> <b>0.673&times;&ndash;3.97&times;</b> across "
+             "<b>eleven</b> pairs.",
+             "The restatement is an <b>inserted pointer in &sect;10.8</b>, not a rewrite: those eight rows were "
+             "ruled on by D-051 and D-052 and stand as published. 8.4&rsquo;s three readings are its ninth, "
+             "tenth and eleventh pairs. <b>The floor moves and the ceiling does not</b> &mdash; the spread "
+             "widens from 5.0&times; to <b>5.9&times;</b> and two runs now sit below one. The new pairs are "
+             "keyed on <b>commit and run id</b> rather than a sequential run number, because &sect;10.8&rsquo;s "
+             "own rule is that a count re-triggering per push is stale on arrival &mdash; and the numbering "
+             "already disagrees with itself about which run was 32."),
+            ("3", "Is F-23&rsquo;s gate the right posture?",
+             "<b>Keep the AST scan; do not move the wrapper.</b>",
+             "Nothing changes in the code, which is the point: the scan already names file and line, runs in "
+             "the ordinary CI job, and was proven load-bearing by tampering. Both alternatives were declined "
+             "on the record &mdash; into <span class='mono'>src/</span> puts test scaffolding in the shipped "
+             "package, and into an importable test helper lets <span class='mono'>_CapturingTransport</span> be "
+             "imported but not exercised, which proves only that a class exists. A "
+             "<span class='mono'>runtime_checkable</span> <span class='mono'>isinstance</span> assertion was "
+             "named and declined too: same check, and it cannot run against a module that skips at import."),
+            ("4", "What is the next batch?",
+             "<b>Stage 10&rsquo;s <span class='mono'>memory_item</span> writer</b>, as D-052&rsquo;s ruling 3 "
+             "already ordered.",
+             "Nothing in this batch changed the ordering, because 8.4 added no tables and no wiring, so ruling "
+             "3&rsquo;s reason still holds. That batch carries F-18&rsquo;s three columns plus "
+             "<span class='mono'>evidence_ref.contradicts</span>. Wiring "
+             "<span class='mono'>retrieved_at</span> first was offered and <b>not</b> taken."),
+        ],
+    )
+
+
+def not_done_by_ruling_table() -> str:
+    return table(
+        ["what D-053 does <b>not</b> do", "where it stays visible"],
+        [
+            ("It does <b>not</b> close limitation 1. "
+             "<span class='mono'>evidence_ref.retrieved_at</span> still has no caller, so the receipt time this "
+             "batch built is still produced and dropped.",
+             "Published <i>beside</i> the closure rather than retired by it. <span class='mono'>O-012</span> "
+             "closes on the defect F-14 named &mdash; four adapters recording nothing about arrival &mdash; and "
+             "not on the system."),
+            ("It does <b>not</b> touch F-22 (<span class='mono'>O-014</span>): the evidence checksum is still "
+             "verified only when somebody looks.",
+             "D-052&rsquo;s ruling 4 recorded it as a finding precisely so it would not be closed by accident, "
+             "and it stays <span class='mono'>OPEN</span>."),
+            ("It does <b>not</b> fill the <span class='mono'>view_gap</span> that changed kind. A receipt time "
+             "says when <i>we got</i> something, not when the source <i>published</i> it.",
+             "&sect;7. J-04&rsquo;s first of three times is exactly as unrecordable as it was, and the "
+             "route&rsquo;s corrected text says so instead of pointing at a merged batch."),
+            ("It does <b>not</b> bound anything &sect;14 left unbounded &mdash; limitations 5, 6, 7 and 8 all "
+             "stand as published.",
+             "&sect;14. Limitation 6 is <b>widened</b> by run C rather than retired by it: three samples still "
+             "cannot bound anything, and one of the three came from a commit that was not part of the batch."),
+        ],
+    )
+
+
 def main() -> pathlib.Path:
     tokens = re.sub(r"@font-face \{[^}]*\}", "", (HERE / "tokens.css").read_text())
 
@@ -784,7 +853,9 @@ def main() -> pathlib.Path:
 {fonts_css()}
 {CSS}</style></head><body><div class='wrap'>
 <div class="lede">Nexus-AI &middot; Stage 8 of 23 &middot; sub-deliverable 8.4 &middot; authorised by
-D-052&rsquo;s ruling 2 as <b>F-14&rsquo;s expensive half alone</b> &middot; <b>awaiting D-053</b></div>
+D-052&rsquo;s ruling 2 as <b>F-14&rsquo;s expensive half alone</b> &middot; <b>approved 2026-11-27
+(D-053)</b> &middot; <b>F-14 and O-012 CLOSED</b> &middot; next: stage 10&rsquo;s
+<span style="font-family:var(--font-family-mono)">memory_item</span> writer</div>
 <h1 style="font-size:var(--font-size-heading);font-weight:var(--font-weight-semibold);margin:6px 0 0">
 All four adapters get a receipt time, the archive stops partitioning on it, and the run that was to prove
 the fix first failed on a test the offline suite cannot see</h1>
@@ -1211,11 +1282,38 @@ remains F-24.</b></p>
 
 <h3>15 &middot; Decision requested<span class="tag">four questions, one marked recommendation each</span></h3>
 <p>All four are answered on this board rather than in prose, because two of them change what a published
-number means and one changes what the next batch is.</p>
+number means and one changes what the next batch is. <b>All four were answered
+<span class="ok">Recommend</span></b>, each against exactly one marked recommendation, and are recorded as
+<b>D-053</b> in &sect;16. This section is left exactly as it was put.</p>
 <div class="card">{questions_table()}</div>
 
+<h3>16 &middot; D-053 &mdash; the four rulings<span class="tag">docs/15 &sect;11.14</span></h3>
+<div class="card">{rulings_table()}</div>
+<p class="cap"><b>Finding ids.</b> F-14 <span class="ok">CLOSED</span> (delivered by 8.4, approved by D-053).
+F-23 <span class="ok">CLOSED</span> (found and closed in the same batch, disclosed in the ruling that
+approves it). <span class="mono">O-012</span> <span class="ok">CLOSED</span>.
+<span class="mono">O-014</span>/F-22 stays <span class="no">OPEN</span>. <b>The next finding id is
+F-24.</b></p>
+<div class="card">{not_done_by_ruling_table()}</div>
+<div class="blocked"><b>The regress &sect;10.8 predicted arrived at once.</b> <span class="mono">8d3973d</span>
+&mdash; the commit carrying &sect;3&rsquo;s and &sect;12&rsquo;s corrections, documents and design files only
+&mdash; triggered its own <span class="mono">Live public endpoints</span> run,
+<span class="mono">45998848348</span>, <span class="ok">conclusion=success</span>, against a backend tree
+byte-identical to <span class="mono">bbfe95f</span>&rsquo;s. Its numbers are <b>not read here</b>, by
+&sect;10.8&rsquo;s rule and by the precedent that section set for runs 32 and 33: reading them would need
+another commit, which triggers another run, whose numbers would be unread for the same reason. The commit
+carrying <i>this</i> section does the same thing again. So the property is stated instead of the count:
+<b>every push to this PR produces another live reading of the same adapter code until an adapter changes</b>
+&mdash; &sect;12&rsquo;s mechanism seen from the other end, and the reason pair 11 in &sect;10.8&rsquo;s
+restatement is the last one this record will number.</div>
+
 <footer>Stage 8.4 &middot; F-14&rsquo;s expensive half &middot; authorised by D-052&rsquo;s ruling 2,
-<b>awaiting D-053</b> &middot; <span class="mono">8cdc871</span> (22 files, +1,901 / &minus;144) +
+<b>approved 2026-11-27 as D-053</b> &middot; <b>F-14, F-23 and O-012 all CLOSED</b>, F-22 untouched, next
+finding id <b>F-24</b> &middot; the skew series continues under its renamed key with &sect;10.8&rsquo;s range
+restated to <b>0.673&times;&ndash;3.97&times;</b> across eleven pairs by an inserted pointer rather than a
+rewrite, the <b>floor</b> moving and the ceiling not &middot; the AST scan stays and the wrapper does not
+move &middot; next: stage 10&rsquo;s <span class="mono">memory_item</span> writer, re-ordered by ruling 4
+&middot; <span class="mono">8cdc871</span> (22 files, +1,901 / &minus;144) +
 <span class="mono">bbfe95f</span> (2 files, +134 / &minus;6) &middot; gate <b>1,294 passed / 2 skipped / 0
 failed</b> (+35 offline, +8 live checks, +43 test functions), mypy strict clean on <b>61</b>, ruff and
 format clean on <b>91</b>, hygiene <b>88</b> &middot; <span class="mono">Transport</span> three methods
