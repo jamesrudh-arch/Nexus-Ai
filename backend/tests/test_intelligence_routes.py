@@ -67,7 +67,7 @@ def _open(app: Any, **overrides: Any) -> str:
     return str(receipt.dossier_id)
 
 
-def _attach(app: Any, dossier_id: str, source: str, at: datetime) -> str:
+def _attach(app: Any, dossier_id: str, source: str, at: datetime, **extra: Any) -> str:
     receipt = record_evidence(
         audit=app.state.audit,
         store=app.state.store,
@@ -78,6 +78,7 @@ def _attach(app: Any, dossier_id: str, source: str, at: datetime) -> str:
         locator=f"https://www.okx.com/api/v5/market/{source.split('.')[-1]}",
         dossier_id=dossier_id,
         payload={"bid": "60736.2"},
+        **extra,
     )
     return str(receipt.evidence_id)
 
@@ -264,8 +265,10 @@ class TestTheServedChecksumIsRecomputedNotTrusted:
     def test_tampering_with_a_stored_column_is_visible_in_the_response(
         self, booted: tuple[Any, TestClient], tmp_path: Path
     ) -> None:
-        """F-21's payoff: the checksum now covers nine stored fields including ``observed_at``, and this
-        route is the first reader that recomputes it, so an altered row is reported rather than served."""
+        """F-21's payoff: the checksum covers ten stored fields including ``observed_at`` — nine when F-21
+        widened it from one, and ten since Stage 8.5 added ``contradicts`` to the table and to the covered
+        set in one commit — and this route is the first reader that recomputes it, so an altered row is
+        reported rather than served."""
         app, client = booted
         dossier_id = _open(app)
         evidence_id = _attach(app, dossier_id, "okx.ticker", OBSERVED)
@@ -317,6 +320,108 @@ class TestTheServedChecksumIsRecomputedNotTrusted:
         assert set(row) == set(CHECKSUMMED_FIELDS) | {"checksum", "audit_ref"}
 
 
+class TestARecordedContradictionIsServedBothWays:
+    """``docs/10`` §3.1 asks the dossier view for *"contradictions highlighted and linked"*.
+
+    Stage 8.5 added ``evidence_ref.contradicts`` (migration ``0005_memory_beliefs``, F-18's fourth gap), so
+    the *link* half is servable and this class pins it: the stored direction, the derived reverse direction,
+    and a count at the top of the case. What it also pins is that serving the link decides nothing — no
+    winner, no downgrade, no verdict — because ``docs/12`` §1.3's law (A-02+A-08) is that no gate can be
+    satisfied by a confidence value, and the gap stays open for exactly that reason.
+    """
+
+    def test_both_directions_of_one_recorded_disagreement_are_served(
+        self, booted: tuple[Any, TestClient]
+    ) -> None:
+        app, client = booted
+        dossier_id = _open(app)
+        first = _attach(app, dossier_id, "okx.books", OBSERVED)
+        second = _attach(app, dossier_id, "bybit.books", OBSERVED + timedelta(seconds=2), contradicts=first)
+
+        served = client.get(f"{LIST_PATH}/{dossier_id}").json()["dossier"]
+        assert served["contradiction_count"] == 1
+        by_id = {entry["evidence_id"]: entry for entry in served["chronology"]}
+        assert by_id[second]["contradicts"] == first, "the stored direction"
+        assert by_id[second]["contradicted_by"] == []
+        assert by_id[first]["contradicts"] is None
+        assert by_id[first]["contradicted_by"] == [second], "the derived reverse direction"
+
+    def test_a_case_with_no_recorded_disagreement_says_zero_and_not_none(
+        self, booted: tuple[Any, TestClient]
+    ) -> None:
+        """Zero is a fact this route can establish from the rows it holds; ``None`` would be an admission
+        that it did not look, and it did look."""
+        app, client = booted
+        dossier_id = _open(app)
+        first = _attach(app, dossier_id, "okx.books", OBSERVED)
+        served = client.get(f"{LIST_PATH}/{dossier_id}").json()["dossier"]
+        assert served["contradiction_count"] == 0
+        assert served["chronology"][0]["contradicts"] is None
+        assert served["chronology"][0]["contradicted_by"] == []
+        assert first
+
+    def test_two_rows_pointing_at_one_are_one_pair_each(self, booted: tuple[Any, TestClient]) -> None:
+        """The count is of distinct pairs, not of pointers, so a row contradicted twice reads as two
+        disagreements and a mutual one would read as one."""
+        app, client = booted
+        dossier_id = _open(app)
+        first = _attach(app, dossier_id, "okx.books", OBSERVED)
+        second = _attach(app, dossier_id, "bybit.books", OBSERVED + timedelta(seconds=2), contradicts=first)
+        third = _attach(app, dossier_id, "binance.books", OBSERVED + timedelta(seconds=4), contradicts=first)
+        served = client.get(f"{LIST_PATH}/{dossier_id}").json()["dossier"]
+        assert served["contradiction_count"] == 2
+        by_id = {entry["evidence_id"]: entry for entry in served["chronology"]}
+        assert by_id[first]["contradicted_by"] == sorted([second, third])
+
+    def test_serving_a_contradiction_decides_nothing(self, booted: tuple[Any, TestClient]) -> None:
+        """Both rows are served unchanged and both still verify.
+
+        A route that marked the contradicted row stale, hid it, or ranked it below the row that contradicts
+        it would be resolving a disagreement nobody asked it to resolve — and ``docs/10`` §3.2 is explicit
+        that confidence never overrides a failed stage, so no numeric column may settle it either.
+        """
+        app, client = booted
+        dossier_id = _open(app)
+        first = _attach(app, dossier_id, "okx.books", OBSERVED)
+        _attach(app, dossier_id, "bybit.books", OBSERVED + timedelta(seconds=2), contradicts=first)
+
+        before = app.state.store.get_evidence_ref(first)
+        client.get(LIST_PATH)
+        client.get(f"{LIST_PATH}/{dossier_id}")
+        after = app.state.store.get_evidence_ref(first)
+        assert after == before, "the read did not touch the row it served"
+
+        served = client.get(f"{LIST_PATH}/{dossier_id}").json()["dossier"]
+        assert served["evidence_checksums_verify"] is True
+        assert all(entry["data_status"] == "LIVE" for entry in served["chronology"])
+        assert {"winner", "resolved", "verdict", "losing_evidence"} & set(served) == set()
+
+    def test_a_contradiction_across_two_cases_appears_in_neither_scan(
+        self, booted: tuple[Any, TestClient]
+    ) -> None:
+        """The derived reverse direction is scoped to one dossier, and this pins the limit rather than
+        hiding it: the pointer is stored and served on the row that made it, but the case that was
+        contradicted shows no reverse link, because the row that contradicts it is not among its own.
+
+        That is one of the three reasons the ``contradictions`` gap stays open after Stage 8.5.
+        """
+        app, client = booted
+        one = _open(app, summary="The first case.", venue="OKX")
+        two = _open(app, summary="The second case.", venue="BYBIT")
+        target = _attach(app, one, "okx.books", OBSERVED)
+        _attach(app, two, "bybit.books", OBSERVED + timedelta(seconds=2), contradicts=target)
+
+        first = client.get(f"{LIST_PATH}/{one}").json()["dossier"]
+        second = client.get(f"{LIST_PATH}/{two}").json()["dossier"]
+        assert first["contradiction_count"] == 0, (
+            "the contradicted case cannot see a row that is not one of its own"
+        )
+        assert first["chronology"][0]["contradicted_by"] == []
+        assert second["contradiction_count"] == 1, "the stored direction is served wherever the row is"
+        assert second["chronology"][0]["contradicts"] == target
+        assert second["chronology"][0]["contradicted_by"] == []
+
+
 class TestTheGapsArePartOfTheResponse:
     def test_every_gap_names_its_source_and_its_reason(self) -> None:
         assert len(DOSSIER_VIEW_GAPS) >= 8, "the approved view asks for more than the schema can serve"
@@ -352,6 +457,13 @@ class TestTheGapsArePartOfTheResponse:
         to F-14's expensive half alone — no new tables, no new columns, no writer wiring. So the gap
         is no longer scheduled for a batch that has not happened; it is unscheduled, and the route
         must say so instead of pointing at a batch the reader can go and find already merged.
+
+        The other two changed kind in Stage 8.5, which **is** the batch they were deferred to, and
+        each was filled differently: the contradiction link arrived and is served both ways, while the
+        beliefs gap gained three columns and a writer but no route and no band. Both texts now say what
+        landed and what did not, for the same reason the publication-time one does — a gap that still
+        reads as waiting sends the reader to a queue that is empty, and a gap that reads as closed hides
+        the half that is not.
         """
         ruled = [gap for gap in DOSSIER_VIEW_GAPS if gap["deferred_by"] and "D-051" in gap["deferred_by"]]
         assert {gap["element"] for gap in ruled} == {
@@ -381,6 +493,41 @@ class TestTheGapsArePartOfTheResponse:
         assert "receipt time" in publication["why_not_servable"], (
             "the gap must say why a receipt time does not fill it: when we got it is not when the "
             "source published it"
+        )
+
+        contradictions = next(
+            gap for gap in deferred if gap["element"] == "contradictions highlighted and linked"
+        )
+        assert "has now landed" in contradictions["deferred_by"], (
+            "the stage-10 batch this gap was deferred to has run, and the text must not imply it has not"
+        )
+        assert "no such column" not in contradictions["why_not_servable"], (
+            "evidence_ref.contradicts exists since migration 0005_memory_beliefs; a gap that still says "
+            "the column is missing sends the reader to a defect that was fixed"
+        )
+        assert "contradicts" in contradictions["why_not_servable"], "and must name the column that arrived"
+        assert "A-02+A-08" in contradictions["why_not_servable"], (
+            "the reason a contradiction is not resolved here is a law, so the gap must cite it rather "
+            "than leave the reader to guess whether the verdict is merely unbuilt"
+        )
+
+        beliefs = next(
+            gap
+            for gap in deferred
+            if gap["element"] == "beliefs with confidence band, validity interval and change conditions"
+        )
+        assert "has now landed" in beliefs["deferred_by"]
+        why = beliefs["why_not_servable"]
+        assert "schema-only" not in why and "no writer" not in why, (
+            "memory_item has a writer since Stage 8.5; the gap must say what is still missing instead"
+        )
+        assert "memory.recorded" in beliefs["why_not_servable"], "the writer is named by its audit event"
+        assert "no memory_item route" in beliefs["why_not_servable"], (
+            "recordable and not readable over HTTP is the part this route cannot serve"
+        )
+        assert "F-24" in beliefs["why_not_servable"], (
+            "the band is the half the three new columns do not deliver — they are on the time axis — and "
+            "it is a recorded finding, not an omission this text may quietly absorb"
         )
 
     def test_the_freshness_gap_says_why_the_stored_status_is_not_a_freshness_reading(self) -> None:

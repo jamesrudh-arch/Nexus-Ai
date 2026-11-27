@@ -46,6 +46,32 @@ now covers every stored field except ``checksum`` itself and ``audit_ref``, and
 asserted. ``audit_ref`` is excluded because it does not exist yet when the writer hashes — the audit entry
 is written first (L-2) and the ref comes back from it — and because the link into the chain is protected
 by the chain's own hash linkage, not by this value.
+*(Pointer added by Stage 8.5, which grew the row: migration ``0005_memory_beliefs`` added
+``evidence_ref.contradicts`` — F-18's fourth gap, the link ``docs/10`` §3.1's "contradictions highlighted
+and linked" needs — and ``contradicts`` therefore joined this tuple, so the covered set is ten fields of
+twelve stored. The paragraph above is unchanged and still describes the reason the list is what it is; the
+existing guard in ``tests/test_evidence_writer.py`` that derives the covered set from ``PRAGMA
+table_info(evidence_ref)`` is what forced the column and the list to move in one commit rather than two,
+which is the guard doing exactly the job its docstring claims. What Stage 8.5 does **not** change is the
+meaning of the value: it is still an integrity checksum over the recorded row and not an authenticity
+signature over the bytes the venue sent.)*
+
+**``contradicts`` records a disagreement; it does not detect one, and it does not settle one.** Stage 8.5
+added the column because ``docs/10`` §3.1 asks the dossier view for *"contradictions highlighted and
+linked"* and ``docs/03`` J-04 step 4 asks for *"corroborating/contradictory sources"* — and until then
+nothing could record that two sources disagree, so nothing could be highlighted. Three things about it are
+stated here because each is a way the column could be over-read:
+
+* It is a **claim by whoever recorded the row**, not a computed fact. Nothing in this system can detect
+  that two observations disagree semantically, and a column that looked like a detection would be a
+  judgement dressed as data. The recorder is named by the audit entry beside the row.
+* It points **one way**. ``evidence_ref`` has no back-link column, so "which rows contradict this one" is
+  a scan; the dossier route derives the reverse direction at read time and says so, and a reader going
+  straight to the database has to scan too.
+* It **resolves nothing**. Both rows stay readable and neither is deleted, downgraded or hidden, and the
+  row with the higher confidence does not win: ``docs/12`` §1.3's law (A-02+A-08) is that *no gate can be
+  satisfied by a confidence value*, and ``docs/10`` §3.2 that confidence never overrides a failed stage. A
+  contradiction is an input to a review, which is a person, and this batch builds no reviewer.
 
 ``kind`` is passed through as free text with the schema's default. No vocabulary for it is declared
 anywhere in the repository — the only thing the schema says is ``DEFAULT 'DATA'`` — and inventing one
@@ -105,6 +131,13 @@ class ObservedAtSource(StrEnum):
 #: ``audit_ref`` is excluded because the audit entry is written first and its ref does not exist yet when
 #: the writer hashes — the chain's own hash linkage protects that link instead. Named once so the writer
 #: that computes the value and the reader that verifies it cannot drift apart.
+#:
+#: ``contradicts`` joined in Stage 8.5, when migration ``0005_memory_beliefs`` added the column. It joins
+#: because a stored column this tuple does not name is a column that can change undetected, which is F-21
+#: stated one column at a time — and neither of the two exclusions above applies to it, since it is known
+#: at write time and is not the value being computed. ``tests/test_evidence_writer.py`` derives this set
+#: from the live table's ``PRAGMA table_info`` and fails when the two disagree, which is what made adding
+#: the column and adding it here one decision rather than two.
 CHECKSUMMED_FIELDS: tuple[str, ...] = (
     "evidence_id",
     "dossier_id",
@@ -115,6 +148,7 @@ CHECKSUMMED_FIELDS: tuple[str, ...] = (
     "data_status",
     "locator",
     "payload",
+    "contradicts",
 )
 
 
@@ -133,11 +167,14 @@ def evidence_checksum(row: Mapping[str, Any]) -> str:
 def verify_evidence_checksum(row: Mapping[str, Any]) -> bool:
     """True when a stored row still matches what its writer hashed.
 
-    ``False`` means the row was altered after it was written, or was written before Stage 8.3 changed
-    what the checksum covers — the two are indistinguishable from the row alone, which is why the caller
-    is told only that the value does not match. A row with no checksum at all (``checksum`` is nullable)
-    verifies as ``False`` rather than ``True``: an absence of evidence of tampering is not evidence of
-    integrity.
+    ``False`` means the row was altered after it was written, or was written before the covered set last
+    changed — Stage 8.3 widened it from one field to nine (F-21) and Stage 8.5 from nine to ten when
+    ``contradicts`` joined the table. Which of those happened is indistinguishable from the row alone,
+    which is why the caller is told only that the value does not match. A row written before either change
+    would therefore report tampering that did not occur; D-052's ruling 4 records that both intelligence
+    tables are empty in production because no writer has a caller, so no stored row is in that position.
+    A row with no checksum at all (``checksum`` is nullable) verifies as ``False`` rather than ``True``: an
+    absence of evidence of tampering is not evidence of integrity.
     """
     stored = row.get("checksum")
     if stored is None or str(stored) == "":
@@ -158,6 +195,48 @@ def _aware(moment: datetime, name: str) -> datetime:
     return moment
 
 
+def _resolve_contradiction(store: Any, contradicts: str | None, evidence_id: str) -> str | None:
+    """Check a claimed contradiction and return the id it points at, or ``None`` when none was claimed.
+
+    Two claims are refused because neither can be true. A row cannot contradict itself: a contradiction is
+    a disagreement between two observations, and a pointer at the row's own id records neither. And it
+    cannot contradict an id the store has never held — ``evidence_ref.contradicts`` carries a
+    ``REFERENCES`` clause that ``PRAGMA foreign_keys`` deliberately leaves unenforced, so SQLite would
+    store the dangling pointer without comment, and the dossier route would then render a contradiction
+    whose other side does not exist. That is a link to nothing inside the one view ``docs/10`` §3.1 asks to
+    carry contradictions "highlighted and linked", which is worse than no link: it reads as evidence of a
+    disagreement nobody has recorded.
+
+    The consequence is an ordering rule, stated rather than left to be inferred: the contradicted row must
+    exist first, so a disagreement between two new observations takes two calls, and the earlier row never
+    learns about the later one. Nothing back-links in the store — the route derives the reverse direction
+    by scanning, and says so.
+    """
+    if contradicts is None:
+        return None
+    target = str(contradicts).strip()
+    if not target:
+        raise ValueError(
+            "contradicts must name an evidence row or be None; an empty string is neither, and a "
+            "contradiction nobody can identify is not a link"
+        )
+    if target == evidence_id:
+        raise ValueError(
+            f"evidence {target!r} cannot contradict itself: a contradiction is a disagreement between two "
+            "observations, and a row pointing at its own id records neither. Record the second observation "
+            "and point one of the two at the other"
+        )
+    if store.get_evidence_ref(target) is None:
+        raise ValueError(
+            f"evidence {target!r} does not exist, so nothing can be recorded as contradicting it. "
+            "evidence_ref.contradicts REFERENCES evidence_ref since migration 0005_memory_beliefs, but "
+            "PRAGMA foreign_keys is deliberately off, so SQLite would store this dangling pointer without "
+            "comment and the dossier route would serve a link whose other side is absent — record the "
+            "other observation first"
+        )
+    return target
+
+
 @dataclass(frozen=True, slots=True)
 class EvidenceReceipt:
     """What one write produced. Returned so the caller can cite the evidence it just recorded."""
@@ -175,6 +254,9 @@ class EvidenceReceipt:
     data_status: str
     checksum: str
     dossier_id: str | None = None
+    #: The row this one is recorded as contradicting, or ``None``. A claim by the recorder, one-way, and
+    #: not a resolution — see the module docstring.
+    contradicts: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -189,6 +271,7 @@ class EvidenceReceipt:
             "data_status": self.data_status,
             "checksum": self.checksum,
             "dossier_id": self.dossier_id,
+            "contradicts": self.contradicts,
         }
 
 
@@ -227,6 +310,7 @@ def record_evidence(
     data_status: DataStatus | str = DataStatus.UNAVAILABLE,
     locator: str = "",
     dossier_id: str | None = None,
+    contradicts: str | None = None,
     observed_at_source: ObservedAtSource = ObservedAtSource.VENUE,
     evidence_id: str | None = None,
     actor: str = "EVIDENCE",
@@ -236,6 +320,10 @@ def record_evidence(
     ``audit`` and ``store`` are typed loosely to match :func:`write_with_audit`, which takes the same
     seam. ``data_status`` defaults to ``UNAVAILABLE`` — the fail-closed value, and the schema's own
     default: a writer that assumed ``LIVE`` would be asserting freshness it has not checked.
+
+    ``contradicts`` names another ``evidence_ref`` row this one is recorded as disagreeing with. It is
+    optional and ``None`` means no disagreement was claimed, which is not the same as claiming that none
+    exists — nothing in this system can establish that, and the column does not pretend to.
     """
     if not source:
         raise ValueError("evidence needs a source: an observation from nowhere cannot be audited")
@@ -256,6 +344,11 @@ def record_evidence(
             "timestamp exists and should be passed with observed_at_source=VENUE"
         )
 
+    # Resolved before the contradiction is checked, so a row generated in this same call can be compared
+    # against the id it points at: a self-contradiction is not a disagreement, it is a mistake.
+    resolved_id = str(evidence_id or "") or new_id(EVIDENCE_PREFIX)
+    resolved_contradicts = _resolve_contradiction(store, contradicts, resolved_id)
+
     # The provenance fields are written last so a caller's payload cannot overwrite them: they are what
     # makes the row interpretable, and a row that can be talked out of its own qualifications is a row
     # that will be.
@@ -268,8 +361,9 @@ def record_evidence(
     )
 
     event: dict[str, Any] = {
-        "evidence_id": evidence_id or new_id(EVIDENCE_PREFIX),
+        "evidence_id": resolved_id,
         "dossier_id": dossier_id,
+        "contradicts": resolved_contradicts,
         "source": source,
         "kind": kind,
         # iso_utc refuses a naive datetime, so an ambiguous timestamp cannot be recorded at all.
@@ -299,6 +393,7 @@ def record_evidence(
         data_status=status.value,
         checksum=str(event["checksum"]),
         dossier_id=dossier_id,
+        contradicts=resolved_contradicts,
     )
 
 
@@ -312,6 +407,7 @@ def record_snapshot(
     data_status: DataStatus | str = DataStatus.UNAVAILABLE,
     locator: str = "",
     dossier_id: str | None = None,
+    contradicts: str | None = None,
     observed_at_source: ObservedAtSource = ObservedAtSource.VENUE,
     actor: str = "EVIDENCE",
 ) -> EvidenceReceipt:
@@ -342,6 +438,7 @@ def record_snapshot(
         data_status=data_status,
         locator=locator,
         dossier_id=dossier_id,
+        contradicts=contradicts,
         observed_at_source=observed_at_source,
         actor=actor,
     )

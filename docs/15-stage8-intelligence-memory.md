@@ -5,15 +5,27 @@ no production code). Date: 2026-11-26.
 **Sub-deliverable 8.2 — L-A + L-B + L-C.** Status: `APPROVED` (**D-051**). Authorised by **D-050**. §9.
 **Sub-deliverable 8.3 — L-D + L-E.** Status: `APPROVED` (**D-052**). Authorised by **D-051** as L-D + L-E
 only. §10, with the ruling in §10.9 and **F-22** in §10.10.
-**8.4 — F-14's expensive half, and nothing else.** Status: `AUTHORISED, NOT STARTED` (**D-051**, re-confirmed
-by **D-052**). The batch after it is **stage 10's `memory_item` writer**, which carries F-18's three columns
-and `evidence_ref.contradicts`, also by **D-052**.
-Date: 2026-11-26.
+**8.4 — F-14's expensive half, and nothing else.** Status: `APPROVED` (**D-053**). Authorised by **D-051**,
+re-confirmed by **D-052**'s ruling 2. §11, with the ruling in §11.14 and **F-23** in §11.7. **F-14 and
+`O-012` are `CLOSED`.**
+**8.5 — stage 10's `memory_item` writer, F-18's three columns and `evidence_ref.contradicts`.** Status:
+`BUILT — AWAITING REVIEW`. Authorised by **D-052**'s ruling 3, re-ordered by **D-053**'s ruling 4 against the
+alternative (wiring `retrieved_at` first), which was declined. §12, with **F-24** in §12.8 and **F-25** in
+§12.9. Nothing calls the writer and no route serves `memory_item`.
+Date: 2026-11-27.
 
 > **This header was three rulings out of date and is corrected here.** It named only 8.1 and still read
 > `DELIVERED, AWAITING REVIEW` after D-050, D-051 and D-052 had each been recorded further down the same
 > file. A status header that lags the record it heads is the same defect class as a stale count: it is the
 > first thing a reader trusts and the least thing anybody re-measures.
+
+> **It went stale again, by one ruling, and is corrected a second time.** At the start of 8.5 this header
+> still read `8.4 … AUTHORISED, NOT STARTED` although §11.14 further down the same file records D-053
+> approving it on 2026-11-27, and it named no 8.5 at all. The blockquote above had already named the defect
+> class, which is the part worth recording: a correction that is not *gated* goes stale the same way the text
+> it corrected did, one batch later, for the same reason. Nothing asserts this header against the rulings
+> below it — unlike a count, which `test_schema_fidelity.py` and the derived-set tests do assert — so it is
+> re-read by hand at the start of every batch or it is wrong.
 
 > **8.1 changed no production code.** The owner's ruling was explicit: read the code and the approved
 > design, inventory what exists against what is schema-only, and produce findings, $0 levers and a
@@ -2274,3 +2286,616 @@ carrying *this* section does the same thing again. So the property is stated ins
 push to this PR produces another live reading of the same adapter code until an adapter changes**, which is
 §11.9's mechanism seen from the other end — and it is why pair 11 in §10.8's restatement is the last one
 this record will number.
+
+---
+
+## 12. Stage 8.5 delivered (D-053's ruling 4): `memory_item` gets a writer, F-18's three columns land, and a contradiction becomes recordable
+
+**Scope as ruled.** D-052's ruling 3 ordered *stage 10's `memory_item` writer* as the batch after 8.4, and
+D-053's ruling 4 re-ordered it against the alternative — wiring `evidence_ref.retrieved_at` first — and
+declined that alternative. §11.14's row 4 states what the batch carries: *"F-18's three columns plus
+`evidence_ref.contradicts`."* That is what was built, and nothing else: no wiring, no route that serves
+`memory_item`, no expiry column, no confidence band, no sufficiency meter, and no edit to any text an
+earlier ruling approved.
+
+Date: 2026-11-27. Status: `BUILT — AWAITING REVIEW`. Approval is requested as **D-054** in §12.13.
+
+### 12.0 What was ruled, and what was not
+
+| Ruled into this batch | Where it landed |
+|---|---|
+| the `memory_item` writer | `intelligence/memory.py`, 471 lines, audited as `memory.recorded` |
+| F-18's `valid_from`, `valid_until`, `change_conditions` | migration `0005_memory_beliefs`, three `ADD COLUMN`s on `memory_item` |
+| `evidence_ref.contradicts` | the same migration's fourth statement, a self-referencing foreign key |
+| the refusal that makes `docs/10` §3.1's sentence true | seventeen `raise ValueError` sites in the writer, not a `CHECK` in the schema |
+
+| Explicitly **not** ruled in, and not done | Why it is stated here rather than left absent |
+|---|---|
+| wiring `evidence_ref.retrieved_at` | offered at §11.13 question 4 and **declined** by ruling 4; §11.12's limitation 1 stands unchanged |
+| an `expires_at` column | F-18's second gap. Not one of "the three columns". `valid_until` is not a substitute — see §12.1 |
+| a confidence band (`confidence_low`/`confidence_high`) | two more columns, not this batch's ruling either. Recorded as **F-24** (§12.8) |
+| the sufficiency meter's definition | `docs/10` §3.2 finalises V1–V3 at stage 11; the route still serves basis and target as strings |
+| F-22 / `O-014`, the periodic checksum audit | recorded by D-052's ruling 4 precisely so a later batch would not close it by accident |
+| any rewrite of a ruled text | pointers only. §10.8's eleven-pair range, §9's and §10's disclosures and `docs/07`'s approved rows are all untouched |
+
+**The batch is not wired, by ruling.** `test_nothing_in_src_calls_it_yet` still passes: an `rglob` over
+`src/nexus` finds `record_memory_item` named in exactly three files — its own module, the package
+`__init__` that exports it, and a docstring in `store/operational.py` explaining why a projection may not
+refuse the row its writer already refused. No route serves `memory_item`: `app.py` still declares **13**
+routes, the same count §10.2 published, and `/v1/intelligence/memory` does not exist. A belief is now
+recordable and still not readable over HTTP, and the route's own gap text says so (§12.6).
+
+### 12.1 The four columns: what 0005 adds, and the three things it deliberately does not
+
+Migration `0005_memory_beliefs` is four statements, `requires="memory_item"`, checksum
+`4520e5b5e259eb4c868b70d1bfdc5ebdbac58f32d7083ea00cc4e980ac789c28`. It is the fifth entry in
+`MIGRATIONS`, and the third to name a `requires` table — so it is the third that can be *deferred and
+reported* rather than silently bypassed, which is F-20's fix doing its job on a batch that did not have to
+think about it.
+
+```sql
+ALTER TABLE memory_item   ADD COLUMN valid_from TEXT;
+ALTER TABLE memory_item   ADD COLUMN valid_until TEXT;
+ALTER TABLE memory_item   ADD COLUMN change_conditions TEXT NOT NULL DEFAULT '';
+ALTER TABLE evidence_ref  ADD COLUMN contradicts TEXT REFERENCES evidence_ref (evidence_id);
+```
+
+All four are `ADD COLUMN`, which is what §5.3's executed survey made cheap: SQLite permits a nullable
+column, a `NOT NULL` column with a constant default, a self-referencing foreign key and a `CHECK` on a new
+column, and refuses only `ALTER COLUMN ... TYPE` and `ADD CONSTRAINT`. **No row is copied and no table is
+rebuilt**, because none of the four changes what an existing column means — unlike `0004`, which had to
+create-copy-drop-rename `dossier` and `memory_item` to give one column a `REFERENCES` clause and another a
+`CHECK`. Both tables are empty in production (§9.7 limitation 7, restated by D-052's ruling 4), so a
+rebuild would have cost nothing either; the reason it was not needed is structural, not fortunate.
+
+Measured on a live post-migration database, not read off the DDL:
+
+| Table | Columns before | Columns after | Foreign keys after |
+|---|---|---|---|
+| `memory_item` | 11 | **14** | none — `cited_by` and `superseded_by` are `TEXT` lists, not references |
+| `evidence_ref` | 11 | **12** | **two**: `dossier_id → dossier (dossier_id)` and `contradicts → evidence_ref (evidence_id)` |
+| `dossier` | 12 | 12 | `instrument_id → instrument (instrument_id)` (from `0004`) |
+
+`PRAGMA foreign_key_list(evidence_ref)` returns both keys as a map
+`{'contradicts': ('evidence_ref', 'evidence_id'), 'dossier_id': ('dossier', 'dossier_id')}`. A test that
+asserted only the new entry failed on the old one, and was widened to assert the whole map — the same
+derived-set trap §10.4 recorded, in a new place.
+
+`ix_memory_kind` and `ix_memory_created` survive the `ADD COLUMN`s, and so does `0004`'s numeric `CHECK`
+on `confidence`: adding a column to a table does not rebuild it in SQLite, so a constraint that lived
+through `0004`'s rebuild lives through `0005`'s append. That was executed against a live post-migration
+database rather than assumed, because "an `ADD COLUMN` cannot drop a `CHECK`" is exactly the kind of
+sentence that should not be published unverified — `'abc'` and `''` are still refused by the database
+itself, and `'0.5abc'` and `'1e400'` are still **accepted** by it, which is the leak D-051 disclosed when it
+pinned the `CHECK` as a floor and not as validation. §12.3's writer refuses both.
+
+**Column order now differs between the two DDLs, and that is safe for a stated reason.** The PostgreSQL
+target declares all four inline, inside the `CREATE TABLE`s in `migrations/0002_memory.sql`, because that
+file states an end state for a fresh database. SQLite reaches the same four by appending them, because
+`ADD COLUMN` has no position clause — visible in the stored DDL itself, which ends
+`… audit_ref TEXT\n, valid_from TEXT, valid_until TEXT, change_conditions TEXT NOT NULL DEFAULT ''`. So
+`memory_item`'s columns are ordered `…, payload, audit_ref, valid_from, valid_until, change_conditions` in
+SQLite and interleaved differently in the target.
+
+Nothing depends on position, and that was checked rather than asserted. Every `INSERT` in `src/` names its
+columns — a grep for `INSERT INTO <table> VALUES` with no column list returns nothing anywhere in
+`src/nexus`. The reads do use `SELECT *` (`dossiers`, `evidence_refs`, `memory_items`, `get_memory_item` and
+more), but every one converts with `dict(row)` and is then indexed **by name**, so a column that moves moves
+its key and nothing else. The only positional row indexing in `src/` is `archive/parquet_store.py:517+`,
+over a duckdb result whose `SELECT` lists its fifteen columns explicitly — a different store, an explicit
+order, and unaffected by anything SQLite appends. `test_schema_fidelity.py` compares names, types,
+nullability and foreign keys and **not** order, which is what makes the divergence assertable rather than
+merely tolerated.
+
+**Why the target grows inline instead of gaining a `0005_memory_beliefs.sql`.** The fidelity gate parses
+`CREATE TABLE IF NOT EXISTS` statements only — a limitation §9.2 recorded when it was written. An
+ALTER-only target migration would therefore be invisible to it, and the four columns would exist in
+SQLite and be unasserted in the mirror, which is the exact defect F-15 named. Declaring them inline keeps
+the gate load-bearing. The cost is the order divergence above, and the alternative cost would have been a
+silent hole in the one test that keeps the two schemas honest.
+
+**Three things 0005 does not add, each written into the migration's own comment rather than left absent.**
+
+1. **`expires_at`.** F-18's second gap is that no expiry column exists anywhere in memory, and §5.3 lists
+   it among the cheap additions. It is not one of "the three columns" ruling 4 named. `valid_until` is not
+   a substitute and the difference is the whole point: `valid_until` says until when a claim holds **in the
+   world**, while an expiry says when **this system** should stop serving the row. `docs/10` §3.1 asks for
+   "expiring TTLs", which is the second. A belief valid until 2027 whose evidence went stale yesterday is
+   precisely the row the two columns disagree about, and only one of them exists. **The gap stays open.**
+2. **`confidence_low` / `confidence_high`.** Recorded as **F-24** in §12.8.
+3. **An index on `valid_until`.** Nothing queries by validity yet, so `memory_items()` scans. An index with
+   no reader behind it is machinery nobody reads — the reasoning D-052's ruling 4 used to decline a
+   periodic checksum audit, applied to a cheaper object. The scan is written down in the store's docstring
+   instead of being left for whoever hits it to discover.
+
+### 12.2 The writer, and the four decisions it makes on the record's behalf
+
+`intelligence/memory.py` follows the shape `dossier.py` and `evidence.py` established: a grounded module
+docstring, `__all__` (12 names), constants before code, a frozen `slots=True` receipt with `to_dict()`, and
+one public `*, audit, store, …` function whose every default sits on the side that claims least. The
+signature is fourteen keyword-only parameters:
+
+```python
+record_memory_item(*, audit, store, body, kind="OBSERVATION", scope="GLOBAL", subject="",
+                   confidence=None, valid_from=None, valid_until=None, change_conditions="",
+                   evidence_ids=(), payload=None, memory_id=None, actor="MEMORY") -> MemoryReceipt
+```
+
+`MemoryReceipt` has sixteen fields, three of which the caller cannot influence at all:
+`superseded_by` is always `None`, `cited_by` is always `()`, and `validity_open_ended` is always derived.
+`created_at` rides **inside** the audited event, so a replay after a gap reproduces the row byte-identically
+rather than restamping it with the replay's clock — the property §10.1 measured at 1.05 s and this batch
+re-measured through `reproject_missing`. `write_with_audit(...)` is the last statement (L-2: audit entry
+first, projection second), and the pinned payload keys are written **last** so a caller's `payload` cannot
+overwrite them.
+
+No `RejectReason` is spent. All seventeen refusals raise `ValueError` citing the document that requires
+the thing refused, because these are programmer errors at an internal boundary and a reason code is
+vocabulary the audit log and the UI both consume. A test asserts the module neither imports
+`nexus.core.errors` nor names a `RejectReason.` member — an earlier form of that assertion checked for the
+bare string `RejectReason` and failed on the writer's own docstring, which legitimately names the
+vocabulary it does **not** spend.
+
+**Decision 1 — a confidence is not a claim by itself.** `docs/10` §3.1: *"confidence as a band with
+validity interval and change conditions; a point estimate without them is a defect."* The sentence is about
+three columns at once, so no single `CHECK` can express it, and the schema's three new columns are
+therefore nullable or defaulted while the **writer** refuses the combination:
+
+| Refusal | Message (abridged) | Document cited |
+|---|---|---|
+| confidence without `change_conditions` | *"is a point estimate, and `docs/10` §3.1 is explicit that a point estimate without them is a defect"* | `docs/10` §3.1 |
+| confidence without `valid_from` | *"needs `valid_from`: `docs/10` §3.1 asks for confidence as a band with validity interval"* | `docs/10` §3.1 |
+| confidence without ≥1 `evidence_ids` | *"needs at least one `evidence_ids` entry: `docs/03` §7 asks the reviewer to see corroborating/contradictory sources"* | `docs/03` §7 |
+
+**Three refusals, three messages, never one.** A test calls the writer with a confidence and all three
+omitted and asserts the message names exactly one of them, then repeats for each — because folding three
+conditions into one string tells a caller that something is wrong without telling them what to change, and
+§12's own subject matter is records that cannot be acted on. A confidence of `None` requires none of the
+three: an `OBSERVATION` has no validity interval and needs none, which is why the columns are nullable
+rather than `NOT NULL`.
+
+**Decision 2 — the interval is about the world, not about this clock.** `valid_from` and `valid_until`
+never default to `created_at`, in either direction. `valid_until <= valid_from` is refused, including
+equality: a zero-length interval asserts a belief that held for no time at all, which is a different
+statement from an open-ended one and is not this system's to make on a caller's behalf. Naive datetimes are
+refused **before** any comparison, so the refusal is about the value and not about an ordering computed
+across two clocks. An interval that has already ended is **accepted and dated**, not refused: a belief
+whose validity lapsed is a fact about the past, and refusing to record it would be the system editing
+history. An interval that starts in the future is accepted for the same reason. When no end is stated,
+`payload["validity_open_ended"] = True` is derived and pinned — *"no end was stated"* and *"no end exists"*
+are different claims, and only the first is knowable here.
+
+**Decision 3 — provenance is checked against the store, not against the caller's word.** Every
+`evidence_ids` entry must name a row `evidence_ref` actually holds; an id the store has never held is
+refused, and so is a list mixing one real id with one invented one. This is the same posture
+`open_dossier` takes toward `instrument_id` (§10.1) and the reason is the same: `PRAGMA foreign_keys` is
+deliberately **off** for chain-order recovery (`docs/13` §2.5), so SQLite accepts a dangling parent without
+comment and the writer is the only place that can refuse one. `memory_item` itself declares **no** foreign
+keys, so without this check a belief could rest on evidence that does not exist and nothing anywhere would
+say so.
+
+**Decision 4 — recording is not editing.** A caller-supplied `memory_id` that already exists is refused:
+*"the store writes with `INSERT OR REPLACE` because it is a projection, so a second record would restate
+the first row's body and confidence. The audit chain would keep both events, but the row a reviewer reads
+would no longer be the row that was written."* Memory is superseded, never edited in place (§5.1);
+`superseded_by` stays `None` because setting it is a second verb this batch was not ruled into.
+
+`evidence_ref` behaves **differently** here and the difference is measured rather than assumed: re-recording
+under an existing `evidence_id` **replaces** the projection row (one row, two chain entries) and the new row
+still verifies against its own checksum. That is a restatement of one observation — same id, same subject,
+corrected values — and `docs/15` §5.1's supersede-don't-edit rule is about *beliefs*, whose whole content is
+the claim. The asymmetry is pinned by tests on both sides so it cannot drift into an accident.
+
+`kind` and `scope` are free text with schema-default fallbacks and `subject` is **not** validated against
+the instrument master. That is a limitation, not a design: §12.12 lists it.
+
+### 12.3 Confidence as text: what `NUMERIC(6,5)` would have done, and what is refused instead
+
+D-050 accepted `NUMERIC(6,5)` for the target and D-051 disclosed that the applied SQLite column stays
+`TEXT` plus a `CHECK`, because SQLite's NUMERIC affinity stores `'0.5'` as a `real` and that would make it
+the only float-backed numeric column in the schema (§9.2). The consequence this batch had to handle is that
+**the applied column accepts things the target would reject or silently round**, and a writer that stores
+only what SQLite accepts would write rows a PostgreSQL deploy refuses.
+
+So `confidence_text` enforces the target's precision at the boundary. `NUMERIC(6,5)` means six significant
+digits of which five are after the point, i.e. **exactly one digit before it** — a fact the first
+implementation of this check got wrong by comparing significant digits against `6` instead of digits before
+the point against `PRECISION - SCALE`. The corrected rule, from the **normalised** `Decimal`:
+
+* decimal places `= max(0, -exponent)` must not exceed `CONFIDENCE_SCALE` (5);
+* digits before the point `= len(digits) + exponent` must not exceed `CONFIDENCE_PRECISION - CONFIDENCE_SCALE` (1).
+
+`Decimal.normalize().as_tuple()` types the exponent as `Literal['n','N','F'] | int`, so the arithmetic needs
+an explicit `isinstance(exponent, int)` guard — unreachable from `confidence_text`, which refuses non-finite
+values first, but mypy is right to want it.
+
+Twenty-seven inputs were probed, not reasoned about. **Eleven accepted:**
+
+| Input | Stored | Why |
+|---|---|---|
+| `"0"` | `0` | the `CHECK`'s own special case: `CAST('0' AS REAL) = 0.0` is indistinguishable from `'0abc'`, so `0004` whitelists the zero spellings explicitly |
+| `"0.72"` | `0.72` | inside the target |
+| `"1"` | `1` | one digit before the point, the target's ceiling |
+| `"-0.5"` | `-0.5` | **negative, and accepted** — see below |
+| `"9.99999"` | `9.99999` | one digit before the point and five after: exactly the target's shape |
+| `"0.00001"` | `0.00001` | five decimal places, the target's floor |
+| `"9.999990"` | `9.999990` | stored **verbatim**; normalising it would publish `9.99999` and change what the caller wrote |
+| `"0.5"` | `0.5` | |
+| `Decimal("0.7")` | `0.7` | a `Decimal` is the type the whole codebase uses for money and prices |
+| `Decimal("1E-5")` | `0.00001` | scientific notation from a `Decimal`, rendered in plain form |
+| `1` (`int`) | `1` | an `int` is exact, so it is accepted; a `bool` is an `int` in Python and is **not** |
+
+**Sixteen refused**, each with its own message:
+
+| Refused | Reason |
+|---|---|
+| `"10"`, `"123"`, `"1E+2"`, `"-10"`, `"99.99999"` | two or more digits before the point: the target would overflow `NUMERIC(6,5)` |
+| `"0.123456"`, `"0.000001"`, `"1.0000009"` | more than five decimal places: the target would silently round |
+| `0.5` (`float`) | a float has already lost the caller's precision; converting it would manufacture digits nobody stated |
+| `True` | a `bool` is an `int` in Python, so `confidence=True` would store `1` — a certainty nobody asserted |
+| `""` | *"must be a number or None; an empty string is neither"* — the absence of a claim and an empty claim are different |
+| `"abc"`, `"0.7.2"` | not a number |
+| `"NaN"`, `"Infinity"`, `"-Infinity"` | `Decimal` accepts all three and the applied `CHECK` passes them, so they are refused here; the target would reject them too |
+
+The magnitude cases and the scale cases are **different axes and were parametrised separately** after a
+first draft used `9.9999999` as a magnitude case — that value has one digit before the point and fails on
+*scale*, so the test would have passed while asserting the wrong thing. The magnitude case is `99.99999`.
+
+**The writer's check is not redundant with the applied `CHECK`, and that is measured rather than argued.**
+D-051 disclosed that the `CHECK` `0004` added is *"a floor and not validation"* because it leaks `'0.5abc'`.
+Against a live post-0005 database: `'abc'` and `''` are refused by SQLite, while **`'0.5abc'` and `'1e400'`
+are accepted and stored as `text`** — the second being a value PostgreSQL would reject outright.
+`confidence_text` refuses both, the first as *"is not a number"* and the second as *"needs 401 digits before
+the decimal point"*. So the boundary check catches exactly what the database's own constraint lets through,
+which is the only justification for having two.
+
+**One thing it does not do: it stores the caller's spelling.** `'0.720000'`, `'+0.5'`, `'.5'`, `'5.'`,
+`' 0.5 '` and `'-0'` are all accepted and stored verbatim, so `'0.72'` and `'0.720000'` are two different
+stored strings for one number — and since `confidence` is not in any checksum while `evidence_ref`'s columns
+are, nothing compares them. Verbatim storage is deliberate: normalising would publish `9.99999` for a caller
+who wrote `9.999990` and change what they said. It is listed as limitation 12 because two rows can now
+disagree about a number while agreeing about its value.
+
+**Negative confidence is accepted deliberately, and is a question rather than an oversight.** Nothing in
+this repository defines the range of a belief's confidence. `docs/10` §3.1 asks for a band, `docs/03` §7
+asks for confidence beside corroborating and contradictory sources, and neither states a floor. The target's
+`NUMERIC(6,5)` bounds *magnitude* and not *sign*, so `-0.5` is representable in both schemas, and D-051's
+limitation 1 already records that the applied `CHECK` is a floor on numeric-ness and not validation.
+Inventing a `[0, 1]` bound here would put a number in front of a judgement no ruling has made — the same
+reasoning §10.1 used to keep `sufficiency` a string. So `-0.5` stores, a test pins that it stores, and
+§12.13 question 2 asks whether it should.
+
+### 12.4 What the writer stores, measured
+
+One record with the least claiming defaults, on a live store:
+
+| Column | Value | Note |
+|---|---|---|
+| `memory_id` | `MEM-…` | `new_id("MEM")`. `core/ids.py` does not validate prefixes and its docstring lists neither `MEM` nor `EV` — both were added by writers without touching it, which is stated here because a docstring that lags the prefixes in use is the F-12 defect class |
+| `kind` | `OBSERVATION` | the default; free text |
+| `scope` | `GLOBAL` | the default; free text |
+| `subject` | `""` | **not** validated against the instrument master |
+| `body` | the caller's text | required, and the one column the schema makes `NOT NULL` with no default |
+| `created_at` | inside the event | a replay reproduces it byte-identically |
+| `superseded_by` | `NULL` | always |
+| `cited_by` | `[]` | always, and pinned last so a caller cannot forge it |
+| `confidence` | the exact string, or `NULL` | never a float |
+| `valid_from` / `valid_until` | `NULL` unless stated | never defaulted to `created_at` |
+| `change_conditions` | `''` unless stated | `NOT NULL DEFAULT ''` |
+| `payload` | caller payload + `evidence_ids` + `validity_open_ended` + `cited_by` | the three pinned keys always win |
+| `audit_ref` | the chain entry's record id | written last, by `write_with_audit` |
+
+The audit event is `memory.recorded` and `PROJECTABLE` grew from **14** keys to **15** to project it, so a
+replay from the chain alone reproduces the row — including its clock, which is what
+`test_a_contradiction_survives_a_replay_from_the_chain_alone` and
+`test_a_replay_reproduces_the_row_including_its_clock` assert after deleting the projection and calling
+`reproject_missing`.
+
+### 12.5 `contradicts`: one direction stored, the other derived, and the derivation's scope
+
+`docs/10` §3.1 asks the dossier view for *"contradictions highlighted and linked"* and `docs/03` §8 asks the
+evidence graph for the same. Before this batch nothing recorded that two sources disagree, so nothing could
+be linked and nothing could be highlighted. `evidence_ref.contradicts` is that record.
+
+It points **one way** and there is no back-link column, which is a deliberate shape and not an omission:
+a mutual disagreement is two calls, each recording one row's own claim, and neither row is edited by the
+other. A second column would double every write and create two places for one fact to disagree with itself.
+
+`record_evidence` refuses two things the database would accept, because `PRAGMA foreign_keys` is off:
+
+* **a dangling `contradicts`** — *"evidence 'EV-…' does not exist, so nothing can be recorded as
+  contradicting it"*;
+* **a self-contradiction** — *"a contradiction is a disagreement between two observations, and a row
+  pointing at itself records neither"*.
+
+`None` means *no disagreement was claimed*, which is not the same as claiming that none exists — nothing in
+this system can establish that, and the column does not pretend to.
+
+**The checksum widened from nine covered fields to ten.** `contradicts` joined `CHECKSUMMED_FIELDS`, because
+a stored column outside that tuple is a column that can change undetected — which is F-21, and F-21's lesson
+was that the tuple and the table must move together. `evidence_ref` now has **12** stored columns and the
+tuple covers **10** of them; the two outside it are `checksum` (excluded by definition) and `audit_ref`
+(excluded because the audit entry is written first and its ref does not exist yet when the hash is
+computed). A test derives the covered set from the live table via `PRAGMA table_info` and asserts the
+complement is exactly those two, so a thirteenth column cannot arrive without a decision.
+
+**Consequence, published rather than buried:** `verify_evidence_checksum` now reports `False` for any row
+written before this change, because the hash input changed. There is nothing to backfill — both intelligence
+tables are empty in production (D-052's ruling 4) — and this is the same disclosure §10.3 made for F-21.
+A row with no checksum at all also verifies `False`, which is the fail-closed side.
+
+### 12.6 The route: what changed, and the honest scope of what it derives
+
+`GET /v1/intelligence/dossiers` and `…/{dossier_id}` gained three things and **no** new route:
+
+* `evidence[].contradicts` — the stored direction;
+* `evidence[].contradicted_by` — the reverse direction, **derived by a scan of the served dossier's own
+  rows**, sorted, and empty when nothing in this case points at the row;
+* `contradiction_count` — how many distinct unordered pairs the case holds. Two rows pointing at one common
+  row are **one pair each**, not one pair between them, and a mutual disagreement counted from both
+  directions is one pair and not two.
+
+The derivation's scope is stated in the response rather than left to be discovered, because serving a
+partial fact silently is the F-13 defect class:
+
+> the reverse direction is derived **inside this dossier only**. A contradiction recorded between rows in
+> two different cases appears in **neither** scan.
+
+That is asserted by `test_a_contradiction_across_two_cases_appears_in_neither_scan`, which opens two
+dossiers, records the disagreement across them, and checks both views report nothing — a test that would
+pass on a naive implementation and fail on an honest one is the wrong way round, so this one is written to
+fail if the scan is ever widened without the text changing.
+
+Nothing **detects** a disagreement and nothing decides a **winner**. `contradicts` records a claim made by
+whoever wrote the row, so two sources that contradict each other and were never linked stay unlinked; and
+`docs/12` §1.3's law (A-02+A-08) is that no gate can be satisfied by a confidence value, so the
+higher-confidence row does not win here and no code computes one. `contradiction_count` is a count, not a
+verdict, and the gap text says so in those words.
+
+**`view_gaps` is still nine elements** — the count §10.2 published and `docs/07` repeats. Two of the nine
+changed *kind* rather than disappearing, and both were re-aimed rather than deleted:
+
+| Gap | What it said at 8.3 | What it says now |
+|---|---|---|
+| "contradictions highlighted and linked" | no column to come from | **partly served**: the linking half exists and is served in both directions; the detection half and the verdict half have no column, no batch and no ruling |
+| "beliefs with confidence band, validity interval and change conditions" | `memory_item` schema-only, no writer, F-18's three columns deferred | **two of the three now exist and none of the three is served here**: there is no `memory_item` route, so a belief is recordable and not readable over HTTP; the third — a band — is **F-24** |
+
+Two tests pin gap prose by equality plus a list of literals (`"has now landed"`, `"Nothing is scheduled"`,
+`"receipt time"`, `"re-evaluates"`, `"stays LIVE"`, and now `"contradicts"`, `"A-02+A-08"`,
+`"memory.recorded"`, `"no memory_item route"`, `"F-24"`). They were **re-aimed, not deleted**: a test that
+asserts a future batch has not happened yet must be pointed at the next thing that has not happened, or the
+route's honesty becomes unasserted the moment one gap closes.
+
+### 12.7 What this batch does not do
+
+* **It wires nothing.** No caller in `src/` writes a memory item, and no route serves one. D-052's ruling 3
+  and D-053's ruling 4 both said so, and the test that says so still passes.
+* **It does not close F-18.** Two of its four gaps close: the validity interval and change conditions, and
+  the `evidence_ref` contradiction link. Two stay open: **the expiry column** (`expires_at`) and **the
+  sufficiency meter**, which is stage 10's to define and stage 11's to finalise. F-18 as a finding is
+  therefore **partly closed**, and §12.13 question 1 asks whether that partial closure is recorded as a
+  narrowing of F-18 or as two new rows.
+* **It does not touch F-22 / `O-014`.** The checksum is still verified only when a reader asks for the row,
+  and this batch made the checksum cover *more* of the row — which widens what an on-read check can catch
+  and changes nothing about when it runs.
+* **It does not close §11.12's limitation 1.** `evidence_ref.retrieved_at` still has no caller in `src/`.
+  Wiring it was the alternative offered at §11.13 question 4 and declined.
+* **It adds no `RejectReason`, no enum member and no alert.** `core/errors.py` is unchanged; nothing in the
+  vocabulary contains `MEMORY`, `BELIEF` or `CONFIDENCE`.
+* **It does not change the fidelity gate's published arithmetic.** The comment at `test_schema_fidelity.py`
+  claiming **26 numeric columns across 8 tables** are `TEXT` in the applied schema stays true: 0005 adds no
+  numeric column, and `valid_from`/`valid_until` are timestamps, which the house already stores as `TEXT`.
+* **No live endpoint was called.** No adapter changed, so no `venue-verification` run is worth reading —
+  though §11.9's mechanism means this commit's push will still trigger one, and by §10.8's rule its numbers
+  will not be quoted.
+
+### 12.8 F-24 — a belief still carries exactly one confidence number, and the design asks for a band (NEW)
+
+`docs/10` §3.1, approved at **D-035**, asks the Intelligence Centre for *"beliefs & uncertainty (confidence
+as a band with validity interval and change conditions; a point estimate without them is a defect)"*.
+`docs/03` §7 asks for *"beliefs with confidence, validity interval, change conditions"*.
+
+This batch delivered the **time axis** and left the **confidence axis** alone. `memory_item` now has
+`valid_from`, `valid_until` and `change_conditions` — and `confidence` is still one `TEXT` column holding
+one number. A band is an interval on the confidence axis: two numbers, or one number plus a width. So the
+sentence *"a point estimate without them is a defect"* is now half satisfied in a way that is easy to
+misread as fully satisfied: the point estimate has its interval and its conditions, and it is still a point
+estimate.
+
+**Why it is recorded and not fixed.** Two more columns are not this batch's ruling — §11.14 row 4 names
+"three columns plus `evidence_ref.contradicts`" — and the shape of a band is a design decision with no
+ruling behind it: `confidence_low`/`confidence_high`, a single `confidence` plus `confidence_width`, or a
+distribution. Each implies different refusals in the writer, and the writer's whole posture is that a
+default nobody argued for is a claim nobody made. `NUMERIC(6,5)`'s one-digit-before-the-point ceiling also
+constrains the answer: a band whose bounds are both `NUMERIC(6,5)` cannot express "0.7 ± 0.4" without
+deciding what the bounds mean.
+
+**What is true today, measured:** a belief can be recorded as `confidence="1"` — the ceiling of the target's
+magnitude — with an interval and conditions, and nothing anywhere in the system can express that the
+recorder was uncertain about the number itself. `docs/10` §3.1 calls that a defect. It is **F-24**, and the
+next finding id after it is **F-25**.
+
+### 12.9 F-25 — a dangling `dossier_id` is refused by nothing (NEW)
+
+Found by executing the contrast, not by reading: this batch added a refusal for a dangling `contradicts`, so
+the question "which parents does this codebase actually check?" became answerable by running it.
+
+| Parent reference | Refused in the writer? | Measured |
+|---|---|---|
+| `dossier.instrument_id → instrument` | **yes**, since 8.3 | `open_dossier(instrument_id="NOPE:NOPE")` → `ValueError: instrument 'NOPE:NOPE' is not in the system of record, which holds 0` |
+| `evidence_ref.contradicts → evidence_ref` | **yes**, since this batch | `record_evidence(contradicts="EV-NOPE")` → `ValueError: evidence 'EV-NOPE' does not exist…` |
+| `memory_item`'s `evidence_ids` (payload, no FK) | **yes**, since this batch | a list mixing one real id with one invented one is refused |
+| **`evidence_ref.dossier_id → dossier`** | **no** | `record_evidence(dossier_id="DOS-NOPE")` **accepted**; the row lands, `get_dossier("DOS-NOPE")` returns `None`, and the store holds **0** dossiers |
+
+So an evidence row can be written against a case that does not exist. The consequences are concrete rather
+than theoretical: `GET /v1/intelligence/dossiers/{id}` returns **404** for that id, so the row is unreachable
+through the route that serves evidence; `evidence_refs(dossier_id=…)` finds it only if a caller already
+knows the invented id; and `ix_evidence_dossier` indexes a value that matches nothing. The row is not
+corrupt — it verifies against its own checksum — it is **orphaned**, and nothing reports it.
+
+`PRAGMA foreign_keys` is off by design (`docs/13` §2.5: recovery re-projects in chain order, which is not
+always parent-first, and a hard FK failure mid-recovery would be worse than the inconsistency it prevents),
+so the writer is the only place this can be refused — exactly the reasoning that produced the other three
+refusals. The reason it is missing is ordinary: `dossier_id` is **optional** on `record_evidence` (`None`
+means the evidence belongs to no case yet, which is a legitimate state), so the check is
+`if dossier_id is not None and store.get_dossier(dossier_id) is None: refuse` — one more branch than the
+others, and 8.2 wrote the writer before any dossier existed to point at.
+
+Recorded, not fixed: **F-25**. Fixing it inside this batch would have changed a writer D-052 approved, in a
+batch ruled to be about `memory_item`, and §12.13 question 3 asks whether it should be its own batch.
+
+### 12.10 The gate
+
+| Check | Result | At 8.4 (`c0bfaea`) |
+|---|---|---|
+| `.venv/bin/python -m pytest` (bare, full suite) | **1394 passed, 2 skipped**, 0 failed | 1294 passed, 2 skipped |
+| `ruff check src tests` | All checks passed | clean |
+| `ruff format --check src tests` | **93 files** already formatted | 91 files |
+| `mypy src` | Success: no issues found in **62** source files | 61 files |
+
+**+100 tests**, both skips pre-existing (`test_live_endpoints.py:84`, `test_archive_bars.py:117`). Run bare,
+not with `-q`: `pyproject.toml` already sets `addopts="-q --strict-markers"`, and a second `-q` suppresses
+the summary line the count comes from.
+
+Per-file, each measured separately:
+
+| File | Tests | Was | New test functions |
+|---|---|---|---|
+| `test_memory_writer.py` (**new**, 854 lines) | **77** | — | 55 |
+| `test_evidence_writer.py` | **54** | 44 | +10 |
+| `test_intelligence_routes.py` | **44** | 39 | +5 |
+| `test_schema_fidelity.py` | **41** | 35 | +6 |
+| `test_dossier_writer.py` | 87 | 87 | 0 (one test re-aimed, not added) |
+| `test_repo_hygiene.py` | 88 | 88 | 0 |
+
+**76 net new test functions** producing 100 new executed cases, the difference being parametrisation — the
+confidence accept/refuse table alone is 27 inputs across three axes.
+
+Source of the counts, so they can be re-derived rather than trusted: `git archive HEAD backend/src
+backend/tests` into a scratch directory gives **61 files / 15,312 lines** of `src` and **30 files /
+17,725 lines** of `tests` at `c0bfaea`; the working tree gives **62 / 16,181** and **31 / 19,121**. One new
+source file (`intelligence/memory.py`, 471 lines) and one new test file. Both numbers were produced by a
+script summing `len(path.read_text().splitlines())`, not by `wc -l` on a partial listing and not from
+memory — §10.4 exists because sixteen published numbers in 8.4 were stale.
+
+`test_dossier_writer.py`'s change is worth stating because it is a **replacement**: the test that asserted
+opening a dossier writes no `memory_item` row asserted it against the *schema*, and 0005 changed the schema.
+It is now `test_opening_a_dossier_still_writes_no_memory_item`, which asserts against the writer — the fact
+under test is that one verb does not perform another, and pinning that to a column list would make it fail
+for the wrong reason every time a column arrives.
+
+### 12.11 Proof the gate is load-bearing: twenty tampered sites, twenty caught
+
+Every gate in this batch was falsified by editing the source and re-running, with all six source files
+backed up and restored (`/tmp/t85/*.bak`; the full suite was re-run green afterwards, and `git diff` confirms
+the tree holds only this batch's work). Twenty sites, and **not one produced a silent pass**:
+
+| Tampered | Failures | Caught by (first names) |
+|---|---|---|
+| memory: drop the `change_conditions` requirement | **3** of 318 | `test_a_confidence_with_no_change_conditions_is_refused`, `test_whitespace_only_conditions_are_the_same_as_none`, `test_the_three_refusals_are_three_messages_not_one` |
+| memory: drop the `valid_from` requirement | **2** | `test_a_confidence_with_no_valid_from_is_refused`, `…three_messages_not_one` |
+| memory: drop the provenance requirement | **2** | `test_a_confidence_with_no_provenance_is_refused`, `…three_messages_not_one` |
+| memory: scale check disabled | **3** | `test_a_scale_the_target_would_round_is_refused[0.123456 / 0.000001 / 1.0000009]` |
+| memory: magnitude check disabled | **5** | `test_a_magnitude_the_target_would_overflow_is_refused[10 / 123 / 1E+2 / -10]` |
+| memory: a float accepted | **1** | `test_a_float_is_refused_because_a_decimal_never_becomes_one` |
+| memory: a dangling evidence id accepted | **2** | `test_an_evidence_id_the_store_has_never_held_is_refused`, `test_one_real_id_beside_one_fake_one_is_refused_too` |
+| memory: a repeated id becomes an edit | **1** | `test_a_second_record_under_the_same_id_is_refused` |
+| memory: an inverted interval accepted | **2** | `test_an_interval_that_ends_before_it_starts_is_refused`, `test_an_interval_of_zero_length_is_refused_too` |
+| memory: `open_ended` forced `False` | **1** | `test_an_open_ended_interval_says_so_instead_of_leaving_a_hole` |
+| memory: `cited_by` copied from the caller | **1** | `test_cited_by_is_always_empty_because_an_item_cannot_cite_itself` |
+| evidence: a dangling `contradicts` accepted | **1** | `test_a_row_that_does_not_exist_cannot_be_contradicted` |
+| evidence: a self-contradiction accepted | **1** | `test_a_row_cannot_contradict_itself` |
+| evidence: `contradicts` dropped from the checksum | **3** | `test_the_new_column_joined_the_covered_set`, `test_the_covered_set_is_derived_from_the_live_table`, `test_the_route_does_not_mutate_the_row_it_verifies` |
+| route: the reverse direction not derived | **2** | `test_both_directions_of_one_recorded_disagreement_are_served`, `test_two_rows_pointing_at_one_are_one_pair_each` |
+| route: the pair count forced to 0 | **3** | the two above plus `test_a_contradiction_across_two_cases_appears_in_neither_scan` |
+| schema: the `change_conditions` `ALTER` removed | **45** | `OperationalError` and `PersistenceError` across the memory and dossier writer tests |
+| schema: the `contradicts` `ALTER` removed | **96** | the same, plus every evidence and route test |
+| store: `contradicts` bound as `None` | **7** | `test_a_recorded_disagreement_is_stored_and_reads_back`, `test_a_mutual_disagreement_takes_two_calls_and_neither_row_is_edited`, `test_a_contradiction_survives_a_replay_from_the_chain_alone` |
+| writeahead: the `memory.recorded` branch deleted | **33** | `test_the_row_lands_with_the_least_claiming_defaults`, `test_a_replay_reproduces_the_row_including_its_clock`, `test_the_payload_reads_back_as_a_dict_not_as_text` |
+
+Two of the twenty are worth naming separately, because they are the ones a reviewer would expect to be
+*unfalsifiable*:
+
+* **Dropping `contradicts` from `CHECKSUMMED_FIELDS`** is caught by a test that never mentions the column:
+  `test_the_covered_set_is_derived_from_the_live_table` computes the complement of the tuple against
+  `PRAGMA table_info` and asserts it is exactly `{'checksum', 'audit_ref'}`. A narrowed tuple changes the
+  complement, so the failure names the mechanism rather than the field.
+* **Removing one `ALTER` from the migration** is caught 45 and 96 times over, because the migration's own
+  checksum is pinned in `test_schema_fidelity.py::CHECKSUMS` **and** the columns are used by every writer
+  test. Editing anything inside a migration's SQL string changes its checksum — including rewrapping a `--`
+  comment, which is what `ruff format` did to 0005 during this batch, moving it from `8f0adee4…` to
+  `4520e5b5…`. The checksum was re-derived from `MIGRATIONS` and republished, not restored by hand.
+
+### 12.12 Limitations of this batch
+
+1. **Nothing calls the writer.** No `memory_item` row has ever been written by this system outside a test,
+   and no route serves one. Every claim here is about what the writer *refuses*, which is testable, and not
+   about what it will be asked to record, which is not decided.
+2. **F-25: a dangling `evidence_ref.dossier_id` is refused by nothing.** Measured in §12.9. The row is
+   orphaned, unreachable through the route, and not reported.
+3. **F-24: no confidence band.** A belief carries one number on the confidence axis, and `docs/10` §3.1
+   calls a point estimate a defect. The interval and the conditions now exist; the band does not.
+4. **No expiry.** `expires_at` is absent and `valid_until` is not a substitute (§12.1). F-18's second gap
+   stays open, and `docs/10` §3.1's "expiring TTLs" is still unservable.
+5. **`subject` is not validated against the instrument master**, and `kind` and `scope` are free text. A
+   belief about an instrument the system of record has never heard of is recordable — the defect F-16 named
+   for dossiers, which `open_dossier` refuses and this writer does not. Closing it needs a ruling on whether
+   a belief's subject must be an instrument at all.
+6. **A negative confidence is accepted** and pinned by a test, with no `[0, 1]` bound anywhere. Deliberate,
+   and §12.13 question 2 asks whether it should stay that way.
+7. **The reverse contradiction direction is derived per dossier.** A disagreement across two cases appears
+   in neither view (§12.6), and a reader who wants it from the database alone has to scan.
+8. **The checksum now covers ten fields, so pre-8.5 rows verify `False`.** Nothing to backfill — both
+   intelligence tables are empty in production — but it is a change to what an approved batch stored, and
+   it is disclosed here in the same place §10.3 disclosed F-21's.
+9. **Column order diverges between the two DDLs** (§12.1). Safe today because every `INSERT` names its
+   columns and no `SELECT *` exists; an `INSERT` without a column list would break it, and nothing in the
+   suite refuses one being added.
+10. **`new_id`'s docstring lists neither `MEM` nor `EV`.** The prefixes work — `core/ids.py` does not
+    validate them — but the docstring is the only place a reader would look for the vocabulary, and it lags
+    by two writers.
+11. **No live evidence.** No adapter changed, so no venue run speaks to this batch, and the run this commit
+    triggers will be unread by §10.8's rule.
+12. **A confidence is stored in the caller's own spelling.** `'0.72'` and `'0.720000'` are different stored
+    strings for one number, and nothing normalises or compares them (§12.3). Deliberate — normalising would
+    rewrite what a caller said — but it means two beliefs can disagree textually while agreeing numerically.
+
+### 12.13 Decision requested
+
+Four questions, each with one marked recommendation.
+
+**1. Is Stage 8.5 approved, and how is F-18's partial closure recorded?** *Recommend: approve, recorded as
+**D-054**, with F-24 and F-25 disclosed as opened here, and with F-18 **narrowed rather than closed** — its
+first and third gaps closed, its second and fourth left open in the same row.* The scope ruling 4 named was
+delivered and nothing outside it was: four columns, one writer, one derived view field, no wiring, no route,
+no rewrite of a ruled text. The gate is `1394 passed / 2 skipped` and was proven load-bearing at twenty
+tampered sites with zero silent passes. The alternative is to close F-18 outright, which would retire a
+finding whose expiry and sufficiency halves have no column and no batch behind them — the same error
+D-053's ruling 1 avoided by closing `O-012` on the defect F-14 named and not on the system.
+
+**2. Should a confidence outside `[0, 1]` — including a negative one — be refused?** *Recommend: leave it
+unbounded, keep the test that pins `-0.5` storing, and publish the absence as limitation 6.* No document in
+this repository states a range for a belief's confidence; the target's `NUMERIC(6,5)` bounds magnitude and
+not sign; and inventing `[0, 1]` would put a number in front of a judgement no ruling has made, which is
+what §10.1 declined to do for `sufficiency`. The alternative is to bound it now, which is cheap and would
+make `-0.5` a `ValueError` — but it needs a ruling on what `1` means, on whether `9.99999` (currently
+accepted, and the target's own ceiling) is a defect, and on whether a belief can legitimately carry a
+negative confidence as a statement of disconfirmation. Three questions the code cannot answer.
+
+**3. Should F-25 be its own batch, or folded into the next one?** *Recommend: its own small batch, **8.6 =
+F-25 alone**, in the same shape 8.4 took for F-14's expensive half.* The fix is one branch in
+`record_evidence`, the refusal already has three precedents in the same codebase to copy its wording from,
+and a batch of one attributable change is what makes a regression attributable — the reason D-052's ruling
+2 gave for scoping 8.4 to F-14 alone. The alternative is to fold it into whatever comes next, which is
+cheaper in commits and worse in attribution, and which is how a refusal ends up shipping beside an
+unrelated change nobody re-reads.
+
+**4. What comes after that?** *Recommend: `expires_at`, as **8.7**, and not the sufficiency meter.* It is
+F-18's remaining cheap half — §5.3 already established that a nullable `ADD COLUMN` needs no rebuild, so it
+is one migration statement plus one writer argument plus one refusal — and `docs/10` §3.1's "expiring TTLs"
+is the one approved sentence in F-18 that still has no column at all after this batch. The sufficiency meter
+should not be attempted before stage 10 defines it and stage 11 finalises V1–V3 (`docs/10` §3.2): a meter
+invented here would be a number in front of a judgement, which is limitation 4 of §10.6 and the reason
+`sufficiency` is still a string. The alternative worth naming is wiring `retrieved_at` (§11.12's limitation
+1), which is smaller and would make 8.4's number durable, but it writes evidence rows for data nobody has
+decided to collect — the step ruling 3 declined and ruling 4 declined again.

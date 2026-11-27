@@ -671,12 +671,20 @@ class TestWhatThisWriterDoesNotDo:
         assert not {"counter_thesis", "tier"} & set(receipt.payload)
         store.close()
 
-    def test_memory_item_is_still_schema_only(self, tmp_path: Path) -> None:
-        """D-051 deferred F-18's columns to the stage-10 batch that writes this table, so the table
-        stays empty and its three missing columns stay missing."""
+    def test_opening_a_dossier_still_writes_no_memory_item(self, tmp_path: Path) -> None:
+        """Re-aimed by Stage 8.5, which is the batch this test used to assert had not happened yet.
+
+        As Stage 8.3 wrote it, this test asserted two things: that opening a dossier writes no memory item,
+        and that F-18's three columns were still missing because D-051 had deferred them to *"the stage-10
+        batch that writes this table"*. Stage 8.5 is that batch, so the second assertion is now false on
+        purpose — the columns exist, migration ``0005_memory_beliefs`` adds them, and
+        ``tests/test_memory_writer.py`` pins them there. The first half is what is left worth pinning, and
+        it is not a leftover: the two writers stay separate, so a case cannot silently create beliefs beside
+        itself. A dossier that wrote its own memory items would be a case file whose conclusions nobody
+        asked for, and nothing in ``src/nexus`` calls either writer yet.
+        """
         audit, store = _booted(tmp_path)
         _open(audit, store)
         assert store.counts()["memory_item"] == 0
-        columns = {row[1] for row in _connect(tmp_path).execute("PRAGMA table_info(memory_item)")}
-        assert not {"valid_from", "valid_until", "change_conditions"} & columns
+        assert store.memory_items() == ()
         store.close()

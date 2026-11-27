@@ -451,10 +451,21 @@ DOSSIER_VIEW_GAPS: tuple[dict[str, Any], ...] = (
         "element": "contradictions highlighted and linked",
         "asked_by": "docs/10 §3.1 (dossier view); docs/03 J-04 step 4",
         "why_not_servable": (
-            "needs evidence_ref.contradicts, and no such column exists. Nothing can be highlighted "
-            "because nothing records that two sources disagree"
+            "partly served since Stage 8.5, and the part that is not has no column to come from either. "
+            "evidence_ref.contradicts now exists (migration 0005_memory_beliefs, F-18's fourth gap), so a "
+            "recorded disagreement is linked in both directions inside the chronology — contradicts stored, "
+            "contradicted_by derived by a scan of this dossier's own rows — and contradiction_count says how "
+            "many distinct pairs the case holds. Three things are still not servable. Nothing *detects* a "
+            "disagreement: the column records a claim made by whoever wrote the row, so two sources that "
+            "contradict each other and were never linked stay unlinked. The derived reverse direction is "
+            "scoped to one dossier, so a contradiction recorded between rows in different cases appears in "
+            "neither scan. And nothing decides which side is wrong, which is what 'highlighted' needs beyond "
+            "a count: docs/12 §1.3's law (A-02+A-08) is that no gate can be satisfied by a confidence value, "
+            "so the higher-confidence row does not win here and no code computes a winner"
         ),
-        "deferred_by": "D-051 — F-18's cheap half deferred to the stage-10 memory_item writer",
+        "deferred_by": "D-051 deferred this gap to the stage-10 memory_item writer, and Stage 8.5 has now "
+        "landed and filled the linking half of it. The detection half and the verdict half have no batch "
+        "behind them and no ruling",
     },
     {
         "element": "counter-thesis",
@@ -521,10 +532,18 @@ DOSSIER_VIEW_GAPS: tuple[dict[str, Any], ...] = (
         "element": "beliefs with confidence band, validity interval and change conditions",
         "asked_by": "docs/03 §7; docs/10 §3.1",
         "why_not_servable": (
-            "that is memory_item, which is schema-only: it has no writer, and F-18's valid_from, "
-            "valid_until and change_conditions columns do not exist yet"
+            "two of the three now exist and none of the three is served here. Stage 8.5 added F-18's "
+            "valid_from, valid_until and change_conditions (migration 0005_memory_beliefs) and the writer "
+            "that fills them (intelligence/memory.py, audited as memory.recorded), and this route serves "
+            "dossiers and their evidence only — there is no memory_item route, so a belief is recordable and "
+            "not readable over HTTP. The third is not servable anywhere: a 'confidence band' is an interval "
+            "on the confidence axis and memory_item.confidence is one NUMERIC(6,5) point, so the three new "
+            "columns do not deliver it — they are on the time axis. That is F-24, recorded in docs/15 §12 "
+            "rather than fixed, because two more columns are not this batch's ruling"
         ),
-        "deferred_by": "D-051 — deferred to the stage-10 memory_item writer",
+        "deferred_by": "D-051 deferred this gap to the stage-10 memory_item writer, and Stage 8.5 has now "
+        "landed: the interval and the change conditions exist, and the writer refuses a confidence that has "
+        "neither. The band (F-24) and a route that serves memory items have no batch behind them",
     },
     {
         "element": "disposition with reason code",
@@ -592,6 +611,21 @@ def _dossier_view(store: Any, row: dict[str, Any], *, with_evidence: bool) -> di
     body: dict[str, Any] = payload if isinstance(payload, dict) else {}
     sufficiency = sufficiency_of(row)
     evidence = store.evidence_refs(dossier_id=str(row.get("dossier_id")))
+    # The reverse of `contradicts`, derived here rather than stored. The column points one way and
+    # `evidence_ref` has no back-link, so "which rows contradict this one" is a scan — and the scan is
+    # scoped to the dossier being served, which is what this view can honestly show. A contradiction
+    # recorded between two rows in *different* dossiers appears in neither scan, which is one of the
+    # reasons the gap below stays open after Stage 8.5 rather than closing.
+    contradicted_by: dict[str, list[str]] = {}
+    pairs: set[tuple[str, str]] = set()
+    for item in evidence:
+        target = item.get("contradicts")
+        if not target:
+            continue
+        mine = str(item.get("evidence_id"))
+        contradicted_by.setdefault(str(target), []).append(mine)
+        pair = sorted((mine, str(target)))
+        pairs.add((pair[0], pair[1]))
     chronology = [
         {
             "evidence_id": item.get("evidence_id"),
@@ -604,11 +638,19 @@ def _dossier_view(store: Any, row: dict[str, Any], *, with_evidence: bool) -> di
             "data_status": item.get("data_status"),
             "locator": item.get("locator"),
             "checksum": item.get("checksum"),
-            # Recomputed here from the row rather than trusted: the checksum covers nine stored fields
-            # (F-21), so this is the first place in the system where an evidence row's integrity is
-            # actually checked instead of merely recorded.
+            # Recomputed here from the row rather than trusted: the checksum covers ten stored fields
+            # (F-21 widened it from one to nine, and Stage 8.5 added `contradicts` when migration 0005
+            # added the column), so this is the first place in the system where an evidence row's
+            # integrity is actually checked instead of merely recorded.
             "checksum_ok": verify_evidence_checksum(item),
             "audit_ref": item.get("audit_ref"),
+            # Both directions of a recorded disagreement. `contradicts` is stored; `contradicted_by` is
+            # derived by the scan above and is scoped to this dossier. Neither says which side is wrong,
+            # and nothing here computes a winner: docs/12 §1.3's law (A-02+A-08) is that no gate can be
+            # satisfied by a confidence value, so a higher confidence beside a contradiction is a fact
+            # about the row and not a verdict on it.
+            "contradicts": item.get("contradicts"),
+            "contradicted_by": sorted(contradicted_by.get(str(item.get("evidence_id")), [])),
         }
         for item in sorted(
             evidence, key=lambda item: (str(item.get("retrieved_at")), str(item.get("evidence_id")))
@@ -631,6 +673,10 @@ def _dossier_view(store: Any, row: dict[str, Any], *, with_evidence: bool) -> di
         "evidence_checksums_verify": (
             None if not evidence else all(entry["checksum_ok"] for entry in _verified(evidence))
         ),
+        # Distinct linked pairs inside this dossier, so a case that holds a disagreement says so once, at
+        # the top, rather than only in the row a reader happens to expand. A count is the smallest honest
+        # form of the "highlighted" docs/10 §3.1 asks for: it draws attention without deciding anything.
+        "contradiction_count": len(pairs),
         "chronology": chronology if with_evidence else None,
         "payload": body,
     }

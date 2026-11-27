@@ -278,6 +278,7 @@ class TestMigration0004:
         "0002_memory": "5e7fafd0673e0a60711bc3c9429a7c9c9bfb2884dba48a645c56cc8957840d12",
         "0003_audit_append_only": "1e9ec5a5d9154d0af95f229aa05d4677045892eda2a39b890de2d929d40ee26b",
         "0004_memory_fidelity": "4c7368d407bb1f180a79bcce3044d8a6f97e9eb7b677cc40c35932a66ca22bb6",
+        "0005_memory_beliefs": "4520e5b5e259eb4c868b70d1bfdc5ebdbac58f32d7083ea00cc4e980ac789c28",
     }
 
     def test_no_applied_migration_was_edited(self) -> None:
@@ -296,6 +297,7 @@ class TestMigration0004:
         assert rows == {m.version: m.checksum for m in MIGRATIONS}
         counts = dict(conn.execute("SELECT version, statements FROM schema_migrations").fetchall())
         assert counts["0004_memory_fidelity"] == 15, "0004 rebuilds two tables and creates one"
+        assert counts["0005_memory_beliefs"] == 4, "0005 is four ADD COLUMNs and nothing else"
 
     def test_the_rebuild_preserves_existing_rows(self, tmp_path: Path) -> None:
         """Both tables are empty today, but a migration that is only safe on an empty table will be run
@@ -333,6 +335,171 @@ class TestMigration0004:
         assert mem == ("MEM-1", "OBSERVATION", "kept", "0.25")
         indexes = {r[1] for r in conn.execute("PRAGMA index_list(dossier)")}
         assert "ix_dossier_created" in indexes, "the rebuild must recreate the index it dropped"
+
+
+class TestMigration0005:
+    """F-18's three columns and `evidence_ref.contradicts`, added without rebuilding anything.
+
+    0004 needed a create-copy-drop-rename because SQLite refuses `ALTER COLUMN ... TYPE` and
+    `ADD CONSTRAINT`; 0005 needs neither, because all four of its changes are `ADD COLUMN`, which
+    `docs/15` §5.3 executed rather than assumed. What is asserted here is therefore not only that the
+    columns arrive but that they arrive *additively* — an existing row keeps every value it had — and
+    that the columns which were **not** ruled into this batch are genuinely absent.
+    """
+
+    def test_it_applies_after_0004_and_is_reported(self, tmp_path: Path) -> None:
+        path = tmp_path / "nexus.db"
+        audit = AuditLog(SqliteAuditStore(path))
+        store = SqliteOperationalStore(path, audit=audit)
+        report = store.migrations
+        assert report is not None
+        assert [item.version for item in report.applied] == [m.version for m in MIGRATIONS]
+        assert "0005_memory_beliefs" in [item.version for item in report.applied]
+        assert store.migrations.skipped == (), [s.reason for s in store.migrations.skipped]
+        store.close()
+
+    def test_it_adds_exactly_the_columns_the_ruling_named(self, tmp_path: Path) -> None:
+        """Three on `memory_item`, one on `evidence_ref`, and nothing else.
+
+        D-051's ruling 2 named the cheap half as three `ADD COLUMN`s on `memory_item` (`valid_from`,
+        `valid_until`, `change_conditions`) plus `contradicts` on `evidence_ref`, and D-053's ruling 4
+        repeated it verbatim. `docs/15` §5.3 also lists `expires_at` as cheap and F-18's second gap asks
+        for one, but it is not one of the three, so it is not here — and this assertion is what makes its
+        absence a decision somebody can argue with rather than an oversight nobody noticed.
+        """
+        conn = live_sqlite(tmp_path)
+        memory = {row[1] for row in conn.execute("PRAGMA table_info(memory_item)")}
+        evidence = {row[1] for row in conn.execute("PRAGMA table_info(evidence_ref)")}
+        assert {"valid_from", "valid_until", "change_conditions"} <= memory
+        assert "contradicts" in evidence
+
+        # F-18's second gap stays open: no expiry column, and `valid_until` is not one. It says until when
+        # a claim holds in the world; an expiry says when this system should stop serving the row, which is
+        # what `docs/10` §3.1's "expiring TTLs" asks for.
+        assert not {"expires_at", "expires_on", "ttl", "ttl_seconds", "valid_for_seconds"} & memory
+        # F-24: a band is an interval on the confidence axis, so it is two columns, and neither was ruled
+        # into this batch. Pinning the absence is what stops a later reader inferring that the three new
+        # columns delivered "confidence as a band" — they are on the time axis.
+        assert (
+            not {
+                "confidence_low",
+                "confidence_high",
+                "confidence_min",
+                "confidence_max",
+                "confidence_band",
+            }
+            & memory
+        )
+
+    def test_it_is_additive_and_an_existing_row_keeps_every_value(self, tmp_path: Path) -> None:
+        """Build the pre-0005 schema, write a row, then apply 0005 on top of it.
+
+        There are no such rows today — nothing had ever written to this table — but 0004's rebuild test
+        makes the same argument and it holds here too: a migration that is only safe on an empty table is
+        a migration that will be run against a non-empty one someday.
+        """
+        conn = sqlite3.connect(tmp_path / "additive.db")
+        conn.executescript("CREATE TABLE audit_log (seq INTEGER PRIMARY KEY);")
+        for migration in MIGRATIONS:
+            if migration.version == "0005_memory_beliefs":
+                break
+            conn.executescript(migration.sql)
+        stamp = "2026-11-27T15:00:00+00:00"
+        conn.execute(
+            "INSERT INTO memory_item (memory_id, kind, scope, subject, body, created_at, confidence, "
+            "cited_by) VALUES (?,?,?,?,?,?,?,?)",
+            ("MEM-1", "BELIEF", "GLOBAL", "BTC", "kept", stamp, "0.25", '["DEC-1"]'),
+        )
+        conn.execute(
+            "INSERT INTO evidence_ref (evidence_id, source, kind, observed_at, retrieved_at) "
+            "VALUES (?,?,?,?,?)",
+            ("EV-1", "okx", "DATA", stamp, stamp),
+        )
+        conn.commit()
+
+        sql = next(m.sql for m in MIGRATIONS if m.version == "0005_memory_beliefs")
+        conn.executescript(sql)
+
+        row = conn.execute(
+            "SELECT memory_id, kind, scope, subject, body, created_at, confidence, cited_by, valid_from, "
+            "valid_until, change_conditions FROM memory_item"
+        ).fetchone()
+        assert row == ("MEM-1", "BELIEF", "GLOBAL", "BTC", "kept", stamp, "0.25", '["DEC-1"]', None, None, "")
+        ev = conn.execute("SELECT evidence_id, source, contradicts FROM evidence_ref").fetchone()
+        assert ev == ("EV-1", "okx", None)
+        indexes = {r[1] for r in conn.execute("PRAGMA index_list(memory_item)")}
+        assert {"ix_memory_kind", "ix_memory_created"} <= indexes, "ADD COLUMN must not drop an index"
+
+    def test_the_new_foreign_key_is_declared(self, tmp_path: Path) -> None:
+        """Declared, and still not enforced — `PRAGMA foreign_keys` is off, and the writer refuses instead.
+
+        A self-referencing foreign key added by `ADD COLUMN` is the shape `docs/15` §5.3 executed, and
+        `PRAGMA foreign_key_list` is the only thing that reports it, so this is where the claim is checked
+        rather than in prose.
+        """
+        conn = live_sqlite(tmp_path)
+        links = {row[3]: (row[2], row[4]) for row in conn.execute("PRAGMA foreign_key_list(evidence_ref)")}
+        # Both of this table's foreign keys, and the reason the second is asserted beside the first: they
+        # are declared identically and treated differently. A dangling `contradicts` is refused by
+        # `record_evidence`; a dangling `dossier_id` is refused by nothing, which is F-25 (`docs/15` §12) —
+        # an asymmetry this batch records rather than fixes, because changing an approved writer's contract
+        # is not what D-053's ruling 4 authorised.
+        assert links == {
+            "contradicts": ("evidence_ref", "evidence_id"),
+            "dossier_id": ("dossier", "dossier_id"),
+        }, links
+        conn.execute(
+            "INSERT INTO evidence_ref (evidence_id, source, kind, observed_at, retrieved_at, contradicts) "
+            "VALUES ('EV-1','okx','DATA','2026-11-27T15:00:00+00:00','2026-11-27T15:00:00+00:00','EV-NOPE')"
+        )
+        conn.commit()
+        assert conn.execute("SELECT contradicts FROM evidence_ref").fetchone()[0] == "EV-NOPE", (
+            "SQLite accepted a dangling parent, which is why the refusal lives in record_evidence and not "
+            "here: a foreign key that is declared and not enforced protects nobody on its own"
+        )
+
+    def test_0004s_check_on_confidence_survives_it(self, tmp_path: Path) -> None:
+        """`ADD COLUMN` does not rebuild, so an earlier migration's constraint is still there afterwards.
+
+        Worth pinning because the alternative would have been a rebuild, and a rebuild that forgot to
+        re-declare the CHECK would have removed the only thing making `confidence` numeric — silently, and
+        in the migration whose stated purpose was to add columns.
+        """
+        conn = live_sqlite(tmp_path)
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO memory_item (memory_id, body, created_at, confidence) "
+                "VALUES ('MEM-JUNK','b','2026-11-27T15:00:00+00:00','not-a-number')"
+            )
+        conn.execute(
+            "INSERT INTO memory_item (memory_id, body, created_at, confidence, valid_from, "
+            "change_conditions) VALUES ('MEM-OK','b','2026-11-27T15:00:00+00:00','0.25',"
+            "'2026-11-27T15:00:00+00:00','a funding flip')"
+        )
+        conn.commit()
+
+    def test_the_target_declares_the_same_four_and_not_as_alterations(self) -> None:
+        """The PostgreSQL target states the end state and SQLite walks to it (R-1: a promotion is a copy).
+
+        That is why the four columns are inside `0002_memory.sql`'s `CREATE TABLE`s and there is no
+        `0005_*.sql` full of `ALTER`s: `parse_postgres` reads table declarations, and a promotion follows
+        the files, so the target has to describe the schema a fresh Postgres should end up with. 0004 set
+        the precedent — its shape is declared in the target too, and only SQLite needed the rebuild.
+        """
+        pg = parse_postgres(_postgres_ddl())
+        assert {"valid_from", "valid_until", "change_conditions"} <= set(pg["memory_item"])
+        assert "contradicts" in pg["evidence_ref"]
+        assert pg["memory_item"]["valid_from"]["type"] == "TIMESTAMPTZ"
+        assert pg["memory_item"]["valid_until"]["type"] == "TIMESTAMPTZ"
+        assert pg["memory_item"]["change_conditions"]["notnull"] is True
+        assert pg["evidence_ref"]["contradicts"]["fk"] == "evidence_ref"
+        assert pg["evidence_ref"]["contradicts"]["notnull"] is False
+        altering = [
+            path.name
+            for path in sorted(MIGRATIONS_DIR.glob("*.sql"))
+            if "ALTER TABLE memory_item" in path.read_text()
+        ]
+        assert altering == [], altering
 
 
 class TestConfidenceConstraint:

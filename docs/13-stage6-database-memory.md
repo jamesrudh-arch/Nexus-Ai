@@ -205,7 +205,11 @@ undecided. Intelligence-memory tables have no writers *(superseded for two of th
 `evidence_ref` a writer in `nexus/intelligence/evidence.py`, audited as `evidence.recorded`, and Stage 8.3
 gave `dossier` one in `nexus/intelligence/dossier.py`, audited as `dossier.opened` and served read-only by
 `GET /v1/intelligence/dossiers` — see `docs/15` §9.5 and §10. `memory_item` is still writer-less, and
-D-051 deferred F-18's three columns to the stage-10 batch that writes it)*. The FK sentence above is now accurate for
+D-051 deferred F-18's three columns to the stage-10 batch that writes it — **superseded for the third
+of the three by Stage 8.5**: `nexus/intelligence/memory.py` now writes `memory_item`, audited as
+`memory.recorded`, and migration `0005_memory_beliefs` added the three deferred columns plus
+`evidence_ref.contradicts`. Nothing calls the writer yet, by D-052's ruling 3 and D-053's ruling 4;
+see `docs/15` §12)*. The FK sentence above is now accurate for
 `dossier.instrument_id` too, which migration `0004_memory_fidelity` gave a `REFERENCES` clause: declared,
 and still not enforced at runtime for the reason given here (`docs/15` §9.7). Off-VM backup remains untested: recovery here
 means restart on the same host, and the 5.2 DR rows are unchanged. The compose change was validated

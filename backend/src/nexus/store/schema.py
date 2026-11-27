@@ -437,6 +437,54 @@ CREATE TABLE IF NOT EXISTS venue_instrument_mapping (
 CREATE INDEX IF NOT EXISTS ix_mapping_venue ON venue_instrument_mapping (venue, venue_symbol);
 """
 
+_MEMORY_BELIEFS = """
+-- 0005: the three columns F-18 asked for and D-051 deferred to this batch, plus the link that lets one
+-- evidence row say it contradicts another.
+--
+-- Found by reading the approved view against the delivered schema (Stage 8.1, F-18, `docs/15` §4). `docs/03`
+-- §7 asks the Intelligence Centre to show "beliefs with confidence, validity interval, change conditions",
+-- and `docs/10` §3.1 turns the omission into a rule: confidence comes "as a band with validity interval and
+-- change conditions", and "a point estimate without them is a defect". `memory_item` had `confidence` and
+-- neither of the other two, so the one column it had was the one those sentences call a defect standing
+-- alone. The refusal that enforces the sentence lives in `intelligence/memory.py`, not here: a column cannot
+-- refuse a row that fills it badly, and these three are nullable because not every memory item is a belief.
+--
+-- All four are `ADD COLUMN`, which is what `docs/15` §5.3's executed survey makes cheap. SQLite permits a
+-- nullable column, a NOT NULL column with a constant default, a self-referencing foreign key and a CHECK on
+-- a new column, and refuses only `ALTER COLUMN ... TYPE` and `ADD CONSTRAINT`. Nothing here needs the
+-- create-copy-drop-rename rebuild 0004 needed, and no row is copied, because none of the four changes what
+-- an existing column means.
+--
+-- Deliberately NOT added, each with its reason rather than in silence:
+--   * `expires_at`. F-18's second gap is that no expiry column exists anywhere, and §5.3 lists it among the
+--     cheap additions, but the scope this batch was ruled into is three columns on `memory_item` plus
+--     `contradicts` (`docs/15` §11.14 ruling 4, restating D-052's ruling 3) and `expires_at` is not one of
+--     the three. `valid_until` is not a substitute: it says until when the claim holds in the world, while
+--     an expiry says when this system should stop serving the row, and `docs/10` §3.1's "expiring TTLs" asks
+--     for the second. That gap stays open and is recorded as still open.
+--   * `confidence_low` and `confidence_high`. `docs/10` §3.1 asks for confidence "as a band" and D-035
+--     approved "beliefs as bands". A band is an interval on the confidence axis, and `valid_from` and
+--     `valid_until` are on the time axis, so after this migration a belief still carries exactly one
+--     number. That is F-24, recorded rather than fixed here, because two more columns are not this
+--     batch's ruling either.
+--   * an index on `valid_until`. Nothing queries by validity yet, and an index with no reader behind it is
+--     machinery nobody reads — the reasoning D-052's ruling 4 used to decline a periodic checksum audit.
+--     `memory_items()` therefore scans, and the scan is written down in the store instead of left to be
+--     discovered by whoever hits it.
+--
+-- `contradicts` is the fourth column and the one that is not on `memory_item`. It points at another row of
+-- the same table, which SQLite accepts on `ADD COLUMN` (a self-referencing foreign key with a NULL default)
+-- and which `PRAGMA foreign_key_list` then reports. Like every foreign key here it is declared and not
+-- enforced, so `intelligence/evidence.py` refuses a dangling parent itself. It also joins
+-- `CHECKSUMMED_FIELDS`: a stored column outside that tuple is a column that can change undetected, which is
+-- F-21, and `tests/test_evidence_writer.py` derives the covered set from this table so the two had to move
+-- together.
+ALTER TABLE memory_item ADD COLUMN valid_from TEXT;
+ALTER TABLE memory_item ADD COLUMN valid_until TEXT;
+ALTER TABLE memory_item ADD COLUMN change_conditions TEXT NOT NULL DEFAULT '';
+ALTER TABLE evidence_ref ADD COLUMN contradicts TEXT REFERENCES evidence_ref (evidence_id);
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         version="0001_operational",
@@ -463,5 +511,15 @@ MIGRATIONS: tuple[Migration, ...] = (
         "diverged from the portable PostgreSQL target (F-15, F-16)",
         sql=_MEMORY_FIDELITY,
         requires="dossier",
+    ),
+    Migration(
+        version="0005_memory_beliefs",
+        description="give memory_item the validity interval and change conditions F-18 asked for, and "
+        "give evidence_ref a contradicts link — the columns the approved view needs and D-051 deferred "
+        "to the batch that writes memory_item",
+        sql=_MEMORY_BELIEFS,
+        # Both tables this migration alters arrive from 0002 in one executescript, so requiring one of
+        # them requires the other. `memory_item` is named because it is the table this batch is about.
+        requires="memory_item",
     ),
 )

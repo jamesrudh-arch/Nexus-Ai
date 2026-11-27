@@ -68,6 +68,14 @@ source's own publication moment is not recordable anywhere; J-04 step 1 asks for
 and no column exists for one; ``docs/10`` §3.1 asks for research depth **Tier 0–4** and **contradictions
 highlighted and linked**, and the first has no column while the second needs ``evidence_ref.contradicts``,
 which D-051 deferred to the stage-10 batch. None of those is invented here to make the row look complete.
+
+*(Pointer added by Stage 8.5, which is that batch: ``evidence_ref.contradicts`` now exists — migration
+``0005_memory_beliefs``, F-18's fourth gap — and ``record_evidence`` accepts it, refuses a dangling one and
+covers it with the row checksum. The paragraph above is left as this module was ruled, because what it says
+about **this** writer is unchanged: ``open_dossier`` still invents no contradiction, no counter-thesis and no
+tier, and it still has no column of its own for any of them. What Stage 8.5 changes is that a case's evidence
+rows can now disagree on the record, and the route serves both directions of that link. Publication time,
+counter-thesis and Tier 0–4 remain exactly as unrecordable as they were.)*
 """
 
 from __future__ import annotations

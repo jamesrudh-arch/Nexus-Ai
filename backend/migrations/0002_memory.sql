@@ -6,8 +6,22 @@
 --
 -- Stage 8.2 delivered the first writer (`evidence_ref`, in nexus/intelligence/evidence.py, audited as
 -- `evidence.recorded`) and Stage 8.3 the second (`dossier`, in nexus/intelligence/dossier.py, audited as
--- `dossier.opened`, served read-only by GET /v1/intelligence/dossiers). memory_item still has none; it
--- arrives with stage 10, together with the three columns F-18 wants and D-051 deferred to that batch.
+-- `dossier.opened`, served read-only by GET /v1/intelligence/dossiers). Stage 8.5 delivered the third
+-- (`memory_item`, in nexus/intelligence/memory.py, audited as `memory.recorded`) together with the three
+-- columns F-18 wants and D-051 deferred to that batch — `valid_from`, `valid_until`, `change_conditions`
+-- — and `evidence_ref.contradicts`, the link `docs/10` §3.1's "contradictions highlighted and linked"
+-- needs. All four are declared below, where they always were for this file: the PostgreSQL target states
+-- the end state and the SQLite side walks to it, which is why they reach SQLite through migration
+-- `0005_memory_beliefs` (four `ADD COLUMN`s) rather than through an edit of `0002_memory` there — applied
+-- migrations are immutable, and `tests/test_schema_fidelity.py` pins every checksum that says so.
+-- Nothing serves `memory_item` over HTTP yet, and no writer calls any of the three.
+--
+-- Two things this file deliberately does not declare, because no batch has ruled on either. There is no
+-- `expires_at`: F-18's second gap (no expiry column anywhere) stays open, and `valid_until` is not a
+-- substitute — it says until when a claim holds in the world, while an expiry says when this system should
+-- stop serving the row. And there is no confidence band: `confidence` stays one NUMERIC(6,5) point, while
+-- `docs/10` §3.1 asks for it "as a band" and D-035 approved "beliefs as bands". That is F-24 (`docs/15`
+-- §12), recorded rather than fixed, because a band is two columns and not three.
 --
 -- All timestamps are TIMESTAMPTZ in UTC. Confidence uses NUMERIC, never FLOAT — here. The SQLite side
 -- keeps memory_item.confidence as TEXT and constrains it with a CHECK instead, because SQLite's NUMERIC
@@ -45,7 +59,15 @@ CREATE TABLE IF NOT EXISTS evidence_ref (
     locator      TEXT NOT NULL DEFAULT '',
     checksum     TEXT,
     payload      JSONB NOT NULL DEFAULT '{}'::jsonb,
-    audit_ref    TEXT
+    audit_ref    TEXT,
+    -- Stage 8.5, F-18's fourth gap: one row saying it contradicts another. `docs/10` §3.1 asks the
+    -- dossier view for "contradictions highlighted and linked" and before this column nothing recorded
+    -- that two sources disagree, so nothing could be highlighted. It points one way and nothing
+    -- back-links it in the store: the route derives the reverse direction by scanning, and a reader who
+    -- wants "what contradicts this row" from the database alone has to scan too. Declared, not enforced
+    -- (PRAGMA foreign_keys off), so evidence.py refuses a dangling parent itself. In CHECKSUMMED_FIELDS,
+    -- because a stored column the checksum does not cover is a column that can change undetected (F-21).
+    contradicts  TEXT REFERENCES evidence_ref (evidence_id)
 );
 CREATE INDEX IF NOT EXISTS ix_evidence_dossier ON evidence_ref (dossier_id);
 CREATE INDEX IF NOT EXISTS ix_evidence_status  ON evidence_ref (data_status);
@@ -61,7 +83,24 @@ CREATE TABLE IF NOT EXISTS memory_item (
     cited_by      TEXT[] NOT NULL DEFAULT '{}',
     confidence    NUMERIC(6, 5),
     payload       JSONB NOT NULL DEFAULT '{}'::jsonb,
-    audit_ref     TEXT
+    audit_ref     TEXT,
+    -- Stage 8.5, F-18's first gap: `docs/03` §7 asks for "beliefs with confidence, validity interval,
+    -- change conditions" and `docs/10` §3.1 calls a confidence without them a defect. All three are
+    -- nullable or defaulted rather than NOT NULL because not every memory item is a belief — an
+    -- OBSERVATION has no validity interval and needs none. The combination is what the writer refuses,
+    -- and it refuses it in nexus/intelligence/memory.py rather than in a CHECK here, because the rule
+    -- is "a point estimate without them is a defect", which is a statement about three columns at once
+    -- and not about any one of them.
+    --
+    -- `valid_from` and `valid_until` bound the claim in the world, not the row in the store: they say
+    -- from when and until when the belief is asserted to hold, which is not `created_at` (when this
+    -- system recorded it) and not an expiry (when this system should stop serving it). SQLite reaches
+    -- these four by appending them, because ADD COLUMN has no position clause, so its column order
+    -- differs from the order declared here. tests/test_schema_fidelity.py compares names, types,
+    -- nullability and foreign keys, and does not compare position.
+    valid_from       TIMESTAMPTZ,
+    valid_until      TIMESTAMPTZ,
+    change_conditions TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS ix_memory_kind    ON memory_item (kind);
 CREATE INDEX IF NOT EXISTS ix_memory_created ON memory_item (created_at DESC);

@@ -84,6 +84,18 @@ def _update(tmp_path: Path, column: str, value: Any, rowid: int) -> None:
         conn.close()
 
 
+def _okx(audit: AuditLog, store: SqliteOperationalStore, **extra: Any) -> Any:
+    """One OKX evidence row at the module's pinned clocks, so a test can change one thing at a time."""
+    return record_evidence(
+        audit=audit,
+        store=store,
+        source="okx",
+        observed_at=OBSERVED,
+        retrieved_at=RETRIEVED,
+        **extra,
+    )
+
+
 def _snapshot(**overrides: Any) -> MarketSnapshot:
     base: dict[str, Any] = {
         "instrument_id": "INS-BTC-USDT-USDT",
@@ -574,6 +586,214 @@ class TestAuditFirst:
         assert rows[0]["data_status"] == "STALE"
         assert audit.verify() == []
         store.close()
+
+
+class TestAContradictionIsRecordedAndNotResolved:
+    """``evidence_ref.contradicts``, added by migration ``0005_memory_beliefs`` (F-18's fourth gap).
+
+    ``docs/10`` §3.1 asks the dossier view for *"contradictions highlighted and linked"* and ``docs/03``
+    J-04 step 4 for *"corroborating/contradictory sources"*; before this column nothing could record that
+    two sources disagree, so nothing could be highlighted. What is asserted here is the link, and — just as
+    hard — that the link is all it is: a claim by whoever wrote the row, pointing one way, settling nothing.
+    """
+
+    def test_a_recorded_disagreement_is_stored_and_reads_back(self, tmp_path: Path) -> None:
+        audit, store = _durable(tmp_path)
+        first = _okx(audit, store)
+        second = record_evidence(
+            audit=audit,
+            store=store,
+            source="bybit",
+            observed_at=OBSERVED + timedelta(seconds=1),
+            retrieved_at=RETRIEVED + timedelta(seconds=1),
+            contradicts=first.evidence_id,
+        )
+        assert second.contradicts == first.evidence_id
+        row = store.get_evidence_ref(second.evidence_id)
+        assert row is not None
+        assert row["contradicts"] == first.evidence_id
+        assert store.counts()["evidence_ref"] == 2
+        store.close()
+
+    def test_no_contradiction_is_stored_as_null_and_not_as_a_claim(self, tmp_path: Path) -> None:
+        """``None`` means no disagreement was claimed, which is not the same as claiming that none exists —
+        nothing in this system can establish that, and the column does not pretend to."""
+        audit, store = _durable(tmp_path)
+        receipt = _okx(audit, store)
+        assert receipt.contradicts is None
+        row = store.get_evidence_ref(receipt.evidence_id)
+        assert row is not None
+        assert row["contradicts"] is None
+        store.close()
+
+    def test_a_row_that_does_not_exist_cannot_be_contradicted(self, tmp_path: Path) -> None:
+        """``PRAGMA foreign_keys`` is off, so SQLite would store the dangling pointer without comment and
+        the dossier route would serve a link whose other side is absent."""
+        audit, store = _durable(tmp_path)
+        with pytest.raises(ValueError) as excinfo:
+            record_evidence(
+                audit=audit,
+                store=store,
+                source="okx",
+                observed_at=OBSERVED,
+                retrieved_at=RETRIEVED,
+                contradicts="EV-NOPE",
+            )
+        message = str(excinfo.value)
+        assert "EV-NOPE" in message
+        assert "foreign_keys" in message, "the refusal says why the database will not catch this one"
+        assert "0005_memory_beliefs" in message, "and which migration declared the clause"
+        assert store.counts()["evidence_ref"] == 0, "nothing is written when the link cannot be made"
+        store.close()
+
+    def test_a_row_cannot_contradict_itself(self, tmp_path: Path) -> None:
+        """A contradiction is a disagreement between two observations, and a pointer at the row's own id
+        records neither. Only reachable with a caller-supplied id, since a generated one is not known
+        before the call — which is itself the reason the check runs after the id is resolved."""
+        audit, store = _durable(tmp_path)
+        with pytest.raises(ValueError) as excinfo:
+            record_evidence(
+                audit=audit,
+                store=store,
+                source="okx",
+                observed_at=OBSERVED,
+                retrieved_at=RETRIEVED,
+                evidence_id="EV-SELF",
+                contradicts="EV-SELF",
+            )
+        assert "cannot contradict itself" in str(excinfo.value)
+        assert store.counts()["evidence_ref"] == 0
+        store.close()
+
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_a_contradiction_nobody_can_identify_is_not_a_link(self, tmp_path: Path, value: str) -> None:
+        audit, store = _durable(tmp_path)
+        with pytest.raises(ValueError, match="must name an evidence row or be None"):
+            record_evidence(
+                audit=audit,
+                store=store,
+                source="okx",
+                observed_at=OBSERVED,
+                retrieved_at=RETRIEVED,
+                contradicts=value,
+            )
+        store.close()
+
+    def test_the_link_points_one_way_and_nothing_back_links_it(self, tmp_path: Path) -> None:
+        """``evidence_ref`` has no reverse column, so the contradicted row never learns about the row that
+        contradicts it. The dossier route derives the reverse direction by scanning one dossier's rows and
+        says so; a reader going straight to the database has to scan too."""
+        audit, store = _durable(tmp_path)
+        first = _okx(audit, store)
+        record_evidence(
+            audit=audit,
+            store=store,
+            source="bybit",
+            observed_at=OBSERVED,
+            retrieved_at=RETRIEVED,
+            contradicts=first.evidence_id,
+        )
+        untouched = store.get_evidence_ref(first.evidence_id)
+        assert untouched is not None
+        assert untouched["contradicts"] is None, "the earlier row was not updated by the later one"
+        assert not {
+            row[1] for row in _pragma(tmp_path, "table_info(evidence_ref)") if "contradict" in str(row[1])
+        } - {"contradicts"}, "one column, one direction"
+        store.close()
+
+    def test_recording_a_contradiction_resolves_nothing(self, tmp_path: Path) -> None:
+        """Both rows stay readable, neither is downgraded, and no winner is computed.
+
+        ``docs/12`` §1.3's law (A-02+A-08) is that no gate can be satisfied by a confidence value and
+        ``docs/10`` §3.2 that confidence never overrides a failed stage, so a contradiction is an input to a
+        review — which is a person — and this batch builds no reviewer. What is asserted is that the earlier
+        row is byte-identical afterwards, including the checksum that F-21 widened: a writer that quietly
+        marked the contradicted row STALE would be deciding something nobody asked it to.
+        """
+        audit, store = _durable(tmp_path)
+        first = record_evidence(
+            audit=audit,
+            store=store,
+            source="okx",
+            observed_at=OBSERVED,
+            retrieved_at=RETRIEVED,
+            data_status=DataStatus.LIVE,
+            payload={"bid": "60736.2"},
+        )
+        before = store.get_evidence_ref(first.evidence_id)
+        assert before is not None
+        record_evidence(
+            audit=audit,
+            store=store,
+            source="bybit",
+            observed_at=OBSERVED,
+            retrieved_at=RETRIEVED,
+            data_status=DataStatus.LIVE,
+            payload={"bid": "1.0"},
+            contradicts=first.evidence_id,
+        )
+        after = store.get_evidence_ref(first.evidence_id)
+        assert after == before, "the contradicted row did not change in any column"
+        assert after["data_status"] == "LIVE"
+        assert verify_evidence_checksum(after)
+        assert store.counts()["evidence_ref"] == 2, "neither row was removed"
+        store.close()
+
+    def test_a_mutual_disagreement_takes_two_calls_and_neither_row_is_edited(self, tmp_path: Path) -> None:
+        """The ordering rule the refusal creates, stated as behaviour: the contradicted row must exist
+        first, so the second row carries the link and the first does not. Making it mutual would mean
+        re-recording the first id, which ``INSERT OR REPLACE`` permits and which is a restatement of an
+        observation — 8.2's own test pins that the chain keeps both entries when it happens."""
+        audit, store = _durable(tmp_path)
+        first = _okx(audit, store)
+        second = record_evidence(
+            audit=audit,
+            store=store,
+            source="bybit",
+            observed_at=OBSERVED,
+            retrieved_at=RETRIEVED,
+            contradicts=first.evidence_id,
+        )
+        rows = {row["evidence_id"]: row for row in store.evidence_refs()}
+        assert rows[first.evidence_id]["contradicts"] is None
+        assert rows[second.evidence_id]["contradicts"] == first.evidence_id
+        assert len(store.evidence_refs()) == 2
+        store.close()
+
+    def test_a_contradiction_survives_a_replay_from_the_chain_alone(self, tmp_path: Path) -> None:
+        """L-2's payoff for the new column: it rides in the event, so boot recovery reproduces the link."""
+        audit, store = _durable(tmp_path)
+        first = _okx(audit, store)
+        second = record_evidence(
+            audit=audit,
+            store=store,
+            source="bybit",
+            observed_at=OBSERVED,
+            retrieved_at=RETRIEVED,
+            contradicts=first.evidence_id,
+        )
+        conn = sqlite3.connect(tmp_path / "nexus.db", isolation_level=None)
+        conn.execute("DELETE FROM evidence_ref")
+        conn.execute("DELETE FROM op_projection")
+        conn.close()
+        assert store.counts()["evidence_ref"] == 0
+
+        assert len(reproject_missing(audit=audit, store=store)) >= 2
+        replayed = store.get_evidence_ref(second.evidence_id)
+        assert replayed is not None
+        assert replayed["contradicts"] == first.evidence_id
+        assert verify_evidence_checksum(replayed), "the recomputed checksum survives the round trip"
+        store.close()
+
+    def test_the_new_column_joined_the_covered_set(self) -> None:
+        """F-21 one column at a time: a stored field the checksum does not cover is a field that can change
+        undetected, and neither of the two documented exclusions applies to ``contradicts`` — it is known at
+        write time and is not the value being computed. The guard that derives the covered set from
+        ``PRAGMA table_info`` is what made this one decision rather than two."""
+        assert "contradicts" in CHECKSUMMED_FIELDS
+        assert len(CHECKSUMMED_FIELDS) == 10
+        assert CHECKSUMMED_FIELDS.count("contradicts") == 1
+        assert "checksum" not in CHECKSUMMED_FIELDS and "audit_ref" not in CHECKSUMMED_FIELDS
 
 
 class TestReadsAreOrdered:

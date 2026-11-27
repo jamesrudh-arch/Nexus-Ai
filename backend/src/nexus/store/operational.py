@@ -275,6 +275,16 @@ class OperationalStore(Protocol):
         self, *, dossier_id: str | None = None, limit: int = 50
     ) -> tuple[dict[str, Any], ...]: ...
 
+    def get_evidence_ref(self, evidence_id: str) -> dict[str, Any] | None: ...
+
+    def save_memory_item(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None: ...
+
+    def memory_items(
+        self, *, kind: str | None = None, scope: str | None = None, limit: int = 50
+    ) -> tuple[dict[str, Any], ...]: ...
+
+    def get_memory_item(self, memory_id: str) -> dict[str, Any] | None: ...
+
     def instruments(self) -> tuple[dict[str, Any], ...]: ...
 
     def venue_mappings(self, *, instrument_id: str | None = None) -> tuple[dict[str, Any], ...]: ...
@@ -994,14 +1004,24 @@ class SqliteOperationalStore:
 
     # -- intelligence memory (Stage 8) -----------------------------------
     #
-    # Two of the three intelligence-memory tables now have a writer: `dossier` (Stage 8.3, audited as
-    # `dossier.opened`) and `evidence_ref` (Stage 8.2, audited as `evidence.recorded`). `memory_item` is
-    # still schema-only and arrives with stage 10, together with the three columns F-18 wants and D-051
-    # deferred to that batch. The evidence writer is deliberately usable before a dossier exists —
-    # `dossier_id` is nullable — and the dossier writer is deliberately usable before any evidence does.
+    # All three intelligence-memory tables now have a writer: `evidence_ref` (Stage 8.2, audited as
+    # `evidence.recorded`), `dossier` (Stage 8.3, audited as `dossier.opened`) and `memory_item` (Stage 8.5,
+    # audited as `memory.recorded`, with migration 0005's three columns and `evidence_ref.contradicts`).
+    # None of the three has a caller: every writer is built and unwired on purpose, and each batch's test
+    # that scans `src/nexus` for calls says so as a property of the tree rather than as a count that goes
+    # stale. Wiring one means deciding what the system should research, remember and cite, and no ruling
+    # has made that decision yet.
     #
-    # Both are projections, not records: `INSERT OR REPLACE` into a table the audit chain can rebuild,
+    # The evidence writer is deliberately usable before a dossier exists — `dossier_id` is nullable — the
+    # dossier writer before any evidence does, and the memory writer before either: it names its provenance
+    # by `evidence_id`, and a belief recorded before the evidence graph is populated is a belief with an
+    # empty provenance list, which the writer refuses only when a confidence is present.
+    #
+    # All three are projections, not records: `INSERT OR REPLACE` into a table the audit chain can rebuild,
     # which is why a replayed event must carry its own timestamps rather than inherit the replay's clock.
+    # For the same reason none of these `save_*` methods re-runs its writer's refusals — a refusal that
+    # depends on reading another table could fail a replay, and boot recovery would then be unable to
+    # reproduce a row the chain already holds (see `save_dossier`).
 
     def save_dossier(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None:
         """Persist one research dossier.
@@ -1089,6 +1109,15 @@ class SqliteOperationalStore:
         still accepts an empty string — so the refusal
         is here rather than left to the caller, because an evidence row that cannot say when it was
         observed cannot support a decision anyone can audit.
+
+        ``contradicts`` arrived with migration ``0005_memory_beliefs`` (F-18's fourth gap: nothing could
+        record that two sources disagree) and is stored as given, or ``NULL``. What this method does *not*
+        do is check that the row it names exists. The column carries a ``REFERENCES evidence_ref`` clause
+        that ``PRAGMA foreign_keys`` leaves unenforced, so SQLite accepts a dangling parent without
+        comment; the refusal lives in ``intelligence.evidence.record_evidence``, which can see the store
+        and name the row that is missing. Putting it here instead would make boot recovery depend on a
+        read and could fail the replay of an event the chain already holds — the reason ``save_dossier``
+        gives for its own unenforced foreign key.
         """
         evidence_id = str(payload.get("evidence_id") or "")
         if not evidence_id:
@@ -1108,8 +1137,8 @@ class SqliteOperationalStore:
             conn.execute(
                 """INSERT OR REPLACE INTO evidence_ref
                    (evidence_id, dossier_id, source, kind, observed_at, retrieved_at, data_status,
-                    locator, checksum, payload, audit_ref)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    locator, checksum, payload, audit_ref, contradicts)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     evidence_id,
                     _text(payload.get("dossier_id")),
@@ -1122,6 +1151,7 @@ class SqliteOperationalStore:
                     _text(payload.get("checksum")),
                     dumps_canonical(payload.get("payload") or {}),
                     _text(audit_ref),
+                    _text(payload.get("contradicts")),
                 ),
             )
             self._mark(conn, audit_ref, "evidence_ref", evidence_id)
@@ -1142,6 +1172,128 @@ class SqliteOperationalStore:
             item["payload"] = loads_json(item.get("payload")) or {}
             out.append(item)
         return tuple(out)
+
+    def get_evidence_ref(self, evidence_id: str) -> dict[str, Any] | None:
+        """One evidence row by id, or ``None``.
+
+        Added in Stage 8.5 because two writers need to know whether a row exists before they point at it:
+        ``record_evidence`` refuses a dangling ``contradicts``, and ``record_memory_item`` refuses a
+        dangling ``evidence_ids`` entry. ``PRAGMA foreign_keys`` is off, so the database will not refuse
+        either, and scanning ``evidence_refs(limit=…)`` to answer the question would return the wrong
+        answer once the table is larger than the limit — a false negative that looks like a refusal with a
+        reason. Reading by primary key cannot.
+        """
+        rows = self._query("SELECT * FROM evidence_ref WHERE evidence_id = ?", (evidence_id,))
+        if not rows:
+            return None
+        item = dict(rows[0])
+        item["payload"] = loads_json(item.get("payload")) or {}
+        return item
+
+    def save_memory_item(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None:
+        """Persist one memory item: what the system learned, and what it learned it on.
+
+        ``created_at`` comes from the payload when it carries one, for the two reasons ``save_dossier``
+        gives: the applied schema has no ``DEFAULT now()`` (one of the four defaults ``docs/15`` §9.1
+        records as lost between the two DDLs), and a replayed ``memory.recorded`` must reproduce the row it
+        first wrote rather than restamp it with the replay's clock. ``created_at`` is the *record* time and
+        is not ``valid_from``, which is when the claim starts to hold in the world — collapsing the two
+        would be the same mistake F-14 named, in a different pair of columns.
+
+        The three columns migration ``0005_memory_beliefs`` added are stored as given. None of them is
+        ``NOT NULL`` without a default, and none is checked here: a belief whose confidence has no validity
+        interval and no change conditions is what ``docs/10`` §3.1 calls a defect, and the refusal lives in
+        ``intelligence.memory.record_memory_item``, because a projection that refused a row would fail the
+        replay of an event the chain already holds.
+
+        ``cited_by`` is stored from the payload as canonical JSON text (the ``TEXT[]`` translation). The
+        writer always emits an empty list: an item cannot cite itself into being cited, and a caller who
+        could set ``cited_by`` could fabricate the citation graph ``docs/10`` §3.1 asks the view to render.
+        """
+        memory_id = str(payload.get("memory_id") or "")
+        if not memory_id:
+            raise PersistenceError("a memory item cannot be persisted without a memory_id")
+        body = str(payload.get("body") or "")
+        if not body:
+            raise PersistenceError(
+                "a memory item cannot be persisted without a body: it is the one column the schema makes "
+                "NOT NULL with no default, and an item that says nothing cannot be cited by anything"
+            )
+        assert_no_secrets(dict(payload))
+        now = iso_utc(utc_now())
+        with self._transaction() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO memory_item
+                   (memory_id, kind, scope, subject, body, created_at, superseded_by, cited_by,
+                    confidence, payload, audit_ref, valid_from, valid_until, change_conditions)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    memory_id,
+                    str(payload.get("kind") or "OBSERVATION"),
+                    str(payload.get("scope") or "GLOBAL"),
+                    str(payload.get("subject") or ""),
+                    body,
+                    _text(payload.get("created_at")) or now,
+                    _text(payload.get("superseded_by")),
+                    _json_list(payload.get("cited_by")),
+                    _text(payload.get("confidence")),
+                    dumps_canonical(payload.get("payload") or {}),
+                    _text(audit_ref),
+                    _text(payload.get("valid_from")),
+                    _text(payload.get("valid_until")),
+                    str(payload.get("change_conditions") or ""),
+                ),
+            )
+            self._mark(conn, audit_ref, "memory_item", memory_id)
+
+    def memory_items(
+        self, *, kind: str | None = None, scope: str | None = None, limit: int = 50
+    ) -> tuple[dict[str, Any], ...]:
+        """Newest first, which is the order ``ix_memory_created`` (``created_at DESC``) already keeps.
+
+        Filtering by ``kind`` uses ``ix_memory_kind``, which ``0002_memory`` declared and nothing had ever
+        queried until now — ``docs/10`` §3.1's "memory & knowledge (type tabs)" is the reader it was for.
+        Filtering by ``scope`` scans: no index declares it, and adding one is a migration rather than a
+        query change. At the volumes Stage 8 writes that is invisible, and it is recorded here rather than
+        left to be discovered, which is what ``dossiers`` does for its own scan.
+
+        What this method deliberately does not offer is a "currently valid" filter. ``valid_from`` and
+        ``valid_until`` bound a claim in the world, and deciding which items a reader should see now is a
+        judgement about expiry that no ruling has made — F-18's second gap is still open and there is no
+        ``expires_at`` column to filter on either. Serving every row and letting the caller read the
+        interval is the honest version; a filter here would quietly become the expiry policy.
+        """
+        sql = "SELECT * FROM memory_item"
+        clauses: list[str] = []
+        args: list[Any] = []
+        if kind is not None:
+            clauses.append("kind = ?")
+            args.append(kind)
+        if scope is not None:
+            clauses.append("scope = ?")
+            args.append(scope)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY created_at DESC, memory_id ASC LIMIT ?"
+        args.append(int(limit))
+        rows = self._query(sql, tuple(args))
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            item = dict(row)
+            item["payload"] = loads_json(item.get("payload")) or {}
+            item["cited_by"] = _str_tuple(item.get("cited_by"))
+            out.append(item)
+        return tuple(out)
+
+    def get_memory_item(self, memory_id: str) -> dict[str, Any] | None:
+        """One memory item by id, or ``None``. The read the writer needs to refuse a second 'first' write."""
+        rows = self._query("SELECT * FROM memory_item WHERE memory_id = ?", (memory_id,))
+        if not rows:
+            return None
+        item = dict(rows[0])
+        item["payload"] = loads_json(item.get("payload")) or {}
+        item["cited_by"] = _str_tuple(item.get("cited_by"))
+        return item
 
     # -- projection bookkeeping (L-2) ------------------------------------
 
