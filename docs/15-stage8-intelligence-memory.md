@@ -1500,3 +1500,610 @@ repository has ever run, and not changed by anything here.
 **This is a gate change, so it is recorded here and in `docs/00` (O-011 recurred, posture unchanged) and `docs/07`; it does not reopen O-011, which closed on readability, and readability is what made this triage possible in one step.**
 
 **Gate at `8482179`:** `1259 passed / 2 skipped / 0 failed` (+1, the new hygiene test), hygiene **84**, ruff clean, **91** files formatted, mypy strict clean on **61**. No finding id is consumed: this is not a defect in Nexus-AI's code but an upstream package version, so it is recorded against **O-011**, not against F-22's sequence. **The next finding id remains F-23.**
+
+---
+
+## 11. Stage 8.4 delivered (D-052's ruling 2): four adapters get a receipt time, and the run that proved it first failed on a test the offline suite cannot see
+
+D-052's ruling 2 scoped this batch narrowly: *"F-14's expensive half alone. A real receipt time in
+`okx`, `bybit`, `binance_vision` and `dukascopy`, and nothing else: no dossier work, no new tables, no
+writer wiring. Its own gate and its own live runs before and after, so a regression is attributable to it
+and to nothing else. `O-012` stays `OPEN` until it lands."*
+
+That is what shipped, in two commits: `8cdc871` (22 files, +1901/−144) and `bbfe95f` (2 files, +134/−6).
+§10.9 ended by naming this batch as the one that picks the skew table up again, *"and it needs runs before
+and after the change it makes."* Both runs are in §11.10, and the one in between failed.
+
+### 11.0 The defect, in the code: two fields, one value, no record of arrival
+
+F-14 as recorded in `docs/14` §4.2 named eight sites — `okx.py:216,:380`; `bybit.py:353,:416,:439`;
+`binance_vision.py:339`; `dukascopy.py:253` — at which an adapter bound `observed_at` to venue-supplied
+time. Every one of those line numbers was re-verified against the working tree before this batch started,
+and all eight were still exactly what the finding said. (The finding cites the adapters by bare filename;
+they live in `backend/src/nexus/ingestion/`, not in a `src/nexus/ingest/adapters/` — resolved with
+`git ls-files`, because a path quoted in a finding can be wrong while its line numbers are right.)
+
+The consequence is easier to state than to see. A record carried two timestamp fields and both held the
+venue's value:
+
+```python
+# what every adapter produced before this batch
+TickRecord(..., observed_at=to_utc(entry["ts"]), venue_timestamp=to_utc(entry["ts"]))
+```
+
+So `observed_at` — a field whose name says *we observed this at* — held a number produced by somebody
+else's clock, and the interval between the two fields, the only thing that would make receipt latency
+measurable, was identically zero everywhere in the system. Two findings followed, both written down when
+F-14 was raised: §3.5's Δt column measured venue-timestamp skew while its prose called it the harness's
+fetch interval, and any staleness gate computed against the venue's clock while its details called the
+number ours.
+
+### 11.1 The transport grows two methods, and the receipt time is stamped before the body is decoded
+
+`Transport` went from three methods to five. `fetch_json`/`fetch_bytes` return
+`Fetched(payload, received_at, url, attempts)`; `get_json`/`get_bytes` stay payload-only. The second pair
+is not legacy to be removed — it is for callers that receive nothing worth timing: reachability probes,
+and `verify_layout`, which is handed bytes rather than fetching them.
+
+The stamp is taken **before** decode, inside `_request`:
+
+```python
+# Stamped before the body is decoded, so the receipt time is the moment the
+# response was in hand and not the moment we finished reading it.
+received_at = utc_now()
+payload = response.content if want_bytes else response.json()
+```
+
+That ordering is a measurement decision, not a style one. A Dukascopy hour expands roughly 2.5× under LZMA
+and a Binance Vision dump unzips before it parses; charging that CPU to the receipt time would inflate
+every latency this system reports by an amount that depends on the payload's compression ratio. The run
+in §11.10 shows the size of what is at stake: one bi5 hour arrived as 41,710 bytes and decompressed to
+181,040, and one kline dump arrived as 73,320 zipped bytes holding 1,440 rows.
+
+`RecordingTransport` grew an injectable clock (`now_fn=utc_now`) and a receipt log. The clock is what makes
+the gate in §11.6 possible: a fixture transport pinned to a date a year away from the venue stamps in the
+same payload cannot have one copied into the other without a test noticing.
+
+### 11.2 Four adapters, four different shapes of one defect
+
+| adapter | what `_get` returned before | what it returns now | the venue's stamp comes from |
+|---|---|---|---|
+| `okx` | `(data, None)` — the receipt time was **hard-coded to `None`** | `(data, received_at)` | the entry's own `ts`, or `None`: OKX's public envelope publishes no server time at all |
+| `bybit` | `(result, server_time)` | `(result, server_time, received_at)` | the entry's `ts`, falling back to the envelope's `time` — Bybit is the one venue here that publishes its own envelope clock |
+| `binance_vision` | payload only | `Fetched` via `fetch_bytes` | the CSV's own timestamp column, with `epoch_unit` detecting µs vs ms |
+| `dukascopy` | payload only | `Fetched` via `fetch_bytes` | **derived**: `hour_start + offset_ms`. A bi5 tick has no timestamp of its own, so its time is the venue's declaration read off the file's own hour |
+
+Two details in that table are the whole content of the batch.
+
+**Bybit's fallback survives, and moves.** An entry with no `ts` used to inherit the envelope's `time` into
+`observed_at`, so a field named for our observation carried Bybit's clock even when the entry said nothing
+about when it happened. It still inherits it — that remains the best available statement about when the
+quote happened — and it is now recorded in the field that says whose statement it is. A fallback to
+*their* clock belongs in `venue_timestamp`; a fallback into `observed_at` is how the defect reproduced
+itself on the rows that had no stamp of their own.
+
+**OKX publishes no envelope time, so its instrument records may have no venue stamp at all.** The honest
+value there is `None`. Copying our receipt time into `venue_timestamp` would satisfy the type, satisfy any
+`is not None` assertion, and assert something about OKX's clock that OKX never said — F-14's error told in
+the other direction. `None` is why `TickRecord.observed_at`, `BarRecord.observed_at` and
+`DukascopyHour.received_at` are all optional in the type: optional offline, where a parse from bytes on
+disk received nothing, and guaranteed on the live path, where the transport always has one. The guarantee
+is asserted rather than trusted (§11.6).
+
+### 11.3 What had to move off the receipt clock, and the one move that would have been silent
+
+A bulk download gives **one** arrival instant to every row in it. So anywhere that ordered, bucketed or
+partitioned on `observed_at` was reading a constant and calling it a time. Five places did:
+
+| site | what it did | what it does now | what it would have cost |
+|---|---|---|---|
+| `parquet_store._time_of` | partition key = `observed_at` | `open_time` for bars, `venue_timestamp` otherwise | **the silent one** — see below |
+| `archive/bars.py` | naive check, future check, sort key, `bucket_start`, `_accumulate` | all five read `venue_timestamp` | every bar built from a downloaded dump bucketed into one interval |
+| `pipeline` `market.ticks.archived` | `min`/`max` of `observed_at` published as `first`/`last` | `min`/`max` of `event_time(t)` | one instant published twice and called a range |
+| `dedupe_ticks` | sorted on `observed_at` | sorted on `event_time`, total over `None` | a bulk download's dedupe order became the file's row order |
+| okx / bybit / binance-vision trade ordering | sorted on `observed_at` | sorted on `event_time` | "chronological" trades in whatever order the venue served them |
+
+The partition key is the one that would not have announced itself. `observed_at` for a downloaded dump is
+today's date, so a day of 2025 trades fetched today would have filed under `year=2026/month=11/day=27`;
+every backfilled day would have collapsed into the partition of the day the backfill ran. The rows would
+have written, read back, and answered a date-range query — for the wrong dates. Nothing raises on a
+partition key that is merely wrong.
+
+§11.10 has the direct evidence, from a real download rather than a fixture:
+
+```
+binance-vision.bars count=1440 interval=1m span_hours=23.98
+                    first=2026-11-20T00:00:00+00:00 last=2026-11-20T23:59:00+00:00
+                    received_at=2026-11-27T08:21:42.878087+00:00 distinct_receipt_times=1
+                    rows_with_a_venue_stamp=1440
+```
+
+One arrival instant, 1,440 event times spanning 23.98 hours of a day seven days earlier. That row is the
+whole argument for the partition-key change, measured rather than reasoned about.
+
+Four separate `or` chains for "the event time of this tick" became one named function, `records.event_time`,
+because the rule has to mean the same thing at every call site and four copies of it will not stay the same.
+Its floor case returns `datetime.min` rather than raising, so ordering stays total for hand-built records;
+every consumer that *acts* on the value refuses a tick with no venue stamp under its own reason first.
+
+### 11.4 What this batch does not do
+
+Ruling 2 said "and nothing else", and the boundaries are stated where a reader would look for them.
+
+**No new gate.** `freshness` publishes two numbers beside `age_seconds` — `venue_age_seconds` and
+`receipt_minus_venue_s` — and the threshold is applied to ours alone. The two directions F-14 predicted are
+now pinned as tests rather than described:
+
+* a venue running **behind** made stale data look fresh, which is the dangerous direction because it is the
+  one that allows new risk: our receipt 30 s old, the venue's stamp 2 s old, and a gate aging the venue's
+  clock says `LIVE`;
+* a venue running **ahead** made fresh data look stale, and further ahead still tripped the
+  future-timestamp fault — a *clock fault in our system* caused entirely by somebody else's clock.
+
+Neither number gates anything, because a threshold on a venue's clock would fail closed whenever that venue
+drifted, and a venue's clock is not ours to police. A test sweeps the venue stamp across five values
+spanning an hour either side of now and asserts the verdict does not move.
+
+`venue_age_seconds` is deliberately **not** clamped by `core.time.age_seconds`. That helper clamps a future
+stamp to `0.0` on the contract that the gate flags it separately as a clock fault — and the flag reads our
+receipt time only. Clamping the venue's would report a stamp that has not happened yet as brand new, which
+is the one case the number exists to show.
+
+**Nothing is wired to `evidence_ref`.** `retrieved_at` is still a required argument supplied by the caller,
+and no caller in `src/` supplies one. What changed upstream is that a receipt time worth supplying now
+exists. `evidence.py` and `operational.py` gained a *pointer* saying so rather than being rewritten, because
+their paragraphs were ruled on at D-050 and still hold: `apparent_latency_seconds` still conflates network
+delay with clock offset, and a negative value is still evidence that the venue's clock runs fast rather
+than an error.
+
+**One `view_gap` changed kind, and the route says so.** §10.9 recorded that one of the nine gaps "waits on
+8.4". It was *"publication time in the evidence table"*, and 8.4 has now landed without filling it: a
+receipt time says when we got something, not when the source published it, so J-04's first of three times
+is exactly as unrecordable as it was. The served text was changed rather than left pointing at a batch the
+reader can go and find already merged — it now reads *"Stage 8.4 … has now landed without filling it …
+Nothing is scheduled for this gap now"* — and `test_intelligence_routes.py` pins that wording, because a
+gap that says "waiting on 8.4" after 8.4 merged sends the reader to a queue that is empty.
+
+### 11.5 Three tests that were passing for the wrong reason
+
+A test that passes is not evidence about the code unless it would fail on the wrong code. Three did not
+meet that bar after the partition key moved, and each was repaired rather than left green:
+
+* `test_naive_tick_time_is_refused` still passed — because the row now had *no* event time at all rather
+  than a naive one. Renamed and re-aimed at the venue's field, with a dedicated missing-event-time test
+  beside it.
+* `test_quote_without_observation_time_is_refused` — the archive needs the venue's event time, and the
+  name said otherwise. Renamed.
+* The archive's refusal message named `observed_at` while the check read `venue_timestamp`. A refusal that
+  points at the wrong field sends whoever reads it to fix a timestamp that was never the problem.
+
+And three adapter pins asserted only `observed_at is not None` (`test_adapters.py:473`, `:555`, `:786`),
+which the pre-8.4 code satisfied by copying the venue's stamp. They now pin an exact receipt clock a year
+away from the venue stamp in the same payload. Every fixture transport in `TestBybitAdapter` and
+`TestOkxAdapter` runs on that pinned clock, and the six shared `conftest` snapshots gained the venue's
+stamp too — otherwise every fixture in the suite is a pre-8.4 record with one clock, and a test written
+against it cannot tell the difference.
+
+Also folded in: a tick with no event time was counted by `archive/bars.py` as `NAIVE_TIMESTAMP`. It now has
+`MISSING_EVENT_TIME`, because the reason string is read by whoever has to fix the feed, and "your timestamp
+has no timezone" and "your feed published no timestamp" are different repairs.
+
+### 11.6 The gate, and proof that it is load-bearing
+
+`TestReceiptTimeIsOursAndVenueTimeIsTheirs` is the gate ruling 2 asked this batch to have of its own: 16
+tests across all four adapters. Every one asserts **both** halves. Asserting only `observed_at` would pass
+on an adapter that stamped our clock into *both* fields — the same defect with the clocks swapped — and
+asserting only `venue_timestamp` passes on the pre-8.4 code, which is what those three weak pins did.
+
+It ends by walking every record-producing surface of all four adapters — `quotes`, `trades`, `book`,
+`instrument_info`, `bars`, `fetch_klines`, `fetch_agg_trades`, `fetch_hour` — and requiring a receipt time
+from each record produced, so an endpoint added later without one fails there instead of quietly publishing
+records with no provenance. Beside it: `test_parsing_bytes_from_disk_invents_no_receipt_time`, which
+requires the opposite from the three parsers, because a capture replayed or a layout verified received
+nothing and stamping a local clock would assert a receipt that never happened.
+
+Verified by tampering rather than by reading. All **ten** record-construction sites in `okx.py` and
+`bybit.py` were reverted so that `observed_at` takes the venue's own value from the adjacent
+`venue_timestamp=` argument — five sites each, `to_utc(entry.get("ts"), …)`, `venue_ts` ×3, `open_time`,
+`server_time`, `bar.open_time`. That is F-14 restored faithfully in two of the four adapters: both fields
+hold one number again. The gate took **15 failures**, `1279 passed / 15 failed / 2 skipped`:
+
+```
+FAILED ...::test_okx_instruments_without_a_venue_stamp_do_not_borrow_ours
+FAILED ...::test_okx_bars_keep_the_event_time_and_gain_a_receipt_time
+FAILED ...::test_bybit_quotes_carry_our_receipt_time_and_the_entry_ts
+FAILED ...::test_bybits_server_time_fallback_lands_in_the_venues_field_not_ours
+FAILED ...::test_bybit_trades_share_one_receipt_time_and_are_ordered_by_venue_time
+FAILED ...::test_bybit_book_and_instruments_separate_the_two_clocks
+FAILED ...::test_bybit_bars_survive_the_field_by_field_rebuild
+FAILED ...::test_every_adapter_surface_produced_a_receipt_time
+FAILED TestBybitAdapter::test_instrument_info_extracts_contract_economics
+FAILED TestBybitAdapter::test_ticker_becomes_a_quote_with_decimal_prices
+FAILED TestOkxAdapter::test_ticker_becomes_a_quote
+```
+
+Twelve of the fifteen are the new gate class and three are the strengthened pre-existing pins of §11.5 —
+which is the point of strengthening them: a pin that only said `observed_at is not None` would have stayed
+green through a faithful restoration of the defect it was written near. The tamper was reverted and the
+suite re-run green (`1294 passed / 2 skipped`).
+
+**A correction to the figure this section first carried.** `8cdc871`'s commit message says eight tests
+failed. That number came from a `-k`-filtered run against a tamper that substituted
+`to_utc(entry.get("ts")) or received_at` at all five sites of each adapter by blind string replacement —
+an expression that is not valid at two of them (the `okx` bar rebuild and the `bybit` bar rebuild, where the
+variable in scope is `row`/`bar`, not `entry`), so those two raised `TypeError` instead of failing an
+assertion, and the filter excluded the three strengthened pins entirely. The measurement was therefore both
+undercounted and partly a crash report. Re-running it site by site gives fifteen. The correction is
+recorded here rather than in a rewritten message, and it is the thirteenth instance of this batch's
+recurring failure mode: a number published before the experiment that would have produced it was run
+correctly.
+
+### 11.7 F-23 — a protocol change cannot be checked against an implementation the offline suite cannot import (NEW, found by a run and closed in the same batch)
+
+**Status: `CLOSED`, in `bbfe95f`, by the run that found it. Ledger row `O-012` is unaffected; this is a
+separate defect in the verification harness, not in the adapters.**
+
+Run `45963867416` (`venue-verification`, `push`, at `8cdc871`) failed with one cause repeated thirteen
+times:
+
+```
+AttributeError: '_CapturingTransport' object has no attribute 'fetch_json'
+43 passed / 13 failed / 0 geo-blocked / 1 skipped of 57 live checks
+```
+
+Stage 8.4 grew `Transport` from three methods to five and moved every adapter to the new pair. There were
+four implementations in the repository and three were moved. The fourth was `_CapturingTransport` in
+`tests/test_live_endpoints.py` — a wrapper around a real `HttpTransport` that saves every response to disk,
+because those captures are the durable prize of a live run and the offline suite has never had a real
+payload.
+
+**The finding is not the omission. It is that nothing offline could have caught it.** That module skips at
+import unless `NEXUS_LIVE_VERIFY=1`, so in this sandbox the class is never constructed and no test among
+1,290 touches it. It is the blind spot `test_repo_hygiene.py` was written for, reached from the other side:
+that file exists because a `.gitignore` pattern hid six modules from a pushed commit and a suite running
+against the *working tree* could not see it. This is a defect invisible to a suite that can only exercise
+what it can *reach*.
+
+Which thirteen failed is itself evidence for §11.1's two-pair split. All five Bybit checks, all six OKX
+checks, the Binance Vision kline parse and Dukascopy's tick-band check failed — every path that fetches
+through an adapter. What passed: the URL-shape checks, which call `transport.get_bytes(url)` directly, and
+`DukascopyLiveLayout.verify_layout_passes_against_a_real_file`, which does the same and hands the bytes to
+a pure function. The receipt-less pair worked; the receipt-returning pair did not exist on the wrapper.
+The run was therefore *not* uniformly red, and its summary — `43 passed / 13 failed` with `0 geo-blocked`
+in one run and `5` in the next — could read as partial geo-blocking rather than as a defect. That is why
+the annotation names each failure's exception.
+
+**Correction to `bbfe95f`'s own commit message, disclosed rather than left standing.** That message said
+Dukascopy's checks passed because they go through `get_bytes`/`verify_layout`. Read against the full
+annotation that is wrong: `DukascopyLiveLayout.parsed_ticks_are_in_the_price_band` **failed**, because it
+goes through `fetch_hour` and therefore `fetch_bytes`. Only `verify_layout_passes_against_a_real_file`
+passed, for the reason given. The claim was written from the first 3,000 characters of the annotation,
+which is where that one `PASS` line appears and where the `FAIL` does not — the twelfth instance of this
+batch's recurring failure mode, publishing before verifying, and the reason §11.9 reads the whole
+annotation before writing anything about it.
+
+**The fix is a gate, not only the two methods.** `TestTransportImplementationsAreComplete` scans `src/` and
+`tests/` by AST for any class defining one of the four data methods and requires all five, naming the file
+and line of whatever falls short. Scanning rather than importing is the only way to gate a module that
+cannot run here. Verified load-bearing by tampering: renaming `_CapturingTransport.fetch_json` makes the
+scan fail offline with
+
+```
+backend/tests/test_live_endpoints.py:246 _CapturingTransport is missing ['fetch_json']
+```
+
+and restoring it makes it pass. A companion test asserts the scan finds exactly four implementations —
+`Transport`, `HttpTransport`, `RecordingTransport`, `_CapturingTransport` — because a scan that silently
+finds nothing passes forever, and that test is what fails if the wrapper is renamed or the scan stops
+reaching the one directory the suite cannot import. A third asserts the wrapper still *delegates*: a
+wrapper that grew its own `httpx` client to satisfy the protocol would capture payloads from a different
+code path than the one under test, and the captures would stop being evidence about the adapters'
+transport.
+
+Two things were kept deliberately. `get_json`/`get_bytes` on the wrapper now route through its own
+`fetch_*` methods, so there is one path to the wire and one place that saves a capture. And the JSON
+capture is still re-serialised rather than byte-faithful: `HttpTransport.fetch_json` decodes inside
+`_request`, so the original body is not reachable from a wrapper. Routing through `fetch_bytes` and decoding
+outside would capture it exactly — and would also move the decode out of `_request`'s retry loop, so a
+malformed body would stop being a retryable `IngestFault`. Byte fidelity of a capture is not worth changing
+fault semantics for, and the trade is written in the wrapper's comment rather than left to be rediscovered.
+
+### 11.8 The live harness measures the skew inside one record now
+
+Before this batch the skew series was *inferred*: an interval read from venue stamps, compared against an
+interval read from a wall clock, across two runs. `_record_cross_endpoint` now publishes both directly,
+and adds the measurement F-14 said did not exist anywhere in the system — the distance between the two
+clocks **inside a single record**.
+
+| key | before 8.4 | after 8.4 |
+|---|---|---|
+| `dt_observed_s` | the venue's interval, from `observed_at` — which held venue stamps | **our** interval, from two receipt times |
+| `dt_venue_s` | *(did not exist)* | the venue's interval, from two `venue_timestamp` values |
+| `dt_wall_s` | unchanged | unchanged |
+| `skew_venue_over_wall` | *(published as `dt_observed_s / dt_wall_s`)* | the same quantity, under a key that names the clock it came from |
+| `bps_per_s_venue` | *(did not exist)* | the gap over the venue's interval |
+| `receipt_lag_quotes_s`, `receipt_lag_book_s` | *(did not exist)* | receipt minus venue, inside one record |
+
+**The rename is the honest part, and it is the part most likely to be misread later.** `dt_observed_s`
+measured the venue's interval before 8.4 and measures ours after it, so the published series changed
+meaning at `8cdc871` without changing its key. That is stated in the function's docstring rather than left
+to be discovered by diffing two annotations, and the offline pins carry both the old literals and the new
+keys so the arithmetic that produced §10.8's table is still checkable.
+
+Every endpoint line gained the same treatment: `venue_timestamp`, `receipt_lag_s`, `received_at`,
+`distinct_receipt_times` and `rows_with_a_venue_stamp`. `.trades`'s `newest` moved to the venue's stamps,
+because `max` of a shared receipt instant publishes one arrival time and calls it the newest trade — and a
+feed that publishes no stamp at all gets `newest=None`, not our arrival substituted for it.
+`.bars` counts `open_time` as its event time, since a bar has always carried its event time there and
+deliberately has no second field for it; counting `venue_timestamp` on a bar line would report zero rows
+with an event time for a feed that gave one on every row.
+
+### 11.9 Before and after: the two runs ruling 2 asked for
+
+Both runs are `venue-verification`. A correction to how this record has counted runs, discovered by
+reading `.github/workflows/venue-verification.yml` rather than by inferring it from a run list: that
+workflow's `push` and `pull_request` triggers are **path-filtered** to
+`backend/src/nexus/ingestion/**`, `backend/src/nexus/data/records.py`,
+`backend/tests/test_live_endpoints.py` and the workflow file itself. So a commit produces **four** runs
+when it touches an adapter or the harness, and **three** when it does not. §10.8's "`ffc4128` triggered
+three runs" and §10.11's "`8482179` produced three runs" are both correct and neither explains why: those
+commits touched `intelligence/`, `api/`, documents and `backend/Dockerfile`, none of which match. **A run
+count is a property of what changed, not a constant** — the same lesson §10.8 drew about a count that
+re-triggers per push, applied to the count of runs themselves.
+
+| | before | (failed, in between) | after — run A | after — run B |
+|---|---|---|---|---|
+| commit | `975dc64` | `8cdc871` | `bbfe95f` | `bbfe95f` |
+| run | `45953629348` | `45963867416` | `45964962991` | `45964969570` |
+| trigger | `pull_request` | `push` | `push` | `pull_request` |
+| job / check-run | `140354959639` | `140387781536` | `140391348401` | `140391370141` |
+| conclusion | `success` | `failure` | `success` | `success` |
+| summary | `44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49` | `43 passed / 13 failed / 0 geo-blocked / 1 skipped of 57` | `52 passed / 0 failed / 5 geo-blocked / 0 skipped of 57` | `51 passed / 0 failed / 5 geo-blocked / 1 skipped of 57` |
+| verdict line | `PARTIAL - 5 geo-blocked` | `AttributeError` ×13 | `PARTIAL - 5 geo-blocked` | `PARTIAL - 5 geo-blocked` |
+
+Both "after" runs are the same commit through the same workflow, minutes apart, and they are quoted
+separately rather than averaged: run B's `1 skipped` is not attributable from here, because its annotation
+truncates earlier than run A's (`5185 escaped characters over the cap` against `4372`) and the skip falls in
+the Dukascopy section past the cap. Naming it would be a guess.
+
+The `of 49` → `of 57` is this batch's eight new live-module tests, and it is the reason the offline count
+moved by 35 and not by 43: those eight are collected by the live run, not by the offline suite, which skips
+the module at import. `8cdc871`'s own `ci` runs were both `success` (`45963867374` push, `45963877958`
+pull_request) — 1,290 offline tests green on a commit whose live run was red, which is F-23's blind spot
+stated as a pair of conclusions.
+
+**The cross-endpoint row, verbatim from each annotation.**
+
+Before, at `975dc64`:
+
+```
+okx.cross_endpoint quotes_mid=61658.75 book_mid=61666.55 gap_bps=1.265 dt_observed_s=1.137
+                   dt_wall_s=0.35 bps_per_s_observed=1.113 bps_per_s_wall=3.617
+                   quoted_spread_bps=0.016 asserts_agreement=False
+```
+
+After, at `bbfe95f`:
+
+```
+okx.cross_endpoint quotes_mid=61925.35 book_mid=61939.75 gap_bps=2.325 dt_observed_s=0.116
+                   dt_venue_s=0.498 dt_wall_s=0.244 skew_venue_over_wall=2.037
+                   bps_per_s_observed=20.093 bps_per_s_venue=4.669 bps_per_s_wall=9.513
+                   receipt_lag_quotes_s=0.436 receipt_lag_book_s=0.053
+                   quoted_spread_bps=0.016 asserts_agreement=False
+```
+
+After, run B (`45964969570`, `pull_request`), same commit:
+
+```
+okx.cross_endpoint quotes_mid=61963.15 book_mid=61963.15 gap_bps=0.0 dt_observed_s=0.172
+                   dt_venue_s=0.239 dt_wall_s=0.355 skew_venue_over_wall=0.673
+                   bps_per_s_observed=0.0 bps_per_s_venue=0.0 bps_per_s_wall=0.0
+                   receipt_lag_quotes_s=0.153 receipt_lag_book_s=0.086
+                   quoted_spread_bps=0.016 asserts_agreement=False
+```
+
+**What converged, and what that means.**
+
+| reading | before (`975dc64`) | after, run A | after, run B |
+|---|---|---|---|
+| `dt_observed_s / dt_wall_s` | `1.137 / 0.35` = **3.25×** | `0.116 / 0.244` = **0.48×** | `0.172 / 0.355` = **0.48×** |
+| venue interval / wall clock | not separable — it *was* `dt_observed_s` | `0.498 / 0.244` = **2.037×** | `0.239 / 0.355` = **0.673×** |
+| receipt minus venue, quote | not measurable anywhere in the system | **0.436 s** | **0.153 s** |
+| receipt minus venue, book | not measurable anywhere in the system | **0.053 s** | **0.086 s** |
+| `gap_bps` | 1.265 | 2.325 | 0.0 |
+
+**The convergence reproduces, and the venue's own skew does not.** Two runs of the same commit, minutes
+apart, both put our interval at 0.48× the wall clock around the same two calls — one reading each,
+independently computed, agreeing to two decimal places. Before the batch the same ratio was 3.25×, and the
+record could not say whose clock the disagreement belonged to. After it, ours is shorter than the wall
+clock by roughly the harness's own overhead between starting its timer and issuing the first request, which
+is the direction that difference should point, and it points that way twice.
+
+The venue's reading moved 3× in the same four minutes: 2.037× then 0.673×, the second **below one**. That
+is not a contradiction and it is the reason §10.8 states this quantity as a range rather than a number —
+run 26's 0.80× was until now the only published reading under one, and run B is the second. What the two
+runs agree on is not the value but that the value is now attributable: `skew_venue_over_wall` says whose
+interval it is, which `dt_observed_s` could not.
+
+Before the batch, the interval read from `observed_at` was 3.25× the interval the harness timed around the
+same two calls, and the record could not say whose clock the disagreement belonged to. After it, our own
+interval reads 0.116 s against a wall clock of 0.244 s — the same order, and shorter than the wall clock by
+roughly the harness's own overhead between starting its timer and issuing the first request, which is the
+direction that difference should point. The venue's interval, now separable, is 0.498 s: **2.037× the wall
+clock**, inside the range §10.8 published as a property (0.80×–3.97×) and attributable at last to the clock
+it came from.
+
+And the four `receipt_lag_*` numbers are the measurement F-14 said did not exist. In run A OKX stamped the
+ticker 0.436 s before we received it and the book 0.053 s before; in run B, 0.153 s and 0.086 s. The quote
+lag exceeds the book lag in **both** runs, which is the ticker endpoint updating less often than the book
+endpoint — the *conclusion* run 25 reached indirectly in `docs/14` §4.1, now readable off one row of one
+annotation instead of being inferred by comparing two runs, and reproduced in a second.
+
+**Other rows worth keeping, all verbatim.**
+
+```
+okx.quotes  count=1 bid=61924.5 ask=61924.6 spread_bps=0.016
+            observed_at=2026-11-27T08:21:41.540466+00:00
+            venue_timestamp=2026-11-27T08:21:41.142000+00:00 receipt_lag_s=0.398
+            distinct_receipt_times=1 rows_with_a_venue_stamp=1
+okx.trades  count=50 buy=1 sell=49 unspecified=0
+            newest=2026-11-27T08:21:40.493000+00:00
+            received_at=2026-11-27T08:21:41.679179+00:00 distinct_receipt_times=1
+            rows_with_a_venue_stamp=50
+            venue_time_first=...T08:21:40.237000+00:00 venue_time_last=...T08:21:40.493000+00:00
+okx.bars    count=100 interval=1m span_hours=1.65 received_at=...T08:21:41.810568+00:00
+            distinct_receipt_times=1 rows_with_a_venue_stamp=100
+okx.book    depth=40 entitlement=LIVE receipt_lag_s=0.056 distinct_receipt_times=1
+```
+
+Fifty trades, one receipt instant, event times spanning 0.256 s. A hundred one-minute candles spanning
+1.65 hours, one receipt instant. That is `distinct_receipt_times=1` doing the work §11.3's table describes,
+measured on live data rather than on a fixture.
+
+`buy=1 sell=49` in run A and **`buy=50 sell=0`** in run B — the same endpoint, the same commit, four
+minutes apart, one 49/1 and one entirely one-sided. Neither is a failure, by P-7's ruling at Stage 7.3, and
+the pair is the strongest vindication of it this record has: a threshold on side balance chosen anywhere
+between 50/0 and 49/1 would have failed run B and passed run A on identical code. The "before" run had
+`buy=48 sell=2`. The distribution is recorded as counts rather than as the set of sides that happened to
+appear precisely so this comparison is possible — `sides=['BUY']` is identical for a 50/0 minute and a
+25/25 one.
+
+**What the annotations still cannot show.** Both are truncated past the cap — the "after" one reports
+`4372 escaped characters over the cap` — so the Bybit rows and the Dukascopy tick rows are unreachable, as
+they were in the "before" run. The comparison is like-for-like on that account and no claim here rests on a
+Bybit or Dukascopy number. `PARTIAL - 5 geo-blocked` is unchanged and predates this batch: Bybit
+geo-blocks hosted runners (F-2, needs the D-021 VM).
+
+### 11.10 What this section could not claim, and one thing it now can
+
+§10.8's rule is that a skew series is stated as a range and a property, never as a count, because a count
+that re-triggers per push is stale on arrival. This section quotes **three** runs — one before, two after —
+and no series, under the authority ruling 2 gave ("its own live runs before and after"), and it does not
+extend §10.8's table on its own account: these are a before/after for one change, not members of an
+open-ended sequence. Whether the renamed key continues that sequence is question 2 in §11.13, and the
+answer changes what the published range says. It matters concretely: run B's `skew_venue_over_wall` is
+**0.673×**, below the 0.80× floor of §10.8's published range, so admitting it widens the range to
+**0.673×–3.97×** and admitting nothing leaves a published floor that a run of this repository's own CI has
+already gone below.
+
+One conclusion `docs/14` §4.1 reached indirectly is now readable off a single row. That section recorded
+run 25's finding — OKX's ticker `ts` lagged its book `ts` by 0.739 s while both responses arrived within
+0.294 s, so the ticker endpoint updates less often — and noted that F-14 meant the *mechanism* was
+misattributed even though the conclusion stood. The "after" row above measures the same thing directly:
+`receipt_lag_quotes_s=0.436` against `receipt_lag_book_s=0.053`. Same conclusion, one row, no inference
+across two runs.
+
+### 11.11 The gate
+
+| | at `975dc64` | at `8cdc871` | at `bbfe95f` |
+|---|---|---|---|
+| offline suite | `1259 passed / 2 skipped` | `1290 passed / 2 skipped` | **`1294 passed / 2 skipped`** |
+| live checks | 49 collected | 57 collected | **57 collected, `52 passed / 0 failed / 5 geo-blocked`** |
+| `test_repo_hygiene.py` | 84 | 84 | **88** |
+| `ruff check src tests` | clean | clean | **clean** |
+| `ruff format --check` | 91 files | 91 files | **91 files** |
+| `mypy src` | Success, 61 files | Success, 61 files | **Success, 61 files** |
+| source LOC (61 files) | 14,938 | 15,312 | **15,312** |
+| test LOC (30 files) | 16,214 | 17,597 | **17,725** |
+
+Both skips are pre-existing: `test_live_endpoints.py` (egress) and `test_archive_bars.py` (7m not
+modelled). Net new test functions are 43, of which 35 are collected offline and 8 belong to the live
+module — which is why the offline count moved by 35 and the live run's denominator by 8.
+
+The LOC figures are counted per revision from git (`git ls-tree` + `git show`, `.py` files under
+`backend/src` and `backend/tests`), not from the working tree, because a figure quoted for a commit has to
+be the figure that commit contains. Counted that way, `975dc64`'s test tree is 16,214 lines; the 16,074
+carried forward in this record's working notes was measured against a working tree and was 140 lines low.
+
+New tests by file: `test_adapters.py` +16, `test_data_quality.py` +9, `test_live_endpoints.py` +8,
+`test_repo_hygiene.py` +4, `test_parquet_archive.py` +4/−1 (one renamed), `test_pipeline.py` +2,
+`test_archive_bars.py` +1.
+
+**All four runs at `bbfe95f` are `success`**, read job by job rather than from the run list: `ci` push
+`45964962941` and `ci` pull_request `45964969608`, each with all five jobs green including
+`Container image (amd64 + arm64 build)` and `Runtime smoke test (container actually serves)`; and
+`venue-verification` push `45964962991` and pull_request `45964969570`. The image scan's annotation is
+unchanged from §10.11's, verbatim, in both `ci` runs:
+
+> `notice: no HIGH or CRITICAL fixable vulnerabilities in nexus-core%3Aci`
+
+so this batch did not disturb the posture O-011's recurrence resolved — which is worth stating, because
+§10.11 established that a documents-only push can go red on base-image drift and nothing in this batch
+would have noticed if it had.
+
+**Finding ids consumed: F-23** (§11.7, closed in the same batch). **The next finding id remains F-24.**
+
+### 11.12 Limitations of this batch
+
+1. **`O-012` closes on the adapters, not on the system.** A receipt time now exists in all four, and
+   nothing in `src/` writes it anywhere durable. `evidence_ref.retrieved_at` still has no caller, so the
+   number is produced and dropped. Ruling 2 forbade writer wiring in this batch; the consequence is that
+   receipt latency is now *measurable* and still not *measured* outside a live run's annotation.
+2. **F-22 is untouched.** The evidence checksum is still verified only on a read.
+3. **The captures are still re-serialised for JSON.** §11.7 states the trade: byte fidelity would move the
+   decode out of the retry loop.
+4. **No Bybit or Dukascopy number is quoted from either run.** Both annotations truncate before those rows.
+   The Bybit path is verified by the offline gate and by 13 checks that now pass, not by a published
+   measurement.
+5. **`receipt_minus_venue_s` and `receipt_lag_*_s` are not latency.** They conflate network delay with the
+   offset between the venue's clock and ours, exactly as `apparent_latency_seconds` does, and are labelled
+   as doing so wherever they appear. A negative value means the venue's clock runs fast; it is recorded,
+   not refused and not clamped.
+6. **Two readings under the new key are not a property.** §10.8's range came from eight pairs across runs
+   24–31; this batch adds two, four minutes apart, on one commit, and they differ by 3× (2.037× and
+   0.673×). That spread is the point rather than a weakness — it is why the quantity is published as a
+   range — but two samples from one commit cannot bound anything, and the geo-blocking that removes Bybit
+   from every hosted run is unchanged.
+7. **The AST scan gates method *presence*, not signatures.** A transport whose `fetch_json` took different
+   arguments would satisfy it. `mypy src` covers `src/`; the live module is not type-checked because it is
+   not under `src/`.
+8. **Nothing re-reads §3.5's Δt column.** That table's prose was already corrected when F-14 was raised;
+   its numbers were venue-timestamp skew and are now attributable as such, but the section was not
+   rewritten in this batch because ruling 2 scoped the batch to the adapters.
+
+### 11.13 Decision requested
+
+Four questions, each with one marked recommendation.
+
+**1. Is Stage 8.4 approved?** *Recommend: approve, recorded as D-053, with F-23 disclosed (§11.7) and with
+the correction to `bbfe95f`'s commit message disclosed in the same section.* Ruling 2's scope was kept:
+four adapters, no dossier work, no new tables, no writer wiring. Its own gate exists and was proven
+load-bearing by tampering. Its own live runs before and after exist, and the after run shows the
+convergence the batch was for — `dt_observed_s / dt_wall_s` from 3.25× to 0.48×, with the venue's own
+2.037× now separable and labelled. `O-012` moves to `CLOSED`. The alternative is to hold it open until a
+writer consumes the receipt time, which would make the ledger row a statement about §11.12's limitation 1
+rather than about the defect F-14 named.
+
+**2. Does the pre-8.4 skew series continue under the renamed key, and what happens to its published
+floor?** *Recommend: it continues, and the range is restated as `skew_venue_over_wall` **0.673×–3.97×**,
+with 8.4's two readings admitted as its ninth and tenth pairs.* The quantity is unchanged: every historical
+value was `dt_observed_s / dt_wall_s` where `dt_observed_s` was read from a field holding venue stamps,
+which is exactly venue-interval over wall-interval. Only the key moved, and a range that stops because a
+key was renamed would discard eight measurements to protect a name.
+
+The floor is the part that needs a ruling rather than a restatement. §10.8 published **0.80×–3.97×**, and
+0.80× (run 26) was the only reading below one. Run B measures **0.673×**, below that floor, on this
+repository's own CI. So either the range widens — which is what recommending it means, and which is
+consistent with §10.8's own warning that a floor claim must be scoped to the runs it was measured over — or
+the series stops here and 0.673× is recorded as a one-off outside it, which would leave a published floor
+that a run of this repository has already gone below and nobody has said so. The alternative to both is to
+start a new series at 8.4, defensible because the pre-8.4 values were computed by the harness from fields
+rather than published under this key, but it orphans the older range with nothing to compare against.
+
+**3. Is F-23's gate the right posture — an AST scan of test-only implementations, or should the wrapper
+move where the offline suite imports it?** *Recommend: keep the scan, and do not move the wrapper.* The
+scan names the file and line of any incomplete implementation, runs in the ordinary CI job, and was proven
+load-bearing by tampering. Moving `_CapturingTransport` into `src/` would put test scaffolding in the
+shipped package; moving it into an importable test helper module would let it be imported but not
+exercised, since constructing it needs an `HttpTransport` and a directory, and a test that imports a class
+without calling it proves only that the class exists — which the scan already proves more cheaply. The
+alternative worth naming is a `runtime_checkable` `isinstance` assertion, which checks method presence
+too, but cannot run against a module that skips at import.
+
+**4. What is the next batch?** *Recommend: stage 10's `memory_item` writer, as ruling 3 already ordered.*
+Nothing in §11 changes that ordering: 8.4 added no tables and no wiring, so the reason ruling 3 gave still
+holds — a dossier with no beliefs beside it is a case file with no conclusions in it, and that batch
+carries F-18's three columns plus `evidence_ref.contradicts`. The alternative is to wire `retrieved_at`
+first, closing §11.12's limitation 1 by giving the receipt time a destination; that is a smaller batch and
+it would make 8.4's number durable, but it writes evidence rows for data nobody has decided to collect,
+which is the step ruling 3 declined.
