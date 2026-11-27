@@ -57,6 +57,7 @@ from nexus.data.records import (
     BarRecord,
     BookLevel,
     BookRecord,
+    Fetched,
     HttpTransport,
     IngestFault,
     QuoteRecord,
@@ -269,15 +270,33 @@ class _CapturingTransport:
         path.write_bytes(body)
         self.saved.append(path.name)
 
+    # All five methods of `Transport`, not two. Stage 8.4 added `fetch_json`/`fetch_bytes` — the
+    # pair that returns a receipt time — and left `get_json`/`get_bytes` for callers that receive
+    # nothing to time. This wrapper implemented only the older pair, so every adapter that moved to
+    # the new one raised `AttributeError` against it, and the failure was invisible offline because
+    # this module skips without network egress: run 45963867416 reported `43 passed / 13 failed of
+    # 57` with the same `AttributeError` thirteen times. `tests/test_repo_hygiene.py` now scans for
+    # exactly this, so a protocol that grows a method cannot leave an implementation behind unseen.
+    async def fetch_json(self, url: str, *, params: dict[str, Any] | None = None) -> Fetched:
+        fetched = await self._inner.fetch_json(url, params=params)
+        # Re-serialised, not the bytes that arrived: the inner transport decodes before returning,
+        # so the original body is not reachable from here. Routing through `fetch_bytes` and
+        # decoding in the wrapper would capture it faithfully, and would also move the decode
+        # outside `_request`'s retry loop, so a malformed body would stop being a retryable
+        # `IngestFault`. Byte fidelity of a capture is not worth changing fault semantics for.
+        self._save(url, params, json.dumps(fetched.payload).encode("utf-8"))
+        return fetched
+
+    async def fetch_bytes(self, url: str, *, params: dict[str, Any] | None = None) -> Fetched:
+        fetched = await self._inner.fetch_bytes(url, params=params)
+        self._save(url, params, fetched.payload)
+        return fetched
+
     async def get_json(self, url: str, *, params: dict[str, Any] | None = None) -> Any:
-        result = await self._inner.get_json(url, params=params)
-        self._save(url, params, json.dumps(result).encode("utf-8"))
-        return result
+        return (await self.fetch_json(url, params=params)).payload
 
     async def get_bytes(self, url: str, *, params: dict[str, Any] | None = None) -> bytes:
-        result = await self._inner.get_bytes(url, params=params)
-        self._save(url, params, result)
-        return result
+        return (await self.fetch_bytes(url, params=params)).payload
 
     @property
     def calls(self) -> int:

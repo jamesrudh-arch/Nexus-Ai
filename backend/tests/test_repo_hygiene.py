@@ -1894,6 +1894,115 @@ class TestLiveEndpointVerificationIsGatedAndReadable:
             assert shape not in module, f"the live verification module mentions {shape!r}"
 
 
+class TestTransportImplementationsAreComplete:
+    """A protocol that grows a method must not leave an implementation behind, unseen.
+
+    Stage 8.4 added ``fetch_json``/``fetch_bytes`` to :class:`~nexus.data.records.Transport` — the
+    pair that returns a receipt time beside the payload — and kept ``get_json``/``get_bytes`` for
+    callers that receive nothing to time. Every adapter moved to the new pair. So did nothing else,
+    and the one other implementation in the repository was ``_CapturingTransport`` in
+    ``tests/test_live_endpoints.py``, which still offered only the older two.
+
+    The offline suite could not see it. That module skips at import unless ``NEXUS_LIVE_VERIFY=1``,
+    so the class is never even constructed here, and the failure surfaced only in a real run:
+    ``45963867416`` reported `43 passed / 13 failed of 57` with the same
+    ``AttributeError: '_CapturingTransport' object has no attribute 'fetch_json'`` thirteen times —
+    every Bybit, OKX and Binance Vision check, i.e. the whole of the batch's own evidence.
+
+    Scanning the source rather than importing it is the only way to gate a module that cannot run
+    here, and it is the same reason this file compares the working tree against git: both defects
+    were invisible to a suite that only exercises what it can reach.
+    """
+
+    MODULE = BACKEND / "tests" / "test_live_endpoints.py"
+
+    #: The five methods of the `Transport` protocol. `aclose` alone does not make a class a
+    #: transport — adapters have one too, and they are consumers, not implementations.
+    REQUIRED = frozenset({"fetch_json", "fetch_bytes", "get_json", "get_bytes", "aclose"})
+    IDENTIFYING = frozenset({"fetch_json", "fetch_bytes", "get_json", "get_bytes"})
+
+    def _implementations(self) -> list[tuple[str, int, str, frozenset[str]]]:
+        """Every class in `src/` and `tests/` that looks like a transport, with what it lacks."""
+        import ast
+
+        found: list[tuple[str, int, str, frozenset[str]]] = []
+        for root in (SOURCE_ROOT, BACKEND / "tests"):
+            for path in sorted(root.rglob("*.py")):
+                tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.ClassDef):
+                        continue
+                    defined = frozenset(
+                        member.name
+                        for member in node.body
+                        if isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    )
+                    if defined & self.IDENTIFYING:
+                        missing = self.REQUIRED - defined
+                        rel = path.relative_to(REPO_ROOT).as_posix()
+                        found.append((rel, node.lineno, node.name, missing))
+        return found
+
+    def test_the_protocol_itself_declares_all_five(self) -> None:
+        """The scan is only meaningful against a protocol that is complete."""
+        from nexus.data.records import Transport
+
+        for name in self.REQUIRED:
+            assert hasattr(Transport, name), f"Transport no longer declares {name}"
+
+    def test_every_transport_implementation_offers_every_method(self) -> None:
+        incomplete = [
+            f"{path}:{line} {name} is missing {sorted(missing)}"
+            for path, line, name, missing in self._implementations()
+            if missing
+        ]
+        assert incomplete == [], (
+            "a Transport implementation does not satisfy the protocol. This is caught by scanning "
+            "rather than by importing, because the implementation that failed once lives in a "
+            "module the offline suite skips:\n  " + "\n  ".join(incomplete)
+        )
+
+    def test_the_scan_actually_finds_the_implementations_it_exists_for(self) -> None:
+        """A scan that silently finds nothing passes forever.
+
+        Four implementations exist: the protocol, the httpx-backed one, the in-memory one and the
+        capturing wrapper in the live module. Naming them is what turns "nothing was incomplete"
+        into a claim about something, and it is what fails if a class is renamed or a scan path
+        stops covering the directory that holds it.
+        """
+        names = {name for _path, _line, name, _missing in self._implementations()}
+        assert names == {"Transport", "HttpTransport", "RecordingTransport", "_CapturingTransport"}
+        paths = {path for path, _line, _name, _missing in self._implementations()}
+        assert "backend/tests/test_live_endpoints.py" in paths, (
+            "the scan no longer reaches the module whose implementation was incomplete — which is "
+            "the only one the offline suite cannot import"
+        )
+
+    def test_the_capturing_wrapper_delegates_rather_than_reimplementing(self) -> None:
+        """Its whole job is to wrap a real transport, so it must not fetch anything itself.
+
+        A wrapper that grew its own `httpx` call to satisfy the protocol would capture payloads
+        from a different code path than the one under test, and the captures — the durable prize of
+        the live run — would no longer be evidence about the adapters' transport.
+        """
+        text = self.MODULE.read_text(encoding="utf-8")
+        start = text.index("class _CapturingTransport:")
+        end = text.index("@pytest.fixture", start)
+        body = text[start:end]
+        assert "import httpx" not in body, "the wrapper must not build its own client"
+        # The two methods that return a receipt time reach the network, so they must delegate
+        # directly; the payload-only pair routes through them, which is one code path to the wire
+        # rather than two.
+        for name in ("fetch_json", "fetch_bytes", "aclose"):
+            assert f"self._inner.{name}" in body, f"{name} does not delegate to the inner transport"
+        for name in ("get_json", "get_bytes"):
+            assert "await self.fetch_" in body and f"async def {name}" in body, (
+                f"{name} does not route through the wrapper's own fetch_ method"
+            )
+        assert body.count("self._inner.fetch_json") == 1
+        assert body.count("self._inner.fetch_bytes") == 1
+
+
 class TestSourceStatesNoVenueRunCount:
     """A count of CI runs inside a source file is stale the moment it is pushed.
 
