@@ -207,6 +207,24 @@ PARTIAL - 5 geo-blocked (need a runner outside the restricted region); 1 could n
 okx.cross_endpoint quotes_mid=61963.15 book_mid=61963.15 gap_bps=0.0 dt_observed_s=0.172 dt_venue_s=0.239 dt_wall_s=0.355 skew_venue_over_wall=0.673 bps_per_s_observed=0.0 bps_per_s_venue=0.0 bps_per_s_wall=0.0 receipt_lag_quotes_s=0.153 receipt_lag_book_s=0.086 quoted_spread_bps=0.016 asserts_agreement=False
 """
 
+LIVE_AFTER_C_SUMMARY = """\
+warning: 52 passed / 0 failed / 5 geo-blocked / 0 skipped of 57 live checks
+PARTIAL - 5 geo-blocked (need a runner outside the restricted region)
+okx.cross_endpoint quotes_mid=61650.75 book_mid=61650.75 gap_bps=0.0 dt_observed_s=0.157 dt_venue_s=1.083 dt_wall_s=0.301 skew_venue_over_wall=3.604 bps_per_s_observed=0.0 bps_per_s_venue=0.0 bps_per_s_wall=0.0 receipt_lag_quotes_s=0.989 receipt_lag_book_s=0.062 quoted_spread_bps=0.016 asserts_agreement=False
+"""
+
+RUN_C_OKX_TRADES = """\
+okx.trades count=50 price_min=61650.7 price_max=61655.2 sides=['BUY', 'SELL'] buy=2 sell=48 unspecified=0 newest=2026-11-27T12:09:00.225000+00:00 received_at=2026-11-27T12:09:01.596110+00:00 distinct_receipt_times=1 rows_with_a_venue_stamp=50 venue_time_first=2026-11-27T12:08:59.654000+00:00 venue_time_last=2026-11-27T12:09:00.225000+00:00
+"""
+
+RUN_C_OKX_QUOTES = """\
+okx.quotes count=1 bid=61650.7 ask=61650.8 spread_bps=0.016 observed_at=2026-11-27T12:09:01.458494+00:00 venue_timestamp=2026-11-27T12:09:00.363000+00:00 receipt_lag_s=1.095 received_at=2026-11-27T12:09:01.458494+00:00 distinct_receipt_times=1 rows_with_a_venue_stamp=1 venue_time_first=2026-11-27T12:09:00.363000+00:00 venue_time_last=2026-11-27T12:09:00.363000+00:00
+"""
+
+RUN_C_VISION_BARS = """\
+binance-vision.bars count=1440 interval=1m span_hours=23.98 close_min=57853.28000000 close_max=62531.01000000 first=2026-11-20T00:00:00+00:00 last=2026-11-20T23:59:00+00:00 received_at=2026-11-27T12:09:03.234070+00:00 distinct_receipt_times=1 rows_with_a_venue_stamp=1440 venue_time_first=2026-11-20T00:00:00+00:00 venue_time_last=2026-11-20T23:59:00+00:00
+"""
+
 FAILED_RUN_SUMMARY = """\
 warning: 43 passed / 13 failed / 0 geo-blocked / 1 skipped of 57 live checks
 AttributeError: '_CapturingTransport' object has no attribute 'fetch_json'
@@ -522,43 +540,57 @@ def key_table() -> str:
 def convergence_table() -> str:
     return table(
         ["reading", "before (<span class='mono'>975dc64</span>)",
-         "after, run A", "after, run B"],
+         "after, run A", "after, run B", "after, run C"],
         [
             ("<span class='mono'>dt_observed_s / dt_wall_s</span>",
              "<span class='no'><b>3.25&times;</b></span> (1.137 / 0.35)",
              "<span class='ok'><b>0.48&times;</b></span> (0.116 / 0.244)",
-             "<span class='ok'><b>0.48&times;</b></span> (0.172 / 0.355)"),
+             "<span class='ok'><b>0.48&times;</b></span> (0.172 / 0.355)",
+             "<span class='ok'><b>0.52&times;</b></span> (0.157 / 0.301)"),
             ("venue interval / wall clock",
              "not separable &mdash; it <i>was</i> <span class='mono'>dt_observed_s</span>",
              "<b>2.037&times;</b> as <span class='mono'>skew_venue_over_wall</span>",
-             "<b>0.673&times;</b> &mdash; below the 0.80&times; floor &sect;10.8 published"),
+             "<b>0.673&times;</b> &mdash; below the 0.80&times; floor &sect;10.8 published",
+             "<b>3.604&times;</b> &mdash; inside its 3.97&times; ceiling"),
             ("receipt minus venue, quote", "not measurable anywhere in the system",
-             "<b>0.436 s</b>", "<b>0.153 s</b>"),
+             "<b>0.436 s</b>", "<b>0.153 s</b>", "<b>0.989 s</b>"),
             ("receipt minus venue, book", "not measurable anywhere in the system",
-             "<b>0.053 s</b>", "<b>0.086 s</b>"),
-            ("<span class='mono'>gap_bps</span>", "1.265", "2.325", "0.0"),
-            ("<span class='mono'>buy / sell</span>", "48 / 2", "<b>1 / 49</b>", "<b>50 / 0</b>"),
+             "<b>0.053 s</b>", "<b>0.086 s</b>", "<b>0.062 s</b>"),
+            ("<span class='mono'>gap_bps</span>", "1.265", "2.325", "0.0", "0.0"),
+            ("<span class='mono'>buy / sell</span>", "48 / 2", "<b>1 / 49</b>", "<b>50 / 0</b>",
+             "2 / 48"),
         ],
     )
 
 
 def runs_table() -> str:
     return table(
-        ["", "before", "failed, in between", "after &mdash; run A", "after &mdash; run B"],
+        ["", "before", "failed, in between", "after &mdash; run A", "after &mdash; run B",
+         "after &mdash; run C"],
         [
             ("commit", "<span class='mono'>975dc64</span>", "<span class='mono'>8cdc871</span>",
-             "<span class='mono'>bbfe95f</span>", "<span class='mono'>bbfe95f</span>"),
+             "<span class='mono'>bbfe95f</span>", "<span class='mono'>bbfe95f</span>",
+             "<span class='mono'>ec0dd09</span>"),
+            ("backend tree", "&mdash;", "&mdash;", "this batch", "identical to run A&rsquo;s",
+             "<b>identical to run A&rsquo;s</b> &mdash; <span class='mono'>git diff bbfe95f ec0dd09 "
+             "-- backend/</span> is empty"),
             ("run", "<span class='mono'>45953629348</span>", "<span class='mono'>45963867416</span>",
-             "<span class='mono'>45964962991</span>", "<span class='mono'>45964969570</span>"),
+             "<span class='mono'>45964962991</span>", "<span class='mono'>45964969570</span>",
+             "<span class='mono'>45996139111</span>"),
             ("trigger", "<span class='mono'>pull_request</span>", "<span class='mono'>push</span>",
-             "<span class='mono'>push</span>", "<span class='mono'>pull_request</span>"),
+             "<span class='mono'>push</span>", "<span class='mono'>pull_request</span>",
+             "<span class='mono'>pull_request</span>"),
             ("job / check-run", "<span class='mono'>140354959639</span>",
              "<span class='mono'>140387781536</span>", "<span class='mono'>140391348401</span>",
-             "<span class='mono'>140391370141</span>"),
+             "<span class='mono'>140391370141</span>", "<span class='mono'>140495884665</span>"),
             ("conclusion", "<span class='ok'>success</span>", "<span class='no'>failure</span>",
-             "<span class='ok'>success</span>", "<span class='ok'>success</span>"),
+             "<span class='ok'>success</span>", "<span class='ok'>success</span>",
+             "<span class='ok'>success</span>"),
             ("summary", "44 / 0 / 5 / 0 of <b>49</b>", "43 / <b>13</b> / 0 / 1 of <b>57</b>",
-             "<b>52</b> / 0 / 5 / 0 of <b>57</b>", "<b>51</b> / 0 / 5 / 1 of <b>57</b>"),
+             "<b>52</b> / 0 / 5 / 0 of <b>57</b>", "<b>51</b> / 0 / 5 / 1 of <b>57</b>",
+             "<b>52</b> / 0 / 5 / 0 of <b>57</b>"),
+            ("annotation truncated by", "&mdash;", "&mdash;", "<span class='mono'>4372</span> escaped chars",
+             "<span class='mono'>5185</span>", "<span class='mono'>5123</span>"),
         ],
     )
 
@@ -633,24 +665,27 @@ def limitations_table() -> str:
              "would move a malformed body out of the retry loop and stop it being a retryable "
              "<span class='mono'>IngestFault</span>. Byte fidelity of a capture is not worth changing fault "
              "semantics for (&sect;10)."),
-            ("4", "<b>No Bybit or Dukascopy number is quoted from either after run.</b>",
-             "Both annotations truncate past the cap &mdash; run A reports <span class='mono'>4372 escaped "
-             "characters over the cap</span>, run B <span class='mono'>5185</span> &mdash; and those rows "
-             "fall past it, as they did in the before run. The comparison is like-for-like on that account. "
-             "Bybit is verified by the offline gate and by thirteen checks that now pass, not by a "
-             "published measurement."),
+            ("4", "<b>No Bybit or Dukascopy number is quoted from any after run.</b>",
+             "All three annotations truncate past the cap &mdash; <span class='mono'>4372</span>, "
+             "<span class='mono'>5185</span> and <span class='mono'>5123</span> escaped characters over it "
+             "&mdash; and those rows fall past the cap in every one, as they did in the before run. The "
+             "comparison is like-for-like on that account. Bybit is verified by the offline gate and by "
+             "thirteen checks that now pass, not by a published measurement. The Dukascopy LZMA ratios in "
+             "&sect;3 come from the <i>before</i> run and from the failed run at <span class='mono'>8cdc871</span>, "
+             "and are labelled as doing so there."),
             ("5", "<span class='mono'>receipt_minus_venue_s</span> and "
                   "<span class='mono'>receipt_lag_*_s</span> are <b>not latency</b>.",
              "They conflate network delay with the offset between the venue&rsquo;s clock and ours, exactly "
              "as <span class='mono'>apparent_latency_seconds</span> does, and are labelled as doing so "
              "wherever they appear. A negative value means the venue&rsquo;s clock runs fast; it is "
              "recorded, not refused and not clamped."),
-            ("6", "<b>Two readings under the new key are not a property.</b> They differ by 3&times; "
-                  "(2.037&times; and 0.673&times;), four minutes apart, on one commit.",
+            ("6", "<b>Three readings under the new key are still not a property.</b> They span "
+                  "<b>0.673&times; to 3.604&times;</b>, a factor of 5.4, on one backend tree.",
              "&sect;10.8&rsquo;s range came from eight pairs across runs 24&ndash;31. The spread is the "
-             "point rather than a weakness &mdash; it is why the quantity is published as a range &mdash; "
-             "but two samples from one commit cannot bound anything, and geo-blocking still removes Bybit "
-             "from every hosted run."),
+             "point rather than a weakness &mdash; it is why the quantity is published as a range, and why "
+             "P-8&rsquo;s recommendation at Stage 7.3 chose no tolerance &mdash; but three samples cannot "
+             "bound anything either, one of the three came from a commit that was not part of the batch, and "
+             "geo-blocking still removes Bybit from every hosted run."),
             ("7", "The AST scan gates method <b>presence</b>, not signatures.",
              "A transport whose <span class='mono'>fetch_json</span> took different arguments would satisfy "
              "it. <span class='mono'>mypy src</span> covers <span class='mono'>src/</span>; the live module "
@@ -672,12 +707,13 @@ def questions_table() -> str:
             (
                 "1",
                 "<b>Is Stage 8.4 approved?</b>",
-                "<b>Approve, recorded as D-053</b>, with F-23 disclosed (&sect;10), with the correction to "
-                "<span class='mono'>bbfe95f</span>&rsquo;s Dukascopy claim disclosed in the same section, "
-                "and with the correction to <span class='mono'>8cdc871</span>&rsquo;s tamper count "
-                "disclosed in &sect;9. <span class='mono'>O-012</span> moves to "
-                "<b>CLOSED</b>. Ruling 2&rsquo;s scope was kept, its gate exists and was proven "
-                "load-bearing, and its two runs show the convergence it was for.",
+                "<b>Approve, recorded as D-053</b>, with F-23 disclosed (&sect;10) and with <b>all four</b> "
+                "of this record&rsquo;s self-corrections disclosed: <span class='mono'>8cdc871</span>&rsquo;s "
+                "tamper count (&sect;9), <span class='mono'>bbfe95f</span>&rsquo;s Dukascopy claim "
+                "(&sect;10), the LZMA ratio and its run attribution (&sect;3), and the run-count mechanism "
+                "(&sect;12). <span class='mono'>O-012</span> moves to <b>CLOSED</b>. Ruling 2&rsquo;s scope "
+                "was kept, its gate exists and was proven load-bearing, and its runs show the convergence it "
+                "was for &mdash; three times, on one backend tree.",
                 "Hold <span class='mono'>O-012</span> open until a writer consumes the receipt time. That "
                 "makes the ledger row a statement about limitation 1 &mdash; real, and named &mdash; rather "
                 "than about the defect F-14 described, which is four adapters recording nothing about "
@@ -689,15 +725,21 @@ def questions_table() -> str:
                 "published floor?</b>",
                 "<b>It continues</b>, and &sect;10.8&rsquo;s range is restated as "
                 "<span class='mono'>skew_venue_over_wall</span> <b>0.673&times;&ndash;3.97&times;</b> with "
-                "8.4&rsquo;s two readings admitted as its ninth and tenth pairs. Every historical value was "
-                "<span class='mono'>dt_observed_s / dt_wall_s</span> where "
+                "8.4&rsquo;s three readings admitted as its ninth, tenth and eleventh pairs. Every historical "
+                "value was <span class='mono'>dt_observed_s / dt_wall_s</span> where "
                 "<span class='mono'>dt_observed_s</span> came from a field holding venue stamps, which is "
-                "exactly venue-interval over wall-interval; only the key moved.",
+                "exactly venue-interval over wall-interval; only the key moved. The three readings do not "
+                "pull the same way, and that is what makes the question answerable: run B&rsquo;s "
+                "<b>0.673&times;</b> is below the published floor while run C&rsquo;s <b>3.604&times;</b> "
+                "sits inside the published ceiling, so only the <b>floor</b> moves.",
                 "Stop the series here and record 0.673&times; as a one-off outside it. That leaves a "
                 "published floor of 0.80&times; that a run of this repository&rsquo;s own CI has already "
-                "gone below, with nothing saying so. Starting a <i>new</i> series at 8.4 is also defensible "
-                "&mdash; the pre-8.4 values were computed by the harness from fields rather than published "
-                "under this key &mdash; but it orphans the older range with nothing to compare against.",
+                "gone below, with nothing saying so, while discarding a third reading the same range already "
+                "contains. Starting a <i>new</i> series at 8.4 is also defensible &mdash; the pre-8.4 values "
+                "were computed by the harness from fields rather than published under this key &mdash; but it "
+                "orphans the older range with nothing to compare against, and run C is the argument against "
+                "it: a fresh series of one reading, bounded by 3.604&times; and 3.604&times;, states less "
+                "than the eleven-pair range it would replace.",
             ),
             (
                 "3",
@@ -756,18 +798,24 @@ failed</b> (+35 offline, +8 live checks), mypy strict clean on <b>61</b> files, 
 off it &mdash; the archive&rsquo;s partition key being the one that would have been <b>silent</b> (&sect;6).
 It found and closed <b>F-23</b>: the run that was to prove the fix failed 13 of 57 live checks because the
 fourth <span class="mono">Transport</span> implementation lives in a module the offline suite skips at
-import (&sect;10). Ruling 2&rsquo;s two runs are in &sect;12 and the convergence <b>reproduces</b>:
-<span class="mono">dt_observed_s / dt_wall_s</span> went from <b>3.25&times;</b> to <b>0.48&times;</b> in
-both, with the venue&rsquo;s own skew now separable and labelled. <b>Two published numbers are corrected
-as they are carried</b>, both in commit messages already pushed (&sect;9, &sect;10). Nothing is wired:
+import (&sect;10). Ruling 2&rsquo;s runs are in &sect;12 and the convergence <b>reproduces three times on
+one backend tree</b>: <span class="mono">dt_observed_s / dt_wall_s</span> went from <b>3.25&times;</b> to
+<b>0.48&times;</b>, <b>0.48&times;</b> and <b>0.52&times;</b>, with the venue&rsquo;s own skew now separable
+and labelled at <b>2.037&times;</b>, <b>0.673&times;</b> and <b>3.604&times;</b> &mdash; a 5.4&times; spread
+on identical code, so the range&rsquo;s <b>floor</b> and not its ceiling is what question 2 asks about.
+<b>Four published numbers are corrected as they are carried</b> rather than rewritten: two sit in commit
+messages already pushed (&sect;9, &sect;10) and two in the record commit
+<span class="mono">ec0dd09</span> itself (&sect;3, &sect;12). Nothing is wired:
 <span class="mono">evidence_ref.retrieved_at</span> still has no caller, by ruling.</div>
 
 <h3>1 &middot; What ruling 2 authorised, and what this batch therefore did not do<span class="tag">D-052 &middot; docs/15 &sect;11.0</span></h3>
 <p>One of D-052&rsquo;s four rulings scoped this batch and three constrained it. The scope is narrow on
 purpose: four adapters, and nothing else, so that a regression in the live run is attributable to this batch
 and to nothing else. That is also why the before run was captured <b>before a line was changed</b> &mdash;
-at <span class="mono">975dc64</span>, whose own four runs were all green, so the only difference between the
-two measurements is this batch.</p>
+at <span class="mono">975dc64</span>, whose own three runs were all green, so the only difference between
+the two measurements is this batch. <i>Three</i> and not four, because that commit touched no adapter and
+<span class="mono">venue-verification</span>&rsquo;s <span class="mono">push</span> trigger is path-filtered
+&mdash; the mechanism &sect;12 sets out, and a figure this board first got wrong.</p>
 <div class="card">{ruled_table()}</div>
 <p class="cap">The three things ruled <i>out</i> are shown absent rather than merely unmentioned, because
 &ldquo;we did not do it&rdquo; is the claim most easily made and least easily checked.</p>
@@ -808,11 +856,26 @@ made &sect;10&rsquo;s failure readable: the checks that survived it are exactly 
 receipt-less pair.</p>
 {verbatim("CAPTURED — Fetched, the stamp site in HttpTransport._request, the protocol verbatim, and the grep that closes it", BLOCK_B)}
 <div class="blocked"><b>Before decode, and that is a measurement decision rather than a style one.</b> A
-Dukascopy hour expands roughly 2.5&times; under LZMA &mdash; run A measured 41,710 bytes arriving and
-181,040 decompressed, holding 9,052 ticks &mdash; and a Binance Vision dump unzips before it parses.
+Dukascopy hour expands <b>roughly fourfold</b> under LZMA and a Binance Vision dump unzips before it parses.
 Charging that CPU to the receipt time would inflate every latency this system reports by an amount that
 depends on the payload&rsquo;s compression ratio, which is a way of measuring the compressor and calling it
-the network.</div>
+the network. The expansion is published four times in this record&rsquo;s own live runs, and it is two
+distinct hours rather than one measurement repeated: <span class="mono">25,761 &rarr; 101,480</span> bytes
+holding 5,074 ticks in runs 30 and 31 = <b>3.94&times;</b>, and
+<span class="mono">41,710 &rarr; 181,040</span> holding 9,052 ticks in the before run and in the failed run
+at <span class="mono">8cdc871</span> = <b>4.34&times;</b>. No &ldquo;after&rdquo; run publishes
+<span class="mono">dukascopy.layout</span> at all &mdash; every one of their annotations truncates first,
+which is &sect;14&rsquo;s limitation 4 &mdash; so this batch&rsquo;s own Dukascopy numbers come from the
+before run and from the failed run, and are labelled as doing so.</div>
+<p class="cap"><b>A correction to the ratio this board first carried.</b> It said
+&ldquo;roughly 2.5&times;&rdquo; and attributed the byte counts to run A. Neither held: no published pair in
+this record expands 2.5&times;, and run A publishes only
+<span class="mono">dukascopy.url &hellip; bytes=41710</span>, not the decompressed size or the tick count.
+The likeliest provenance of 2.5&times; is F-14&rsquo;s own first skew reading &mdash;
+<span class="mono">dt_observed_s=0.739</span> against <span class="mono">dt_wall_s=0.294</span>, which is
+2.51&times; and is recorded in <span class="mono">docs/07</span>&rsquo;s Stage 7.3 row &mdash; but that is a
+ratio of two <i>intervals</i> and not of two byte counts, and nothing licenses carrying it across. Corrected
+in <span class="mono">docs/15</span> &sect;11.1 with the four-run table beside it.</p>
 
 <h3>4 &middot; Four adapters, four different shapes of one defect<span class="tag">docs/15 &sect;11.2</span></h3>
 <p>The finding read as one defect in four places, and it was four defects that happened to look alike. Two
@@ -912,7 +975,8 @@ consumer repairs below.</p>
          "now <span class='mono'>MISSING_EVENT_TIME</span>, because the reason string is read by whoever "
          "must fix the feed, and those are different repairs"),
         ("three adapter pins (<span class='mono'>:473</span>, <span class='mono'>:555</span>, "
-         "<span class='mono'>:786</span>)",
+         "<span class='mono'>:786</span> at <span class='mono'>975dc64</span>; <span class='mono'>:494</span>, "
+         "<span class='mono'>:581</span>, <span class='mono'>:816</span> now)",
          "asserted only <span class='mono'>observed_at is not None</span>, which the pre-8.4 code satisfied "
          "by copying the venue&rsquo;s stamp",
          "now pin an exact receipt clock a year from the venue stamp in the same payload. Every fixture "
@@ -1018,56 +1082,98 @@ its key</b>. That is stated in the function&rsquo;s docstring rather than left t
 two annotations, and the offline pins carry both the old literals and the new keys so the arithmetic that
 produced &sect;10.8&rsquo;s table is still checkable.</div>
 
-<h3>12 &middot; Before and after: the two runs ruling 2 asked for<span class="tag">docs/15 &sect;11.9</span></h3>
+<h3>12 &middot; Before and after: the two runs ruling 2 asked for, and the third that arrived unasked<span class="tag">docs/15 &sect;11.9</span></h3>
 <p>A correction to how this record has counted runs, found by reading
 <span class="mono">.github/workflows/venue-verification.yml</span> rather than by inferring it from a run
 list: that workflow&rsquo;s <span class="mono">push</span> and <span class="mono">pull_request</span>
 triggers are <b>path-filtered</b> to <span class="mono">ingestion/**</span>,
-<span class="mono">data/records.py</span>, <span class="mono">test_live_endpoints.py</span> and itself. So a
-commit produces <b>four</b> runs when it touches an adapter or the harness and <b>three</b> when it does
-not. &sect;10.8&rsquo;s &ldquo;<span class="mono">ffc4128</span> triggered three runs&rdquo; and
+<span class="mono">data/records.py</span>, <span class="mono">test_live_endpoints.py</span> and itself
+&mdash; but the two filters are evaluated over <b>different scopes</b>, and that is the half this record had
+not stated. <span class="mono">push</span> is filtered against the pushed commit;
+<span class="mono">pull_request</span> is filtered against the <b>pull request&rsquo;s whole diff versus the
+base branch</b>, which this PR has matched since Stage 7.1 built the adapters. So a commit produces
+<b>four</b> runs when it touches an adapter or the harness and <b>three</b> when it does not &mdash;
+<b>never two</b>. Verified against the run list rather than reasoned about: of the 30 most recent commits
+that produced runs, <b>all 30</b> have a <span class="mono">venue-verification</span> /
+<span class="mono">pull_request</span> run, and only the nine that touched a filtered path have the fourth.
+&sect;10.8&rsquo;s &ldquo;<span class="mono">ffc4128</span> triggered three runs&rdquo; and
 &sect;10.11&rsquo;s &ldquo;<span class="mono">8482179</span> produced three runs&rdquo; are both correct and
-neither says why. <b>A run count is a property of what changed, not a constant</b> &mdash; the same lesson
-&sect;10.8 drew about a count that re-triggers per push, applied to the count of runs themselves.</p>
+neither says why, or which of the three contacted the world. <b>A run count is a property of what changed,
+not a constant</b> &mdash; the same lesson &sect;10.8 drew about a count that re-triggers per push, applied
+to the count of runs themselves, and now with the mechanism and not only the observation.</p>
+<div class="blocked"><b>The consequence, stated plainly: a documents-only push spends a live run against
+four public venues, and can fail on their drift.</b> That is not a hypothetical &mdash; it is how run C
+below exists. <span class="mono">ec0dd09</span> is the commit that carried this batch&rsquo;s record, it
+changes documents and design files only, and it still produced a
+<span class="mono">venue-verification</span> run, because the PR&rsquo;s diff against
+<span class="mono">main</span> contains every adapter. <span class="mono">git diff bbfe95f ec0dd09 --
+backend/</span> is empty, so that run measured a backend tree <b>byte-identical</b> to the one runs A and B
+measured, hours later instead of minutes later. It is quoted here as a <b>third reading of the same
+code</b> and not as a fourth run of the batch: the batch is two commits, and ruling 2 asked for runs before
+and after it, which runs A and B are.</div>
 <div class="card">{runs_table()}</div>
-<p class="cap">Both after runs are the same commit through the same workflow, minutes apart, and are quoted
+<p class="cap">Runs A and B are the same commit through the same workflow, minutes apart, and are quoted
 separately rather than averaged. Run B&rsquo;s <span class="mono">1 skipped</span> is <b>not attributable
 from here</b>: its annotation truncates earlier than run A&rsquo;s (<span class="mono">5185</span> escaped
 characters over the cap against <span class="mono">4372</span>) and the skip falls in the Dukascopy section
-past it. Naming it would be a guess.</p>
+past it. Naming it would be a guess. Run C returned <span class="mono">0 skipped</span> and truncated by
+<span class="mono">5123</span> &mdash; so the skip is not a property of the code either, and the three
+summaries are <span class="mono">52/0/5/0</span>, <span class="mono">51/0/5/1</span> and
+<span class="mono">52/0/5/0</span>. The cap is not a constant either: identical code produced 4,372 and
+5,185 four minutes apart, because the escaped length depends on how many rows each check printed, which
+depends on the market.</p>
 {verbatim("BEFORE — run 45953629348, job 140354959639, at 975dc64 (captured before a line was changed)", LIVE_BEFORE_SUMMARY, "before")}
 {verbatim("AFTER, run A — run 45964962991, job 140391348401, at bbfe95f", LIVE_AFTER_A_SUMMARY, "after")}
 {verbatim("AFTER, run B — run 45964969570, job 140391370141, same commit, minutes later", LIVE_AFTER_B_SUMMARY, "after")}
+{verbatim("AFTER, run C — run 45996139111, job 140495884665, at ec0dd09: documents only, backend tree identical to bbfe95f, hours later", LIVE_AFTER_C_SUMMARY, "after")}
 <div class="card">{convergence_table()}</div>
-<div class="blocked"><b>The convergence reproduces, and the venue&rsquo;s own skew does not.</b> Two runs of
-the same commit, minutes apart, both put our interval at <b>0.48&times;</b> the wall clock around the same
-two calls &mdash; one reading each, independently computed, agreeing to two decimal places. Before the batch
-the same ratio was <b>3.25&times;</b>, and the record could not say whose clock the disagreement belonged
-to. After it, ours is <i>shorter</i> than the wall clock, by roughly the harness&rsquo;s own overhead
-between starting its timer and issuing the first request &mdash; which is the direction that difference
-should point, and it points that way twice. The venue&rsquo;s reading moved 3&times; in the same four
-minutes: <b>2.037&times;</b> then <b>0.673&times;</b>, the second <b>below one</b>. That is not a
-contradiction and it is the reason &sect;10.8 states this quantity as a range: run 26&rsquo;s 0.80&times;
-was until now the only published reading under one, and run B is the second. What the two runs agree on is
-not the value but that the value is now <b>attributable</b>.</div>
+<div class="blocked"><b>The convergence reproduces three times; the venue&rsquo;s own skew does not
+reproduce at all.</b> Three runs against one backend tree put our interval at <b>0.48&times;</b>,
+<b>0.48&times;</b> and <b>0.52&times;</b> the wall clock around the same two calls &mdash; two minutes apart
+and then hours apart, each computed independently. Before the batch the same ratio was <b>3.25&times;</b>,
+and the record could not say whose clock the disagreement belonged to. After it, ours is <i>shorter</i> than
+the wall clock, by roughly the harness&rsquo;s own overhead between starting its timer and issuing the first
+request &mdash; which is the direction that difference should point, and it points that way <b>three times
+out of three</b>. Run C is what turns that from a coincidence of two into a property of the code:
+0.48/0.48 could have been one quiet minute measured twice, and 0.52 hours later on an identical tree cannot.
+The venue&rsquo;s reading moved by more than <b>5&times;</b> across the same three: <b>2.037&times;</b>,
+then <b>0.673&times;</b> four minutes later &mdash; <b>below one</b> &mdash; then <b>3.604&times;</b> hours
+after that. That is not a contradiction and it is the reason &sect;10.8 states this quantity as a range:
+run 26&rsquo;s 0.80&times; was until run B the only published reading under one, and run C&rsquo;s
+3.604&times; sits <i>inside</i> that range&rsquo;s 3.97&times; ceiling rather than beyond it. So the three
+readings move the range&rsquo;s <b>floor</b> and leave its <b>ceiling</b> alone &mdash; exactly the asymmetry
+question 2 in &sect;15 asks about. What the three runs agree on is not the value but that the value is now
+<b>attributable</b>: <span class="mono">skew_venue_over_wall</span> says whose interval it is, which
+<span class="mono">dt_observed_s</span> could not. And a quantity that swings 0.673&times;&ndash;3.604&times;
+between runs of identical code is one no threshold may be set against &mdash; the same reason P-8&rsquo;s
+recommendation at Stage 7.3 chose no tolerance.</div>
 {verbatim("RUN A — okx.trades: fifty rows, one arrival instant, event times spanning 0.256 s", RUN_A_OKX_TRADES, "after")}
 {verbatim("RUN A — okx.quotes: both clocks on one line, and the distance between them", RUN_A_OKX_QUOTES, "after")}
 {verbatim("RUN A — okx.book", RUN_A_OKX_BOOK, "after")}
 {verbatim("RUN A — okx.bars: a hundred one-minute candles spanning 1.65 h, one arrival instant", RUN_A_OKX_BARS, "after")}
-<p class="cap">The four <span class="mono">receipt_lag_*</span> numbers are the measurement F-14 said did
-not exist. In run A OKX stamped the ticker <b>0.436 s</b> before we received it and the book <b>0.053 s</b>
-before; in run B, <b>0.153 s</b> and <b>0.086 s</b>. The quote lag exceeds the book lag in <b>both</b> runs,
-which is the ticker endpoint updating less often than the book endpoint &mdash; the <i>conclusion</i> run 25
-reached indirectly in <span class="mono">docs/14</span> &sect;4.1, now readable off one row of one
-annotation instead of inferred by comparing two runs, and reproduced in a second.</p>
+{verbatim("RUN C — okx.trades: the same fifty-row shape, hours later, sides nearly mirrored against run B", RUN_C_OKX_TRADES, "after")}
+{verbatim("RUN C — okx.quotes: receipt_lag_s=1.095, the largest receipt-minus-venue gap this record has published", RUN_C_OKX_QUOTES, "after")}
+{verbatim("RUN C — binance-vision.bars: the same 1,440 bars of 2026-11-20, a third receipt instant, still distinct_receipt_times=1", RUN_C_VISION_BARS, "after")}
+<p class="cap">The <span class="mono">receipt_lag_*</span> numbers are the measurement F-14 said did not
+exist. In run A OKX stamped the ticker <b>0.436 s</b> before we received it and the book <b>0.053 s</b>
+before; in run B, <b>0.153 s</b> and <b>0.086 s</b>; in run C, <b>0.989 s</b> and <b>0.062 s</b>. The quote
+lag exceeds the book lag in <b>all three</b>, by 8&times;, 1.8&times; and 16&times; &mdash; which is the
+ticker endpoint updating less often than the book endpoint, the <i>conclusion</i> run 25 reached indirectly
+in <span class="mono">docs/14</span> &sect;4.1, now readable off one row of one annotation instead of
+inferred by comparing two runs, and reproduced twice more at gaps from 0.053 s to 0.989 s. Run C&rsquo;s
+0.989 s is the largest receipt-minus-venue gap published anywhere in this record and the only one near a
+second, which is a further reason limitation 5 insists the number is not latency: it is the venue&rsquo;s
+stamp against our clock, and the two are not synchronised.</p>
 <div class="blocked"><b>Run A had <span class="mono">buy=1 sell=49</span>; run B had
-<span class="mono">buy=50 sell=0</span>.</b> Same endpoint, same commit, four minutes apart, one 49/1 and
-one entirely one-sided. Neither is a failure, by P-7&rsquo;s ruling at Stage 7.3, and the pair is the
-strongest vindication of it this record has: a threshold on side balance chosen anywhere between 50/0 and
-49/1 would have failed run B and passed run A on identical code. The before run had
-<span class="mono">buy=48 sell=2</span>. The distribution is recorded as <b>counts</b> rather than as the
-set of sides that happened to appear precisely so this comparison is possible &mdash;
-<span class="mono">sides=['BUY']</span> is identical for a 50/0 minute and a 25/25 one.</div>
+<span class="mono">buy=50 sell=0</span>; run C had <span class="mono">buy=2 sell=48</span>.</b> Same
+endpoint, one backend tree, three readings ranging from entirely one-sided to 48/2. None is a failure, by
+P-7&rsquo;s ruling at Stage 7.3, and the triple is the strongest vindication of it this record has: a
+threshold on side balance chosen anywhere between 50/0 and 48/2 would have failed at least one of the three
+on identical code. The before run had <span class="mono">buy=48 sell=2</span>, so run C lands within one
+trade of the pre-batch reading while run B is its exact mirror. The distribution is recorded as
+<b>counts</b> rather than as the set of sides that happened to appear precisely so this comparison is
+possible &mdash; <span class="mono">sides=['BUY']</span> is identical for a 50/0 minute and a 25/25 one, and
+run B published exactly that.</div>
 
 <h3>13 &middot; The gate<span class="tag">docs/15 &sect;11.11</span></h3>
 <div class="card">{gate_table()}</div>
@@ -1090,6 +1196,13 @@ five jobs green including <span class="mono">Container image (amd64 + arm64 buil
 &sect;10.11&rsquo;s, verbatim, in both <span class="mono">ci</span> runs &mdash;
 <span class="mono">notice: no HIGH or CRITICAL fixable vulnerabilities in nexus-core%3Aci</span> &mdash; so
 this batch did not disturb the posture O-011&rsquo;s recurrence resolved.</p>
+<p><b><span class="mono">ec0dd09</span>, the commit carrying this board, produced three runs</b> &mdash;
+<span class="mono">ci</span> push <span class="mono">45996129637</span>, <span class="mono">ci</span>
+pull_request <span class="mono">45996139001</span> and <span class="mono">venue-verification</span>
+pull_request <span class="mono">45996139111</span> &mdash; and the third is run C in &sect;12. It changed
+documents and design files only, so it is &sect;12&rsquo;s mechanism demonstrated on the commit that
+describes it. &sect;10.11&rsquo;s warning was that such a push can go red on base-image drift; this one did
+not, and its <span class="mono">ci</span> image annotation is the same sentence quoted above.</p>
 <p><b>Finding ids consumed: F-23</b> (&sect;10, closed in the batch that found it). <b>The next finding id
 remains F-24.</b></p>
 
@@ -1118,18 +1231,29 @@ by reverting all ten sites: <b>15 failures</b>, twelve in the gate and three in 
 &middot; <b>F-23 found and closed</b>: run <span class="mono">45963867416</span> failed 13 of 57 on one
 <span class="mono">AttributeError</span> because the fourth <span class="mono">Transport</span>
 implementation lives in a module the offline suite skips at import, now gated by an AST scan proven by
-tamper &middot; <b>two published numbers corrected as carried</b>, both in pushed commit messages: the
-tamper count (eight &rarr; fifteen) and the Dukascopy claim (one check passed, not all of them) &middot;
-the convergence ruling 2 asked for, <b>reproduced across two runs</b>:
-<span class="mono">dt_observed_s / dt_wall_s</span> from <b>3.25&times;</b> to <b>0.48&times;</b> and
-<b>0.48&times;</b>, with the venue&rsquo;s own skew separable at <b>2.037&times;</b> and <b>0.673&times;</b>
-&mdash; the second below &sect;10.8&rsquo;s published floor &middot; <span class="mono">receipt_lag_*</span>
-measures receipt-minus-venue inside one record for the first time anywhere in the system, and reproduces
-<span class="mono">docs/14</span> &sect;4.1&rsquo;s run-25 conclusion off a single row &middot; a run count
-is a property of what changed: <b>four</b> runs for an adapter commit, <b>three</b> for a documents-only
-one, because <span class="mono">venue-verification</span>&rsquo;s triggers are path-filtered &middot;
-<b>O-012 delivered, closure requested</b> &middot; F-22 untouched &middot; next: stage 10&rsquo;s
-<span class="mono">memory_item</span> writer, as ruling 3 ordered</footer>
+tamper &middot; <b>four published numbers corrected as carried</b> rather than rewritten: the tamper count
+(eight &rarr; fifteen) and the Dukascopy claim (one check passed, not all of them), both in pushed commit
+messages, plus the LZMA ratio (2.5&times; &rarr; <b>3.94&times;</b> and <b>4.34&times;</b>, the two hours
+this record actually measured) and the run-count mechanism, both in the record commit
+<span class="mono">ec0dd09</span> &middot; the convergence ruling 2 asked for, <b>reproduced three times on
+one backend tree</b>: <span class="mono">dt_observed_s / dt_wall_s</span> from <b>3.25&times;</b> to
+<b>0.48&times;</b>, <b>0.48&times;</b> and <b>0.52&times;</b>, the third hours later at
+<span class="mono">ec0dd09</span> whose <span class="mono">backend/</span> is byte-identical to
+<span class="mono">bbfe95f</span>&rsquo;s &middot; the venue&rsquo;s own skew separable at
+<b>2.037&times;</b>, <b>0.673&times;</b> and <b>3.604&times;</b> &mdash; a <b>5.4&times;</b> spread on
+identical code, the second below &sect;10.8&rsquo;s published 0.80&times; floor and the third inside its
+3.97&times; ceiling, so the floor and not the ceiling is what question 2 asks about &middot;
+<span class="mono">receipt_lag_*</span> measures receipt-minus-venue inside one record for the first time
+anywhere in the system, and reproduces <span class="mono">docs/14</span> &sect;4.1&rsquo;s run-25 conclusion
+off a single row <b>three times</b>, at gaps from 0.053 s to 0.989 s &middot; trade sides
+<span class="mono">48/2</span>, <span class="mono">1/49</span>, <b><span class="mono">50/0</span></b> and
+<span class="mono">2/48</span> across four runs &mdash; the last three on one backend tree &mdash; so any
+side-balance threshold in that span would have failed one of them &mdash; P-7 vindicated &middot; a run count is a property of what changed:
+<b>four</b> runs for an adapter commit, <b>three</b> for a documents-only one and <b>never two</b>, because
+<span class="mono">push</span> is filtered per commit while <span class="mono">pull_request</span> is
+filtered against the whole PR diff &mdash; verified across the 30 most recent commits with runs, all 30 of
+which spent a live run &middot; <b>O-012 delivered, closure requested</b> &middot; F-22 untouched &middot;
+next: stage 10&rsquo;s <span class="mono">memory_item</span> writer, as ruling 3 ordered</footer>
 </div></body></html>"""
     out = HERE / "stage8-4-two-clocks-kept-apart.html"
     out.write_text(html_out)

@@ -1554,11 +1554,32 @@ received_at = utc_now()
 payload = response.content if want_bytes else response.json()
 ```
 
-That ordering is a measurement decision, not a style one. A Dukascopy hour expands roughly 2.5× under LZMA
-and a Binance Vision dump unzips before it parses; charging that CPU to the receipt time would inflate
-every latency this system reports by an amount that depends on the payload's compression ratio. The run
-in §11.10 shows the size of what is at stake: one bi5 hour arrived as 41,710 bytes and decompressed to
-181,040, and one kline dump arrived as 73,320 zipped bytes holding 1,440 rows.
+That ordering is a measurement decision, not a style one. A Dukascopy hour expands **roughly fourfold**
+under LZMA and a Binance Vision dump unzips before it parses; charging that CPU to the receipt time would
+inflate every latency this system reports by an amount that depends on the payload's compression ratio.
+The size of what is at stake is published four times in this record's own live runs, and it is two distinct
+hours rather than one measurement repeated:
+
+| run | commit | `payload_bytes` | `decompressed_bytes` | ratio | `tick_count` |
+|---|---|---|---|---|---|
+| run 30 (`45875239151`) | `11d6db3` | 25,761 | 101,480 | **3.94×** | 5,074 |
+| run 31 (`45898067364`) | `ffc4128` | 25,761 | 101,480 | **3.94×** | 5,074 |
+| before run (`45953629348`) | `975dc64` | 41,710 | 181,040 | **4.34×** | 9,052 |
+| failed run (`45963867416`) | `8cdc871` | 41,710 | 181,040 | **4.34×** | 9,052 |
+
+The kline dump is smaller and its expansion is published beside it in every one of those runs:
+`binance-vision.url day=2026-11-20 bytes=73320 zip=True` against `binance-vision.parse rows=1440`.
+
+> **Correction to the figure this section first carried, in `ec0dd09`.** It said "expands roughly 2.5×" and
+> cited "the run in §11.10" for the byte counts. Neither holds. No published pair in this record expands
+> 2.5×: the two distinct Dukascopy hours measured here expand **3.94×** and **4.34×**, and both pairs are
+> quoted in §10.3 and §10.8 rather than in §11.10, which is "What this section could not claim" and
+> contains no run at all. The likeliest provenance of 2.5× is a confusion with F-14's own first skew
+> reading — `dt_observed_s=0.739` against `dt_wall_s=0.294`, which is 2.51× and is recorded in `docs/07`'s
+> Stage 7.3 row — but that is a ratio of two *intervals*, not of two byte counts, and nothing licenses
+> carrying it across. Neither "after" run publishes `dukascopy.layout` at all (§11.12's limitation 4), so
+> this batch's own Dukascopy numbers come from the before run and from the failed run at `8cdc871` — which
+> is the one useful thing that failed run's annotation gave back.
 
 `RecordingTransport` grew an injectable clock (`now_fn=utc_now`) and a receipt log. The clock is what makes
 the gate in §11.6 possible: a fixture transport pinned to a date a year away from the venue stamps in the
@@ -1838,33 +1859,60 @@ feed that publishes no stamp at all gets `newest=None`, not our arrival substitu
 deliberately has no second field for it; counting `venue_timestamp` on a bar line would report zero rows
 with an event time for a feed that gave one on every row.
 
-### 11.9 Before and after: the two runs ruling 2 asked for
+### 11.9 Before and after: the two runs ruling 2 asked for, and the third that arrived unasked
 
-Both runs are `venue-verification`. A correction to how this record has counted runs, discovered by
-reading `.github/workflows/venue-verification.yml` rather than by inferring it from a run list: that
-workflow's `push` and `pull_request` triggers are **path-filtered** to
+All the runs quoted here are `venue-verification`. A correction to how this record has counted runs,
+discovered by reading `.github/workflows/venue-verification.yml` rather than by inferring it from a run
+list: that workflow's `push` and `pull_request` triggers carry **identical path filters** —
 `backend/src/nexus/ingestion/**`, `backend/src/nexus/data/records.py`,
-`backend/tests/test_live_endpoints.py` and the workflow file itself. So a commit produces **four** runs
-when it touches an adapter or the harness, and **three** when it does not. §10.8's "`ffc4128` triggered
-three runs" and §10.11's "`8482179` produced three runs" are both correct and neither explains why: those
-commits touched `intelligence/`, `api/`, documents and `backend/Dockerfile`, none of which match. **A run
-count is a property of what changed, not a constant** — the same lesson §10.8 drew about a count that
-re-triggers per push, applied to the count of runs themselves.
+`backend/tests/test_live_endpoints.py` and the workflow file itself — but the two filters are evaluated
+over **different scopes**, and that is the part this record had not stated. `push` is filtered against the
+pushed commit; `pull_request` is filtered against the **pull request's whole diff versus the base branch**.
+This PR has contained all four paths since Stage 7.1 built the adapters, so the `pull_request` filter
+matches on every push to it, whatever that push changed. Net: a commit produces **four** runs when it
+touches an adapter or the harness, and **three** when it does not — never two.
 
-| | before | (failed, in between) | after — run A | after — run B |
-|---|---|---|---|---|
-| commit | `975dc64` | `8cdc871` | `bbfe95f` | `bbfe95f` |
-| run | `45953629348` | `45963867416` | `45964962991` | `45964969570` |
-| trigger | `pull_request` | `push` | `push` | `pull_request` |
-| job / check-run | `140354959639` | `140387781536` | `140391348401` | `140391370141` |
-| conclusion | `success` | `failure` | `success` | `success` |
-| summary | `44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49` | `43 passed / 13 failed / 0 geo-blocked / 1 skipped of 57` | `52 passed / 0 failed / 5 geo-blocked / 0 skipped of 57` | `51 passed / 0 failed / 5 geo-blocked / 1 skipped of 57` |
-| verdict line | `PARTIAL - 5 geo-blocked` | `AttributeError` ×13 | `PARTIAL - 5 geo-blocked` | `PARTIAL - 5 geo-blocked` |
+Verified against the run list rather than reasoned about: of the 30 most recent commits that produced runs,
+**all 30** have a `venue-verification` / `pull_request` run, including `a065b40` (six documentation and
+design files), `975dc64` (this record's previous entry) and `ec0dd09` (this section's own correction
+commit, `git diff bbfe95f ec0dd09 -- backend/` empty). Only `7929a96`, `4760462`, `fe96376`, `c48c714`,
+`500ac36`, `f675582`, `354b95c`, `8cdc871` and `bbfe95f` — the commits that touched a filtered path — have
+the fourth.
 
-Both "after" runs are the same commit through the same workflow, minutes apart, and they are quoted
-separately rather than averaged: run B's `1 skipped` is not attributable from here, because its annotation
-truncates earlier than run A's (`5185 escaped characters over the cap` against `4372`) and the skip falls in
-the Dukascopy section past the cap. Naming it would be a guess.
+**The consequence is worth stating plainly: a documents-only push spends a live run against four public
+venues, and can fail on their drift.** §10.8's "`ffc4128` triggered three runs" and §10.11's "`8482179`
+produced three runs" are both correct and neither said which of the three contacted the world — in both
+cases it was the `venue-verification` / `pull_request` one (`45898067364` and `45952239684`). **A run count
+is a property of what changed, not a constant** — the same lesson §10.8 drew about a count that re-triggers
+per push, applied to the count of runs themselves, and now with the mechanism rather than only the
+observation.
+
+| | before | (failed, in between) | after — run A | after — run B | after — run C |
+|---|---|---|---|---|---|
+| commit | `975dc64` | `8cdc871` | `bbfe95f` | `bbfe95f` | `ec0dd09` |
+| backend tree | — | — | this batch | identical to run A's | **identical to run A's** |
+| run | `45953629348` | `45963867416` | `45964962991` | `45964969570` | `45996139111` |
+| trigger | `pull_request` | `push` | `push` | `pull_request` | `pull_request` |
+| job / check-run | `140354959639` | `140387781536` | `140391348401` | `140391370141` | `140495884665` |
+| conclusion | `success` | `failure` | `success` | `success` | `success` |
+| summary | `44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49` | `43 passed / 13 failed / 0 geo-blocked / 1 skipped of 57` | `52 passed / 0 failed / 5 geo-blocked / 0 skipped of 57` | `51 passed / 0 failed / 5 geo-blocked / 1 skipped of 57` | `52 passed / 0 failed / 5 geo-blocked / 0 skipped of 57` |
+| verdict line | `PARTIAL - 5 geo-blocked` | `AttributeError` ×13 | `PARTIAL - 5 geo-blocked` | `PARTIAL - 5 geo-blocked` | `PARTIAL - 5 geo-blocked` |
+| annotation truncated by | — | — | `4372 escaped characters` | `5185 escaped characters` | `5123 escaped characters` |
+
+Runs A and B are the same commit through the same workflow, minutes apart, and they are quoted separately
+rather than averaged: run B's `1 skipped` is not attributable from here, because its annotation truncates
+earlier than run A's (`5185 escaped characters over the cap` against `4372`) and the skip falls in the
+Dukascopy section past the cap. Naming it would be a guess. Run C returned `0 skipped`, and its annotation
+truncates by `5123` — so the skip is not a property of the code either, and the three summaries are
+`52/0/5/0`, `51/0/5/1` and `52/0/5/0`.
+
+**Run C was not planned and is the most useful of the three.** `ec0dd09` is the commit that carried this
+section, and it changes documents and design files only — `git diff bbfe95f ec0dd09 -- backend/` is empty,
+so the backend tree it ran against is **byte-identical** to the one runs A and B measured. Because
+`venue-verification`'s `pull_request` filter is scoped to the whole PR diff (above), a documents-only push
+still spends a live run, and that run is a **third reading of the same code** taken hours later rather than
+minutes later. It is quoted as such and not as a fourth run of the batch: the batch is two commits and
+ruling 2 asked for runs before and after it, which runs A and B are.
 
 The `of 49` → `of 57` is this batch's eight new live-module tests, and it is the reason the offline count
 moved by 35 and not by 43: those eight are collected by the live run, not by the offline suite, which skips
@@ -1902,28 +1950,53 @@ okx.cross_endpoint quotes_mid=61963.15 book_mid=61963.15 gap_bps=0.0 dt_observed
                    quoted_spread_bps=0.016 asserts_agreement=False
 ```
 
+After, run C (`45996139111`, `pull_request`, at `ec0dd09` — same backend tree, hours later):
+
+```
+okx.cross_endpoint quotes_mid=61650.75 book_mid=61650.75 gap_bps=0.0 dt_observed_s=0.157
+                   dt_venue_s=1.083 dt_wall_s=0.301 skew_venue_over_wall=3.604
+                   bps_per_s_observed=0.0 bps_per_s_venue=0.0 bps_per_s_wall=0.0
+                   receipt_lag_quotes_s=0.989 receipt_lag_book_s=0.062
+                   quoted_spread_bps=0.016 asserts_agreement=False
+```
+
 **What converged, and what that means.**
 
-| reading | before (`975dc64`) | after, run A | after, run B |
-|---|---|---|---|
-| `dt_observed_s / dt_wall_s` | `1.137 / 0.35` = **3.25×** | `0.116 / 0.244` = **0.48×** | `0.172 / 0.355` = **0.48×** |
-| venue interval / wall clock | not separable — it *was* `dt_observed_s` | `0.498 / 0.244` = **2.037×** | `0.239 / 0.355` = **0.673×** |
-| receipt minus venue, quote | not measurable anywhere in the system | **0.436 s** | **0.153 s** |
-| receipt minus venue, book | not measurable anywhere in the system | **0.053 s** | **0.086 s** |
-| `gap_bps` | 1.265 | 2.325 | 0.0 |
+| reading | before (`975dc64`) | after, run A | after, run B | after, run C |
+|---|---|---|---|---|
+| `dt_observed_s / dt_wall_s` | `1.137 / 0.35` = **3.25×** | `0.116 / 0.244` = **0.48×** | `0.172 / 0.355` = **0.48×** | `0.157 / 0.301` = **0.52×** |
+| venue interval / wall clock | not separable — it *was* `dt_observed_s` | `0.498 / 0.244` = **2.037×** | `0.239 / 0.355` = **0.673×** | `1.083 / 0.301` = **3.604×** |
+| receipt minus venue, quote | not measurable anywhere in the system | **0.436 s** | **0.153 s** | **0.989 s** |
+| receipt minus venue, book | not measurable anywhere in the system | **0.053 s** | **0.086 s** | **0.062 s** |
+| `gap_bps` | 1.265 | 2.325 | 0.0 | 0.0 |
+| trades, buy / sell | 48 / 2 | 1 / 49 | **50 / 0** | 2 / 48 |
 
-**The convergence reproduces, and the venue's own skew does not.** Two runs of the same commit, minutes
-apart, both put our interval at 0.48× the wall clock around the same two calls — one reading each,
-independently computed, agreeing to two decimal places. Before the batch the same ratio was 3.25×, and the
-record could not say whose clock the disagreement belonged to. After it, ours is shorter than the wall
-clock by roughly the harness's own overhead between starting its timer and issuing the first request, which
-is the direction that difference should point, and it points that way twice.
+The ratios in the second row are the harness's published `skew_venue_over_wall`, computed from unrounded
+intervals; the inputs shown are the annotation's three-decimal values, so recomputing from them differs in
+the third place (2.041 against 2.037 in run A, 3.598 against 3.604 in run C). The published value is
+quoted rather than the recomputation, because the recomputation inherits a rounding the harness did not
+make.
 
-The venue's reading moved 3× in the same four minutes: 2.037× then 0.673×, the second **below one**. That
-is not a contradiction and it is the reason §10.8 states this quantity as a range rather than a number —
-run 26's 0.80× was until now the only published reading under one, and run B is the second. What the two
-runs agree on is not the value but that the value is now attributable: `skew_venue_over_wall` says whose
-interval it is, which `dt_observed_s` could not.
+**The convergence reproduces three times, and the venue's own skew does not reproduce at all.** Three runs
+of one backend tree put our interval at **0.48×**, **0.48×** and **0.52×** the wall clock around the same
+two calls — two minutes apart and then hours apart, each computed independently. Before the batch the same
+ratio was 3.25×, and the record could not say whose clock the disagreement belonged to. After it, ours is
+shorter than the wall clock by roughly the harness's own overhead between starting its timer and issuing
+the first request, which is the direction that difference should point, and it points that way **three
+times out of three**. That is the batch's central claim and run C is what turns it from a coincidence of
+two into a property of the code: 0.48/0.48 could have been one quiet minute measured twice, and 0.52 hours
+later on an identical tree cannot.
+
+The venue's reading moved by more than 5× across the three: **2.037×**, then **0.673×** four minutes later
+—the second **below one** — then **3.604×** hours after that, on an identical backend tree. That is not a
+contradiction and it is the reason §10.8 states this quantity as a range rather than a number: run 26's
+0.80× was until run B the only published reading under one, and run C's 3.604× sits inside §10.8's
+published ceiling of 3.97× rather than beyond it. So the three readings move the range's **floor** and
+leave its **ceiling** alone, which is exactly the asymmetry question 2 in §11.13 asks about. What the three
+runs agree on is not the value but that the value is now **attributable**: `skew_venue_over_wall` says whose
+interval it is, which `dt_observed_s` could not, and a quantity that swings 0.673×–3.604× between runs of
+identical code is one no threshold may be set against — the same reason P-8's recommendation at Stage 7.3
+chose no tolerance.
 
 Before the batch, the interval read from `observed_at` was 3.25× the interval the harness timed around the
 same two calls, and the record could not say whose clock the disagreement belonged to. After it, our own
@@ -1933,11 +2006,15 @@ direction that difference should point. The venue's interval, now separable, is 
 clock**, inside the range §10.8 published as a property (0.80×–3.97×) and attributable at last to the clock
 it came from.
 
-And the four `receipt_lag_*` numbers are the measurement F-14 said did not exist. In run A OKX stamped the
-ticker 0.436 s before we received it and the book 0.053 s before; in run B, 0.153 s and 0.086 s. The quote
-lag exceeds the book lag in **both** runs, which is the ticker endpoint updating less often than the book
-endpoint — the *conclusion* run 25 reached indirectly in `docs/14` §4.1, now readable off one row of one
-annotation instead of being inferred by comparing two runs, and reproduced in a second.
+And the `receipt_lag_*` numbers are the measurement F-14 said did not exist. In run A OKX stamped the
+ticker 0.436 s before we received it and the book 0.053 s before; in run B, 0.153 s and 0.086 s; in run C,
+0.989 s and 0.062 s. The quote lag exceeds the book lag in **all three**, by 8×, 1.8× and 16× — which is
+the ticker endpoint updating less often than the book endpoint, the *conclusion* run 25 reached indirectly
+in `docs/14` §4.1, now readable off one row of one annotation instead of being inferred by comparing two
+runs, and reproduced in a second and a third. Run C's 0.989 s is the largest receipt-minus-venue gap
+published anywhere in this record and the only one near a second, which is a further reason limitation 5
+insists the number is not latency: it is the venue's stamp against our clock, and the two are not
+synchronised.
 
 **Other rows worth keeping, all verbatim.**
 
@@ -1960,38 +2037,44 @@ Fifty trades, one receipt instant, event times spanning 0.256 s. A hundred one-m
 1.65 hours, one receipt instant. That is `distinct_receipt_times=1` doing the work §11.3's table describes,
 measured on live data rather than on a fixture.
 
-`buy=1 sell=49` in run A and **`buy=50 sell=0`** in run B — the same endpoint, the same commit, four
-minutes apart, one 49/1 and one entirely one-sided. Neither is a failure, by P-7's ruling at Stage 7.3, and
-the pair is the strongest vindication of it this record has: a threshold on side balance chosen anywhere
-between 50/0 and 49/1 would have failed run B and passed run A on identical code. The "before" run had
-`buy=48 sell=2`. The distribution is recorded as counts rather than as the set of sides that happened to
-appear precisely so this comparison is possible — `sides=['BUY']` is identical for a 50/0 minute and a
-25/25 one.
+`buy=1 sell=49` in run A, **`buy=50 sell=0`** in run B and `buy=2 sell=48` in run C — the same endpoint,
+one backend tree, three readings ranging from entirely one-sided to 48/2. None is a failure, by P-7's
+ruling at Stage 7.3, and the triple is the strongest vindication of it this record has: a threshold on side
+balance chosen anywhere between 50/0 and 48/2 would have failed at least one of the three on identical
+code. The "before" run had `buy=48 sell=2`, so run C lands within one trade of the pre-batch reading while
+run B is its exact mirror. The distribution is recorded as counts rather than as the set of sides that
+happened to appear precisely so this comparison is possible — `sides=['BUY']` is identical for a 50/0
+minute and a 25/25 one, and run B published exactly that.
 
-**What the annotations still cannot show.** Both are truncated past the cap — the "after" one reports
-`4372 escaped characters over the cap` — so the Bybit rows and the Dukascopy tick rows are unreachable, as
-they were in the "before" run. The comparison is like-for-like on that account and no claim here rests on a
-Bybit or Dukascopy number. `PARTIAL - 5 geo-blocked` is unchanged and predates this batch: Bybit
-geo-blocks hosted runners (F-2, needs the D-021 VM).
+**What the annotations still cannot show.** All three "after" annotations are truncated past the cap —
+`4372`, `5185` and `5123 escaped characters over the cap` — so the Bybit rows and the Dukascopy tick rows
+are unreachable in every one, as they were in the "before" run. The comparison is like-for-like on that
+account and no claim here rests on a Bybit or Dukascopy number from an "after" run. The cap is not a
+constant either: the same code produced 4,372 and 5,185 four minutes apart, because the escaped length
+depends on how many rows a check printed, which depends on the market. `PARTIAL - 5 geo-blocked` is
+unchanged and predates this batch: Bybit geo-blocks hosted runners (F-2, needs the D-021 VM).
 
 ### 11.10 What this section could not claim, and one thing it now can
 
 §10.8's rule is that a skew series is stated as a range and a property, never as a count, because a count
-that re-triggers per push is stale on arrival. This section quotes **three** runs — one before, two after —
+that re-triggers per push is stale on arrival. This section quotes **four** runs — one before, three after —
 and no series, under the authority ruling 2 gave ("its own live runs before and after"), and it does not
 extend §10.8's table on its own account: these are a before/after for one change, not members of an
 open-ended sequence. Whether the renamed key continues that sequence is question 2 in §11.13, and the
-answer changes what the published range says. It matters concretely: run B's `skew_venue_over_wall` is
-**0.673×**, below the 0.80× floor of §10.8's published range, so admitting it widens the range to
-**0.673×–3.97×** and admitting nothing leaves a published floor that a run of this repository's own CI has
-already gone below.
+answer changes what the published range says. It matters concretely, and the three after readings pull in
+opposite directions: run B's `skew_venue_over_wall` is **0.673×**, below the 0.80× floor of §10.8's
+published range, while run C's is **3.604×**, inside that range's 3.97× ceiling. Admitting all three widens
+the range to **0.673×–3.97×** — the floor moves, the ceiling does not — and admitting nothing leaves a
+published floor that a run of this repository's own CI has already gone below, with a third reading sitting
+comfortably inside the range that would have been abandoned.
 
 One conclusion `docs/14` §4.1 reached indirectly is now readable off a single row. That section recorded
 run 25's finding — OKX's ticker `ts` lagged its book `ts` by 0.739 s while both responses arrived within
 0.294 s, so the ticker endpoint updates less often — and noted that F-14 meant the *mechanism* was
-misattributed even though the conclusion stood. The "after" row above measures the same thing directly:
-`receipt_lag_quotes_s=0.436` against `receipt_lag_book_s=0.053`. Same conclusion, one row, no inference
-across two runs.
+misattributed even though the conclusion stood. The "after" rows above measure the same thing directly:
+`receipt_lag_quotes_s=0.436` against `receipt_lag_book_s=0.053` in run A, `0.153` against `0.086` in run B,
+`0.989` against `0.062` in run C. Same conclusion three times, one row each, no inference across runs — and
+the ordering holds at every magnitude the gap took, from 0.053 s to 0.989 s.
 
 ### 11.11 The gate
 
@@ -2031,6 +2114,14 @@ so this batch did not disturb the posture O-011's recurrence resolved — which 
 §10.11 established that a documents-only push can go red on base-image drift and nothing in this batch
 would have noticed if it had.
 
+**`ec0dd09`, the commit carrying this section, produced three runs** — `ci` push `45996129637`, `ci`
+pull_request `45996139001` and `venue-verification` pull_request `45996139111` — and the third is run C
+above. It changed documents and design files only, so it is the mechanism in §11.9's first paragraph
+demonstrated on the commit that describes it: a documents-only push still spends a live run, and this one
+came back `52 passed / 0 failed / 5 geo-blocked / 0 skipped of 57` against a backend tree identical to
+`bbfe95f`'s. §10.11's warning was that such a push can go red on base-image drift; this one did not, and
+the `ci` runs' image annotation is the same sentence quoted above.
+
 **Finding ids consumed: F-23** (§11.7, closed in the same batch). **The next finding id remains F-24.**
 
 ### 11.12 Limitations of this batch
@@ -2042,18 +2133,21 @@ would have noticed if it had.
 2. **F-22 is untouched.** The evidence checksum is still verified only on a read.
 3. **The captures are still re-serialised for JSON.** §11.7 states the trade: byte fidelity would move the
    decode out of the retry loop.
-4. **No Bybit or Dukascopy number is quoted from either run.** Both annotations truncate before those rows.
-   The Bybit path is verified by the offline gate and by 13 checks that now pass, not by a published
-   measurement.
+4. **No Bybit or Dukascopy number is quoted from any "after" run.** All three annotations truncate before
+   those rows (`4372`, `5185` and `5123 escaped characters over the cap`). The Bybit path is verified by
+   the offline gate and by 13 checks that now pass, not by a published measurement. The Dukascopy LZMA
+   ratios in §11.1 come from the *before* run and from the failed run at `8cdc871`, and are labelled as
+   doing so there.
 5. **`receipt_minus_venue_s` and `receipt_lag_*_s` are not latency.** They conflate network delay with the
    offset between the venue's clock and ours, exactly as `apparent_latency_seconds` does, and are labelled
    as doing so wherever they appear. A negative value means the venue's clock runs fast; it is recorded,
    not refused and not clamped.
-6. **Two readings under the new key are not a property.** §10.8's range came from eight pairs across runs
-   24–31; this batch adds two, four minutes apart, on one commit, and they differ by 3× (2.037× and
-   0.673×). That spread is the point rather than a weakness — it is why the quantity is published as a
-   range — but two samples from one commit cannot bound anything, and the geo-blocking that removes Bybit
-   from every hosted run is unchanged.
+6. **Three readings under the new key are still not a property.** §10.8's range came from eight pairs
+   across runs 24–31; this batch adds three on one backend tree — two minutes apart and then hours apart —
+   and they span **0.673× to 3.604×**, a factor of 5.4. That spread is the point rather than a weakness,
+   and it is why the quantity is published as a range and why P-8's recommendation at Stage 7.3 chose no
+   tolerance; but three samples cannot bound anything either, one of the three came from a commit that was
+   not part of the batch, and the geo-blocking that removes Bybit from every hosted run is unchanged.
 7. **The AST scan gates method *presence*, not signatures.** A transport whose `fetch_json` took different
    arguments would satisfy it. `mypy src` covers `src/`; the live module is not type-checked because it is
    not under `src/`.
@@ -2065,30 +2159,38 @@ would have noticed if it had.
 
 Four questions, each with one marked recommendation.
 
-**1. Is Stage 8.4 approved?** *Recommend: approve, recorded as D-053, with F-23 disclosed (§11.7) and with
-the correction to `bbfe95f`'s commit message disclosed in the same section.* Ruling 2's scope was kept:
+**1. Is Stage 8.4 approved?** *Recommend: approve, recorded as D-053, with F-23 disclosed (§11.7), with
+the correction to `bbfe95f`'s commit message disclosed in the same section, and with the three corrections
+this record made to its own numbers disclosed in §11.6 (the tamper count), §11.1 (the LZMA ratio) and
+§11.9 (the run-count mechanism).* Ruling 2's scope was kept:
 four adapters, no dossier work, no new tables, no writer wiring. Its own gate exists and was proven
-load-bearing by tampering. Its own live runs before and after exist, and the after run shows the
-convergence the batch was for — `dt_observed_s / dt_wall_s` from 3.25× to 0.48×, with the venue's own
-2.037× now separable and labelled. `O-012` moves to `CLOSED`. The alternative is to hold it open until a
+load-bearing by tampering. Its own live runs before and after exist, and the three after readings show the
+convergence the batch was for — `dt_observed_s / dt_wall_s` from 3.25× to **0.48×, 0.48× and 0.52×** on one
+backend tree, with the venue's own interval now separable and labelled at 2.037×, 0.673× and 3.604×.
+`O-012` moves to `CLOSED`. The alternative is to hold it open until a
 writer consumes the receipt time, which would make the ledger row a statement about §11.12's limitation 1
 rather than about the defect F-14 named.
 
 **2. Does the pre-8.4 skew series continue under the renamed key, and what happens to its published
 floor?** *Recommend: it continues, and the range is restated as `skew_venue_over_wall` **0.673×–3.97×**,
-with 8.4's two readings admitted as its ninth and tenth pairs.* The quantity is unchanged: every historical
+with 8.4's three readings admitted as its ninth, tenth and eleventh pairs.* The quantity is unchanged: every historical
 value was `dt_observed_s / dt_wall_s` where `dt_observed_s` was read from a field holding venue stamps,
 which is exactly venue-interval over wall-interval. Only the key moved, and a range that stops because a
 key was renamed would discard eight measurements to protect a name.
 
 The floor is the part that needs a ruling rather than a restatement. §10.8 published **0.80×–3.97×**, and
 0.80× (run 26) was the only reading below one. Run B measures **0.673×**, below that floor, on this
-repository's own CI. So either the range widens — which is what recommending it means, and which is
-consistent with §10.8's own warning that a floor claim must be scoped to the runs it was measured over — or
-the series stops here and 0.673× is recorded as a one-off outside it, which would leave a published floor
-that a run of this repository has already gone below and nobody has said so. The alternative to both is to
-start a new series at 8.4, defensible because the pre-8.4 values were computed by the harness from fields
-rather than published under this key, but it orphans the older range with nothing to compare against.
+repository's own CI; run C measures **3.604×**, inside the published range and 0.37× under its ceiling. So
+the three readings do not pull the same way, and only the floor is in question: either the range widens
+downward to **0.673×–3.97×** — which is what recommending it means, and which is consistent with §10.8's
+own warning that a floor claim must be scoped to the runs it was measured over — or the series stops here
+and 0.673× is recorded as a one-off outside it, which would leave a published floor that a run of this
+repository has already gone below and nobody has said so, while discarding a third reading that the same
+range already contains. The alternative to both is to start a new series at 8.4, defensible because the
+pre-8.4 values were computed by the harness from fields rather than published under this key, but it
+orphans the older range with nothing to compare against — and run C is the argument against it, since a
+fresh series of one reading bounded by 3.604× and 3.604× states less than the eleven-pair range it would
+replace.
 
 **3. Is F-23's gate the right posture — an AST scan of test-only implementations, or should the wrapper
 move where the offline suite imports it?** *Recommend: keep the scan, and do not move the wrapper.* The
