@@ -31,7 +31,15 @@ class DataStatus(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class MarketSnapshot:
-    """Best bid/ask/last for one instrument at one venue."""
+    """Best bid/ask/last for one instrument at one venue.
+
+    ``observed_at`` is **our** receipt time and ``venue_timestamp`` is the venue's own stamp for
+    the quote; the gate ages the first and reports the second beside it. F-14 was that the
+    adapters put the venue's value in both, so ``age_seconds(observed_at)`` measured the venue's
+    clock while the gate called it ours: a venue running ahead made fresh data look stale or
+    tripped the future-timestamp fault, and a venue running behind made stale data look fresh —
+    the dangerous direction, because it is the one that allows new risk.
+    """
 
     instrument_id: str
     venue: str
@@ -72,6 +80,7 @@ class OrderBookSnapshot:
     bids: tuple[tuple[Decimal, Decimal], ...] = ()
     asks: tuple[tuple[Decimal, Decimal], ...] = ()
     observed_at: datetime | None = None
+    venue_timestamp: datetime | None = None
     entitlement: str = "NONE"  # NONE | DELAYED | LIVE
     source: str = "UNKNOWN"
 
@@ -113,6 +122,45 @@ class DataQualityGate:
 
     def _now(self) -> datetime:
         return self._now_fn()
+
+    @staticmethod
+    def _add_clock_details(
+        details: dict[str, Any],
+        observed_at: datetime | None,
+        venue_timestamp: datetime | None,
+        *,
+        now: datetime,
+    ) -> None:
+        """Report the venue's clock beside ours, without letting either extra number gate anything.
+
+        F-14's second consequence was that feed staleness could not be measured at all. Both
+        readings are now published per check: ``age_seconds`` — ours, the receipt time, and the
+        only one the threshold is applied to — and ``venue_age_seconds``, the age of the venue's
+        own stamp for the same datum. ``receipt_minus_venue_s`` is the difference between the two
+        clocks, and it conflates network delay with clock offset exactly as
+        ``evidence_ref.apparent_latency_seconds`` does; it is published with that qualification
+        rather than dressed up as a latency measurement. A negative value means the venue's stamp
+        is ahead of our receipt of it, which happens when a venue's clock runs fast, and it is
+        recorded rather than refused — refusing would hide the very skew this exists to show.
+
+        Neither extra number is gated on, deliberately: a threshold on the venue's clock would
+        fail closed whenever a venue drifted, and D-052 scoped 8.4 to making the receipt time
+        real, not to adding gates.
+        """
+        if venue_timestamp is None:
+            details["venue_age_seconds"] = None
+            details["receipt_minus_venue_s"] = None
+            return
+        # Not `age_seconds`, which clamps a future stamp to 0.0 on the contract that the gate flags
+        # it separately as a clock fault — and that flag reads *our* receipt time, never the venue's,
+        # because a venue's clock is not ours to police. Clamping here would therefore discard the one
+        # case this number exists to show: a venue running ahead of us publishes a stamp that has not
+        # happened yet, and 0.0 would report it as brand new instead of as negative.
+        details["venue_age_seconds"] = round((now - venue_timestamp).total_seconds(), 3)
+        if observed_at is None:
+            details["receipt_minus_venue_s"] = None
+            return
+        details["receipt_minus_venue_s"] = round((observed_at - venue_timestamp).total_seconds(), 3)
 
     def check_quote(self, snapshot: MarketSnapshot | None) -> GateResult:
         """Check a top-of-book snapshot. ``None`` is UNAVAILABLE, not fresh."""
@@ -159,6 +207,7 @@ class DataQualityGate:
             "max_age_seconds": max_age,
             "delayed": snapshot.delayed,
         }
+        self._add_clock_details(details, snapshot.observed_at, snapshot.venue_timestamp, now=now)
         if age > max_age:
             return GateResult(
                 ok=False,
@@ -209,6 +258,7 @@ class DataQualityGate:
             "max_age_seconds": max_age,
             "levels": len(book.bids) + len(book.asks),
         }
+        self._add_clock_details(details, book.observed_at, book.venue_timestamp, now=now)
         if age > max_age:
             return GateResult(
                 ok=False,

@@ -1084,7 +1084,9 @@ class SqliteOperationalStore:
         ``observed_at`` and ``retrieved_at`` are separate columns on purpose and both are required to be
         non-empty. ``observed_at`` is the venue's own timestamp for the observation; ``retrieved_at`` is
         the local clock at the moment this system received it. Collapsing the two is what makes latency
-        unmeasurable (finding F-14), and a NOT NULL column still accepts an empty string — so the refusal
+        unmeasurable (finding F-14, closed at the adapters by Stage 8.4 — the ingestion records now
+        carry both clocks, while these two columns keep the meanings given here), and a NOT NULL column
+        still accepts an empty string — so the refusal
         is here rather than left to the caller, because an evidence row that cannot say when it was
         observed cannot support a decision anyone can audit.
         """

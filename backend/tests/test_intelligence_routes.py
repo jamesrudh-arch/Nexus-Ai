@@ -345,7 +345,14 @@ class TestTheGapsArePartOfTheResponse:
     def test_the_gaps_a_ruling_moved_name_the_ruling_and_which_kind_it_was(self) -> None:
         """Three gaps cite D-051 and they are not the same kind of thing: two were deferred to the
         stage-10 writer, and the third was given a batch of its own. A test that counted them without
-        distinguishing them would pass on a ruling that meant something else."""
+        distinguishing them would pass on a ruling that meant something else.
+
+        The third has since changed kind, and this test changed with it rather than being left to
+        pass on stale text: Stage 8.4 **ran** and did not fill the gap, because its ruling scoped it
+        to F-14's expensive half alone — no new tables, no new columns, no writer wiring. So the gap
+        is no longer scheduled for a batch that has not happened; it is unscheduled, and the route
+        must say so instead of pointing at a batch the reader can go and find already merged.
+        """
         ruled = [gap for gap in DOSSIER_VIEW_GAPS if gap["deferred_by"] and "D-051" in gap["deferred_by"]]
         assert {gap["element"] for gap in ruled} == {
             "contradictions highlighted and linked",
@@ -362,6 +369,19 @@ class TestTheGapsArePartOfTheResponse:
         assert [
             gap for gap in ruled if "stage-10" in gap["deferred_by"] and "8.4" in gap["deferred_by"]
         ] == []
+        # And the batch it names has landed, which the text must not hide: a gap that says "waiting
+        # on 8.4" after 8.4 merged sends the reader to a queue that is empty.
+        publication = next(gap for gap in ruled if gap["element"] == "publication time in the evidence table")
+        assert "has now landed" in publication["deferred_by"], (
+            "the publication-time gap still reads as though Stage 8.4 had not run"
+        )
+        assert "Nothing is scheduled" in publication["deferred_by"], (
+            "a gap with no batch behind it must say so, rather than implying one is coming"
+        )
+        assert "receipt time" in publication["why_not_servable"], (
+            "the gap must say why a receipt time does not fill it: when we got it is not when the "
+            "source published it"
+        )
 
     def test_the_freshness_gap_says_why_the_stored_status_is_not_a_freshness_reading(self) -> None:
         gap = next(g for g in DOSSIER_VIEW_GAPS if g["element"] == "freshness")

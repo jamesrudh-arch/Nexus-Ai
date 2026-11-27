@@ -43,7 +43,7 @@ import asyncio
 import json
 import os
 import re
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -54,6 +54,7 @@ import pytest
 
 from nexus.data.records import (
     BackoffPolicy,
+    BarRecord,
     BookLevel,
     BookRecord,
     HttpTransport,
@@ -317,11 +318,55 @@ def _assert_aware(value: datetime | None, what: str) -> None:
     assert value.tzinfo is not None, f"{what} is naive; every timestamp in this system is aware UTC"
 
 
+def _clock_evidence(records: Sequence[Any], *, event_attr: str = "venue_timestamp") -> dict[str, Any]:
+    """The receipt-time half of an evidence line: when we got it, and how many times we got it.
+
+    Since Stage 8.4 `observed_at` is this process's receipt instant, so a bulk response — one
+    download, one HTTP round trip — gives every row the *same* value. Publishing the count of
+    distinct values makes that property visible in the annotation instead of leaving it to be
+    inferred from one row: a dump of 1,440 klines arrives once, so the count is 1 and the span the
+    line reports comes from the event times, not from a receipt time repeated 1,440 times and
+    mistaken for a range.
+
+    The venue stamp is published beside it and only when the venue gave one, because "no venue
+    time" is a fact about the feed that a reader of the annotation must be able to see rather than
+    have defaulted away. `event_attr` names the field that holds it: `venue_timestamp` for ticks,
+    quotes and books, and `open_time` for bars — a bar's event time has always been its open time
+    and it deliberately has no second field for it, so counting `venue_timestamp` on a bar line
+    would report zero rows with an event time for a feed that gave one on every row.
+    """
+    receipts = {getattr(record, "observed_at", None) for record in records}
+    stamps = [getattr(record, event_attr, None) for record in records]
+    with_stamp = [stamp for stamp in stamps if stamp is not None]
+    out: dict[str, Any] = {
+        "received_at": _iso(receipts),
+        "distinct_receipt_times": len(receipts),
+        "rows_with_a_venue_stamp": len(with_stamp),
+    }
+    if with_stamp:
+        out["venue_time_first"] = min(with_stamp).isoformat()
+        out["venue_time_last"] = max(with_stamp).isoformat()
+    return out
+
+
+def _iso(receipts: set[Any]) -> str | None:
+    """One receipt instant rendered, or `None` when there is not exactly one to render."""
+    if len(receipts) != 1:
+        return None
+    only = next(iter(receipts))
+    return None if only is None else only.isoformat()
+
+
 def _assert_bars(bars: tuple[Any, ...], *, interval: str, source: str, label: str) -> None:
     assert bars, f"{label}: no bars came back, so nothing about the live shape is verified"
     times = [bar.open_time for bar in bars]
     for bar in bars:
         _assert_aware(bar.open_time, f"{label}: open_time")
+        # The event time is the archive's partition key, and it must not be naive. The receipt time
+        # is checked for awareness too where a fetch produced one, but a bar built from bytes on
+        # disk has none and that is not a failure.
+        if bar.observed_at is not None:
+            _assert_aware(bar.observed_at, f"{label}: observed_at")
         assert bar.interval == interval, f"{label}: interval {bar.interval!r} != requested {interval!r}"
         assert bar.source == source, f"{label}: source {bar.source!r} != {source!r}"
         assert bar.high >= bar.low, f"{label}: high {bar.high} below low {bar.low}"
@@ -341,6 +386,9 @@ def _assert_bars(bars: tuple[Any, ...], *, interval: str, source: str, label: st
         close_max=max(prices),
         first=times[0].isoformat(),
         last=times[-1].isoformat(),
+        # Both clocks: `first`/`last` are the venue's event times and `span_hours` is measured
+        # across them, while the receipt fields say when this process actually got the bytes.
+        **_clock_evidence(bars, event_attr="open_time"),
     )
 
 
@@ -348,6 +396,15 @@ def _assert_quotes(quotes: tuple[Any, ...], *, source: str, label: str) -> None:
     assert quotes, f"{label}: no quotes came back"
     for quote in quotes:
         _assert_aware(quote.observed_at, f"{label}: observed_at")
+        # The receipt time is ours and always exists on the live path — that is what makes the
+        # record's type optional offline and guaranteed here. The venue's stamp may be absent:
+        # OKX's ticker publishes one, and an adapter must not borrow ours to fill the gap.
+        if quote.venue_timestamp is not None:
+            _assert_aware(quote.venue_timestamp, f"{label}: venue_timestamp")
+            assert quote.venue_timestamp != quote.observed_at, (
+                f"{label}: observed_at and venue_timestamp hold one value, which is the shape "
+                "finding F-14 describes — a receipt time copied from the venue's clock"
+            )
         assert quote.source == source, f"{label}: source {quote.source!r} != {source!r}"
         assert quote.bid is not None and quote.ask is not None, f"{label}: one-sided quote"
         assert quote.bid > 0 and quote.ask > 0, f"{label}: non-positive price"
@@ -360,7 +417,15 @@ def _assert_quotes(quotes: tuple[Any, ...], *, source: str, label: str) -> None:
         bid=quotes[0].bid,
         ask=quotes[0].ask,
         spread_bps=round((quotes[0].ask - quotes[0].bid) / quotes[0].bid * 10_000, 3),
+        # Was `observed_at=` alone, and before 8.4 that value was the venue's stamp published under
+        # a name that said it was ours. Both are published now, plus the distance between them,
+        # which conflates network delay with the venue's clock offset and is labelled as doing so.
         observed_at=quotes[0].observed_at.isoformat(),
+        venue_timestamp=(
+            None if quotes[0].venue_timestamp is None else quotes[0].venue_timestamp.isoformat()
+        ),
+        receipt_lag_s=_lag_seconds(quotes[0]),
+        **_clock_evidence(quotes),
     )
 
 
@@ -392,7 +457,13 @@ def _assert_ticks(ticks: tuple[Any, ...], *, source: str, label: str) -> None:
         buy=sides.count("BUY"),
         sell=sides.count("SELL"),
         unspecified=sides.count("None"),
-        newest=max(tick.observed_at for tick in ticks).isoformat(),
+        # `newest` is the newest *trade*, which is a venue-time fact. It was computed from
+        # `observed_at` while that field held venue time; now that the field is a receipt instant,
+        # every row of one response shares it and `max` of it would publish one arrival time and
+        # call it the newest trade. The event times give the newest trade, and the arrival is
+        # published separately beside them.
+        newest=_newest_event_time(ticks, label=label),
+        **_clock_evidence(ticks),
     )
 
 
@@ -409,6 +480,8 @@ def _assert_book(book: Any, *, source: str, label: str) -> None:
     for level in (*book.bids, *book.asks):
         assert level.price > 0 and level.quantity > 0, f"{label}: non-positive level"
     _assert_aware(book.observed_at, f"{label}: observed_at")
+    if book.venue_timestamp is not None:
+        _assert_aware(book.venue_timestamp, f"{label}: venue_timestamp")
     assert book.source == source, f"{label}: source {book.source!r} != {source!r}"
     _evidence(
         f"{label}.book",
@@ -422,7 +495,14 @@ def _assert_book(book: Any, *, source: str, label: str) -> None:
         # to elapsed time rather than to disagreement — and a tolerance chosen without that is
         # invented. Recording it makes the gap measurable from one run's annotation. It does **not**
         # assert agreement: the tolerance remains the owner's call, and nothing here fails on a gap.
+        #
+        # Stage 8.4 added the second clock to the same line, and P-8's reasoning is why: attributing
+        # a mid gap to elapsed time needs to know *whose* elapsed time, and `observed_at` alone could
+        # not say. Both stamps are published now, plus their difference.
         observed_at=book.observed_at.isoformat(),
+        venue_timestamp=(None if book.venue_timestamp is None else book.venue_timestamp.isoformat()),
+        receipt_lag_s=_lag_seconds(book),
+        **_clock_evidence([book]),
     )
 
 
@@ -452,6 +532,41 @@ def _rate_bps_per_second(gap_bps: Decimal, elapsed_seconds: float) -> float | No
     return round(float(gap_bps) / elapsed_seconds, 3)
 
 
+def _newest_event_time(ticks: Sequence[Any], *, label: str) -> str | None:
+    """The latest venue stamp in a trade list, or ``None`` when the feed published none.
+
+    Not `max` of `observed_at`: since 8.4 that is one shared arrival instant, and the newest trade
+    is a fact about the venue's clock. `None` rather than a substitute for the same reason as
+    `_interval_seconds` — a receipt time standing in for a venue time would publish the arrival of
+    the response as the time of the last trade in it.
+    """
+    stamps = [tick.venue_timestamp for tick in ticks if tick.venue_timestamp is not None]
+    if not stamps:
+        return None
+    return max(stamps).isoformat()
+
+
+def _lag_seconds(record: Any) -> float | None:
+    """Our receipt time minus the venue's stamp for the same datum, or ``None``."""
+    observed = getattr(record, "observed_at", None)
+    venue = getattr(record, "venue_timestamp", None)
+    if observed is None or venue is None:
+        return None
+    return round((observed - venue).total_seconds(), 3)
+
+
+def _interval_seconds(first: Any, second: Any) -> float | None:
+    """The interval between two records' venue stamps, or ``None`` when either has none.
+
+    ``None`` rather than a substitute: falling back to our receipt time here would publish a venue
+    interval that was never measured, and the whole reason this function exists is that a number
+    with the wrong denominator looks exactly like one with the right one.
+    """
+    if first is None or second is None:
+        return None
+    return (second - first).total_seconds()
+
+
 def _record_cross_endpoint(
     quotes: Any,
     book: Any,
@@ -469,10 +584,22 @@ def _record_cross_endpoint(
 
     This function contains no assertion about the gap on purpose. Adding one would re-litigate a
     question the owner has answered, and would fail on ordinary volatility.
+
+    **Stage 8.4 changed what three of these keys measure, and the change is stated here rather than
+    left to be discovered by comparing runs.** Before it, `observed_at` held the venue's stamp, so
+    `dt_observed_s` was the *venue's* interval and its ratio to `dt_wall_s` was the skew series
+    published in `docs/14` §4.1 and `docs/15` §9.9/§10.8. Now `observed_at` is our receipt time, so
+    `dt_observed_s` is our own interval — an independent reading of the same span the harness times
+    with its wall clock, and the two should now agree closely. The venue's interval moved to
+    `dt_venue_s`, and the skew series continues as `skew_venue_over_wall`: same quantity, key renamed
+    because the field it was read from changed meaning. What is new is `receipt_lag_*_s`, the distance
+    between the two clocks *inside one record* — the measurement F-14 said did not exist anywhere in
+    the system, which until now could only be inferred by comparing two intervals across two runs.
     """
     quotes_mid = _mid(quotes.bid, quotes.ask)
     book_mid = _mid(book.best_bid, book.best_ask)
     observed_seconds = (book.observed_at - quotes.observed_at).total_seconds()
+    venue_seconds = _interval_seconds(quotes.venue_timestamp, book.venue_timestamp)
     gap = _gap_bps(quotes_mid, book_mid)
     _evidence(
         f"{label}.cross_endpoint",
@@ -484,9 +611,23 @@ def _record_cross_endpoint(
         # timestamp that is not the fetch time — which would quietly invalidate every gap published
         # so far, so the disagreement is recorded rather than averaged away.
         dt_observed_s=round(observed_seconds, 3),
+        dt_venue_s=None if venue_seconds is None else round(venue_seconds, 3),
         dt_wall_s=round(wall_seconds, 3),
+        # The series published before 8.4 as dt_observed_s / dt_wall_s, from a key that now says
+        # which clock it came from. None when the venue interval is not measurable, never 1.0 —
+        # a ratio of one would read as "no skew" rather than "no measurement".
+        skew_venue_over_wall=(
+            None if venue_seconds is None or wall_seconds <= 0 else round(venue_seconds / wall_seconds, 3)
+        ),
         bps_per_s_observed=_rate_bps_per_second(gap, observed_seconds),
+        bps_per_s_venue=(None if venue_seconds is None else _rate_bps_per_second(gap, venue_seconds)),
         bps_per_s_wall=_rate_bps_per_second(gap, wall_seconds),
+        # The two clocks inside one record: ours minus the venue's. Negative means the venue's
+        # stamp is ahead of our receipt of it, which happens when its clock runs fast, and it is
+        # recorded rather than refused. Conflates network delay with clock offset, exactly as
+        # evidence_ref.apparent_latency_seconds does, and is labelled here for the same reason.
+        receipt_lag_quotes_s=_lag_seconds(quotes),
+        receipt_lag_book_s=_lag_seconds(book),
         quoted_spread_bps=round(float((quotes.ask - quotes.bid) / quotes.bid * 10_000), 3),
         asserts_agreement=False,
     )
@@ -1205,6 +1346,150 @@ class TestTradeSideRuling:
         with pytest.raises(AssertionError, match="one-sided book"):
             _assert_book(self._book(bids=0), source=OKX_SOURCE, label="okx")
 
+    def test_the_quotes_line_publishes_both_clocks_and_the_distance_between_them(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Stage 8.4's evidence half: one line, two clocks, and the lag named as a lag.
+
+        Before 8.4 this line published `observed_at` alone and that value was the venue's stamp, so
+        a reader of the annotation could not tell whose clock the number came from. Now both are on
+        the line and `receipt_lag_s` is the difference — which conflates network delay with the
+        venue's clock offset, and is published under a name that does not claim otherwise.
+        """
+        received = datetime(2026, 11, 27, 6, 43, 35, tzinfo=UTC)
+        quote = QuoteRecord(
+            instrument_id="INS-BTC-USDT-USDT",
+            venue="OKX",
+            venue_symbol="BTC-USDT-SWAP",
+            bid=Decimal("61658.7"),
+            ask=Decimal("61658.8"),
+            observed_at=received,
+            venue_timestamp=received - timedelta(seconds=1.1),
+            source=OKX_SOURCE,
+        )
+        _assert_quotes((quote,), source=OKX_SOURCE, label="okx")
+        line = next(x for x in capsys.readouterr().out.splitlines() if ".quotes" in x)
+        assert f"observed_at={received.isoformat()}" in line, line
+        assert f"venue_timestamp={(received - timedelta(seconds=1.1)).isoformat()}" in line, line
+        assert "receipt_lag_s=1.1" in line, line
+        assert "rows_with_a_venue_stamp=1" in line, line
+
+    def test_a_quote_that_gives_no_venue_time_says_none_rather_than_borrowing_ours(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """OKX's instrument feed publishes no stamp of its own, and the line must show that."""
+        received = datetime(2026, 11, 27, 6, 43, 35, tzinfo=UTC)
+        quote = QuoteRecord(
+            instrument_id="INS-BTC-USDT-USDT",
+            venue="OKX",
+            venue_symbol="BTC-USDT-SWAP",
+            bid=Decimal("61658.7"),
+            ask=Decimal("61658.8"),
+            observed_at=received,
+            source=OKX_SOURCE,
+        )
+        _assert_quotes((quote,), source=OKX_SOURCE, label="okx")
+        line = next(x for x in capsys.readouterr().out.splitlines() if ".quotes" in x)
+        assert f"observed_at={received.isoformat()}" in line, line
+        assert "venue_timestamp=None" in line, line
+        assert "receipt_lag_s=None" in line, line
+        assert "rows_with_a_venue_stamp=0" in line, line
+
+    def test_a_bulk_response_publishes_one_receipt_time_and_a_span_of_event_times(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """F-14's shape for a downloaded file: one arrival, many event times.
+
+        `distinct_receipt_times=1` is the assertion that matters. Before 8.4 every row's
+        `observed_at` was its own venue stamp, so a "span" computed across that field really was a
+        span of event times; after 8.4 the same computation would publish one arrival instant twice
+        and call it a range. `newest` is therefore the newest *trade*, from the venue's stamps, and
+        the arrival is published beside it rather than in its place.
+        """
+        received = datetime(2026, 11, 27, 6, 43, 35, tzinfo=UTC)
+        event = datetime(2025, 11, 25, 12, 0, 0, tzinfo=UTC)
+        ticks = tuple(
+            TickRecord(
+                instrument_id="INS-BTC-USDT-USDT",
+                venue="OKX",
+                venue_symbol="BTC-USDT-SWAP",
+                price=Decimal("61658.7"),
+                quantity=Decimal("0.01"),
+                observed_at=received,
+                venue_timestamp=event + timedelta(seconds=i),
+                side="BUY",
+                source=OKX_SOURCE,
+            )
+            for i in range(3)
+        )
+        _assert_ticks(ticks, source=OKX_SOURCE, label="okx")
+        line = next(x for x in capsys.readouterr().out.splitlines() if ".trades" in x)
+        assert f"received_at={received.isoformat()}" in line, line
+        assert "distinct_receipt_times=1" in line, line
+        assert f"newest={(event + timedelta(seconds=2)).isoformat()}" in line, line
+        assert f"venue_time_first={event.isoformat()}" in line, line
+        assert "rows_with_a_venue_stamp=3" in line, line
+
+    def test_a_trade_list_with_no_venue_stamps_publishes_no_newest_trade(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """`newest` is a venue-time fact; without one, the answer is `None`, not our arrival."""
+        received = datetime(2026, 11, 27, 6, 43, 35, tzinfo=UTC)
+        ticks = tuple(
+            TickRecord(
+                instrument_id="INS-BTC-USDT-USDT",
+                venue="OKX",
+                venue_symbol="BTC-USDT-SWAP",
+                price=Decimal("61658.7"),
+                quantity=Decimal("0.01"),
+                observed_at=received,
+                side=None,
+                source=OKX_SOURCE,
+            )
+            for _ in range(2)
+        )
+        _assert_ticks(ticks, source=OKX_SOURCE, label="okx")
+        line = next(x for x in capsys.readouterr().out.splitlines() if ".trades" in x)
+        assert "newest=None" in line, line
+        assert f"received_at={received.isoformat()}" in line, line
+        assert "distinct_receipt_times=1" in line, line
+
+    def test_the_bars_line_counts_the_event_time_a_bar_actually_has(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A bar's event time is `open_time`; it has no `venue_timestamp` and never needs one.
+
+        Counting the wrong field here would publish `rows_with_a_venue_stamp=0` for a feed that gave
+        an event time on every row, and a reader would conclude the source publishes none.
+        """
+        received = datetime(2026, 11, 27, 6, 43, 35, tzinfo=UTC)
+        event = datetime(2025, 11, 25, 12, 0, 0, tzinfo=UTC)
+        bars = tuple(
+            BarRecord(
+                instrument_id="INS-BTC-USDT",
+                venue="BINANCE",
+                venue_symbol="BTCUSDT",
+                interval="1m",
+                open_time=event + timedelta(minutes=i),
+                close_time=event + timedelta(minutes=i, seconds=59),
+                open=Decimal("100.0"),
+                high=Decimal("110.0"),
+                low=Decimal("90.0"),
+                close=Decimal("105.0"),
+                volume=Decimal("10.5"),
+                observed_at=received,
+                confirmed=True,
+                source=BINANCE_VISION_SOURCE,
+            )
+            for i in range(3)
+        )
+        _assert_bars(bars, interval="1m", source=BINANCE_VISION_SOURCE, label="binance-vision")
+        line = next(x for x in capsys.readouterr().out.splitlines() if ".bars" in x)
+        assert "rows_with_a_venue_stamp=3" in line, line
+        assert f"venue_time_first={event.isoformat()}" in line, line
+        assert "distinct_receipt_times=1" in line, line
+        assert "span_hours=0.03" in line, line
+
     def test_the_book_evidence_carries_its_own_timestamp(self, capsys: pytest.CaptureFixture[str]) -> None:
         """P-8's missing half. ``.quotes`` always recorded ``observed_at`` and ``.book`` did not, so
         a gap between the two mids could not be attributed to elapsed time rather than to
@@ -1230,7 +1515,14 @@ class TestCrossEndpointRateArithmetic:
     RUN_19_BOOK = (Decimal("60587.0"), Decimal("60587.1"))
     RUN_19_DT = 1.287
 
-    def _quote(self, bid: Decimal, ask: Decimal, at: datetime) -> QuoteRecord:
+    def _quote(
+        self, bid: Decimal, ask: Decimal, at: datetime, *, venue_lag: float | None = None
+    ) -> QuoteRecord:
+        """`at` is the receipt time; `venue_lag` puts the venue's stamp that many seconds behind it.
+
+        The venue stamp is optional and defaults to absent, so the tests that pin `dt_observed_s`
+        literals keep pinning exactly what they pinned before Stage 8.4.
+        """
         return QuoteRecord(
             instrument_id="INS-BTC-USDT-USDT",
             venue="OKX",
@@ -1238,10 +1530,13 @@ class TestCrossEndpointRateArithmetic:
             bid=bid,
             ask=ask,
             observed_at=at,
+            venue_timestamp=None if venue_lag is None else at - timedelta(seconds=venue_lag),
             source=OKX_SOURCE,
         )
 
-    def _book(self, bid: Decimal, ask: Decimal, at: datetime) -> BookRecord:
+    def _book(
+        self, bid: Decimal, ask: Decimal, at: datetime, *, venue_lag: float | None = None
+    ) -> BookRecord:
         return BookRecord(
             instrument_id="INS-BTC-USDT-USDT",
             venue="OKX",
@@ -1249,6 +1544,7 @@ class TestCrossEndpointRateArithmetic:
             bids=(BookLevel(bid, Decimal("0.5")),),
             asks=(BookLevel(ask, Decimal("0.5")),),
             observed_at=at,
+            venue_timestamp=None if venue_lag is None else at - timedelta(seconds=venue_lag),
             entitlement="LIVE",
             source=OKX_SOURCE,
         )
@@ -1302,7 +1598,14 @@ class TestCrossEndpointRateArithmetic:
     def test_both_readings_of_the_interval_are_recorded(self, capsys: pytest.CaptureFixture[str]) -> None:
         """The adapters' timestamps and the wall clock around the calls are independent readings of
         one interval. A material disagreement would mean a timestamp is not the fetch time, which
-        would quietly invalidate every gap published so far — so it is recorded, not averaged away."""
+        would quietly invalidate every gap published so far — so it is recorded, not averaged away.
+
+        Stage 8.4 made this test mean what its name always claimed. Before it, `observed_at` held the
+        venue's stamp, so a material disagreement between the two readings was *expected* and said
+        nothing about our own timing; after it, `dt_observed_s` is the interval between two receipt
+        times, and a disagreement with `dt_wall_s` really does mean the timestamp is not the fetch
+        time. The venue's own reading moved to `dt_venue_s`, asserted below in its own test.
+        """
         at = datetime(2026, 11, 26, 13, 5, 2, 973000, tzinfo=UTC)
         quotes = self._quote(Decimal("60780.0"), Decimal("60780.1"), at)
         book = self._book(Decimal("60777.2"), Decimal("60777.3"), at + timedelta(seconds=1.435))
@@ -1311,6 +1614,88 @@ class TestCrossEndpointRateArithmetic:
         assert "dt_observed_s=1.435" in line and "dt_wall_s=9.999" in line
         assert "bps_per_s_observed=0.321" in line, line
         assert "bps_per_s_wall=0.046" in line, line
+
+    def test_the_three_clocks_are_published_separately_and_not_averaged(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """F-14's own measurement, pinned offline: one row, three intervals, all three named.
+
+        This is the check the live run could not make before 8.4. Two receipt times give our interval,
+        two venue stamps give the venue's, and the wall clock around the calls gives a third reading
+        of the same span — plus, inside a single record, the distance between the two clocks, which
+        is the number F-14 said did not exist anywhere in the system.
+
+        The fixture is deliberately *not* shaped like the pre-8.4 records, where `venue_timestamp`
+        and `observed_at` held one value: the venue lags the quote's receipt by 1.100 s and the
+        book's by 0.400 s, so a harness that read either field into the other's key would publish a
+        wrong number here instead of the right one by construction.
+        """
+        at = datetime(2026, 11, 27, 6, 43, 35, 120000, tzinfo=UTC)
+        quotes = self._quote(Decimal("61658.7"), Decimal("61658.8"), at, venue_lag=1.1)
+        book = self._book(Decimal("61666.5"), Decimal("61666.6"), at + timedelta(seconds=0.35), venue_lag=0.4)
+        _record_cross_endpoint(quotes, book, label="okx", wall_seconds=0.361)
+        line = next(x for x in capsys.readouterr().out.splitlines() if "cross_endpoint" in x)
+        # Our interval: 0.350 s between two receipt times, and the wall clock around the calls said
+        # 0.361 s of it. The two agree to 0.011 s, which is the property 8.4 was for — before it the
+        # same pair published 1.05 s here, because the field held venue stamps instead.
+        assert "dt_observed_s=0.35" in line, line
+        assert "dt_wall_s=0.361" in line, line
+        # The venue's interval, from the venue's stamps: 1.05 s for a span our clock measured as
+        # 0.361 s. The disagreement is real and is now attributed to the right clock.
+        assert "dt_venue_s=1.05" in line, line
+        assert "skew_venue_over_wall=2.909" in line, line
+        # The two clocks inside each record, receipt minus venue. Positive means the venue's stamp
+        # predates our receipt of it, which is the ordinary case.
+        assert "receipt_lag_quotes_s=1.1" in line, line
+        assert "receipt_lag_book_s=0.4" in line, line
+        # The gap is one number over three denominators, and the row says which is which.
+        assert "gap_bps=1.265" in line, line
+        assert "bps_per_s_observed=3.614" in line, line
+        assert "bps_per_s_venue=1.205" in line, line
+        assert "bps_per_s_wall=3.504" in line, line
+        assert "asserts_agreement=False" in line, line
+
+    def test_a_venue_clock_running_ahead_gives_a_negative_lag_and_is_not_refused(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The venue's clock is not synchronised to ours and runs both ways.
+
+        A negative receipt-minus-venue lag is evidence that the venue's stamp is ahead of the moment
+        we received it, which is what a fast venue clock looks like. It is recorded rather than
+        clamped, because clamping to zero would publish a plausible latency built out of an
+        assumption — the same error F-14 describes, reached from the other side.
+        """
+        at = datetime(2026, 11, 27, 6, 43, 35, 120000, tzinfo=UTC)
+        quotes = self._quote(Decimal("61658.7"), Decimal("61658.8"), at, venue_lag=1.1)
+        # The book's venue stamp is three seconds *after* we received it.
+        book = self._book(
+            Decimal("61666.5"), Decimal("61666.6"), at + timedelta(seconds=0.35), venue_lag=-3.0
+        )
+        _record_cross_endpoint(quotes, book, label="okx", wall_seconds=0.361)
+        line = next(x for x in capsys.readouterr().out.splitlines() if "cross_endpoint" in x)
+        assert "receipt_lag_book_s=-3.0" in line, line
+        assert "dt_observed_s=0.35" in line, line
+
+    def test_a_missing_venue_stamp_publishes_none_and_never_a_substitute(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """No venue stamp means the venue interval is not measurable, and the row says so.
+
+        Substituting our receipt time would publish a venue interval that was never measured, and a
+        ratio of 1.0 would read as "no skew" rather than "no measurement" — so `skew_venue_over_wall`
+        is `None`, not one.
+        """
+        at = datetime(2026, 11, 27, 6, 43, 35, 120000, tzinfo=UTC)
+        quotes = self._quote(Decimal("61658.7"), Decimal("61658.8"), at)
+        book = self._book(Decimal("61666.5"), Decimal("61666.6"), at + timedelta(seconds=0.35))
+        _record_cross_endpoint(quotes, book, label="okx", wall_seconds=0.361)
+        line = next(x for x in capsys.readouterr().out.splitlines() if "cross_endpoint" in x)
+        assert "dt_observed_s=0.35" in line, line
+        assert "dt_venue_s=None" in line, line
+        assert "skew_venue_over_wall=None" in line, line
+        assert "bps_per_s_venue=None" in line, line
+        assert "receipt_lag_quotes_s=None" in line, line
+        assert "receipt_lag_book_s=None" in line, line
 
     def test_an_identical_pair_records_a_zero_rate(self, capsys: pytest.CaptureFixture[str]) -> None:
         """Run 18's shape: same interval, no movement, gap exactly zero. Zero is a measurement."""

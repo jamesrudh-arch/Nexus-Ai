@@ -15,6 +15,14 @@ OKX specifics handled below:
   tightly; it is only used when the caller asks for a range older than the recent window.
 * Candle rows carry a trailing ``confirm`` flag (``"0"``/``"1"``). An unconfirmed row is a
   bar still forming and must never be treated as settled.
+
+**Two clocks, kept apart (F-14, batch 8.4).** Every record built below carries ``observed_at``
+— when *this process* received the response, stamped by the transport at the wire — and
+``venue_timestamp``, OKX's own ``ts`` for the datum. Before 8.4 both held ``ts``, so the field
+named for our observation carried the venue's clock and receipt latency was unmeasurable.
+OKX's envelope publishes no server time, so an instrument record's ``venue_timestamp`` comes
+from the entry's own ``ts`` and is ``None`` when the entry has none; nothing here copies our
+receipt time into it, because a copied stamp is the defect that was just removed.
 """
 
 from __future__ import annotations
@@ -37,6 +45,7 @@ from nexus.ingestion.base import (
     TokenBucket,
     Transport,
     dedupe_bars,
+    event_time,
     require_decimal,
     to_decimal,
     to_utc,
@@ -134,9 +143,17 @@ class OkxPublicAdapter:
         if self._owns_transport:
             await self._transport.aclose()
 
-    async def _get(self, path: str, params: dict[str, Any]) -> tuple[Any, datetime | None]:
+    async def _get(self, path: str, params: dict[str, Any]) -> tuple[Any, datetime]:
+        """Return ``(data, received_at)``.
+
+        The second element used to be a hard-coded ``None`` — OKX publishes no envelope server
+        time — so every call site discarded it. It is now the receipt time, which is the one
+        thing only this process can know, and it is why the return type lost its ``| None``:
+        a response that arrived has an arrival time.
+        """
         url = f"{self._base}{path}"
-        payload = await self._transport.get_json(url, params=params)
+        fetched = await self._transport.fetch_json(url, params=params)
+        payload = fetched.payload
         if not isinstance(payload, dict):
             raise IngestFault(f"OKX {path}: response is not an object", retryable=False)
         code = str(payload.get("code", ""))
@@ -147,7 +164,7 @@ class OkxPublicAdapter:
                 retryable=code in ("50011", "50013", "50004", "50026"),
             )
         data = payload.get("data")
-        return data, None
+        return data, fetched.received_at
 
     # ------------------------------------------------------------------ instruments
 
@@ -159,7 +176,7 @@ class OkxPublicAdapter:
     ) -> tuple[InstrumentInfoRecord, ...]:
         """Published trading rules. ``ctVal`` is the contract size — critical for sizing."""
         wanted = {s.strip().upper() for s in symbols} if symbols else None
-        data, _ = await self._get("/api/v5/public/instruments", {"instType": inst_type})
+        data, received_at = await self._get("/api/v5/public/instruments", {"instType": inst_type})
         if not isinstance(data, list):
             return ()
         out: list[InstrumentInfoRecord] = []
@@ -183,7 +200,8 @@ class OkxPublicAdapter:
                     ),
                     qty_step=to_decimal(entry.get("lotSz"), field_name="lotSz", source=SOURCE),
                     status=str(entry.get("state") or "") or None,
-                    observed_at=to_utc(entry.get("ts"), field_name="ts", source=SOURCE),
+                    observed_at=received_at,
+                    venue_timestamp=to_utc(entry.get("ts"), field_name="ts", source=SOURCE),
                     raw={
                         "instType": entry.get("instType"),
                         "settleCcy": entry.get("settleCcy"),
@@ -207,13 +225,13 @@ class OkxPublicAdapter:
         out: list[QuoteRecord] = []
         for symbol in symbols:
             inst_id = symbol.strip().upper()
-            data, _ = await self._get("/api/v5/market/ticker", {"instId": inst_id})
+            data, received_at = await self._get("/api/v5/market/ticker", {"instId": inst_id})
             if not isinstance(data, list) or not data:
                 continue
             entry = data[0]
             if not isinstance(entry, dict):
                 continue
-            observed = to_utc(entry.get("ts"), field_name="ts", source=SOURCE)
+            venue_ts = to_utc(entry.get("ts"), field_name="ts", source=SOURCE)
             out.append(
                 QuoteRecord(
                     instrument_id="",
@@ -224,8 +242,8 @@ class OkxPublicAdapter:
                     bid_size=to_decimal(entry.get("bidSz"), field_name="bidSz", source=SOURCE),
                     ask_size=to_decimal(entry.get("askSz"), field_name="askSz", source=SOURCE),
                     last=to_decimal(entry.get("last"), field_name="last", source=SOURCE),
-                    observed_at=observed,
-                    venue_timestamp=observed,
+                    observed_at=received_at,
+                    venue_timestamp=venue_ts,
                     delayed=False,
                     source=SOURCE,
                 ),
@@ -235,7 +253,7 @@ class OkxPublicAdapter:
     # ------------------------------------------------------------------ trades
 
     async def trades(self, symbol: str, *, limit: int = 100) -> tuple[TickRecord, ...]:
-        data, _ = await self._get(
+        data, received_at = await self._get(
             "/api/v5/market/trades",
             {"instId": symbol.strip().upper(), "limit": str(min(int(limit), 500))},
         )
@@ -246,8 +264,11 @@ class OkxPublicAdapter:
             if not isinstance(entry, dict):
                 continue
             price = to_decimal(entry.get("px"), field_name="px", source=SOURCE)
-            observed = to_utc(entry.get("ts"), field_name="ts", source=SOURCE)
-            if price is None or observed is None:
+            venue_ts = to_utc(entry.get("ts"), field_name="ts", source=SOURCE)
+            if price is None or venue_ts is None:
+                # A trade with no venue stamp is dropped, as before: without event time it can be
+                # neither ordered nor archived, and inventing one from our receipt clock would put
+                # a fake trade time into the record.
                 continue
             side_raw = entry.get("side")
             out.append(
@@ -257,14 +278,17 @@ class OkxPublicAdapter:
                     venue_symbol=symbol.strip().upper(),
                     price=price,
                     quantity=to_decimal(entry.get("sz"), field_name="sz", source=SOURCE),
-                    observed_at=observed,
-                    venue_timestamp=observed,
+                    observed_at=received_at,
+                    venue_timestamp=venue_ts,
                     side=str(side_raw).upper() if side_raw in ("buy", "sell", "Buy", "Sell") else None,
                     trade_id=str(entry.get("tradeId") or "") or None,
                     source=SOURCE,
                 ),
             )
-        return tuple(sorted(out, key=lambda t: t.observed_at))
+        # Ordered by the venue's trade time. Sorting on receipt time would be a no-op here —
+        # one response, one receipt instant for all fifty rows — and would silently claim that
+        # arrival order is trade order.
+        return tuple(sorted(out, key=event_time))
 
     # ------------------------------------------------------------------ candles
 
@@ -298,7 +322,7 @@ class OkxPublicAdapter:
         if start is not None:
             params["after"] = str(int(start.timestamp() * 1000))
         path = "/api/v5/market/history-candles" if use_history else "/api/v5/market/candles"
-        data, _ = await self._get(path, params)
+        data, received_at = await self._get(path, params)
         if not isinstance(data, list):
             return ()
 
@@ -308,7 +332,7 @@ class OkxPublicAdapter:
                 if report is not None:
                     report.reject("MALFORMED_ROW:expected at least 6 fields")
                 continue
-            bar = _parse_candle(row, inst_id, canonical, duration)
+            bar = _parse_candle(row, inst_id, canonical, duration, received_at=received_at)
             if bar is None:
                 if report is not None:
                     report.reject("UNPARSEABLE_ROW")
@@ -365,7 +389,7 @@ class OkxPublicAdapter:
 
     async def book(self, symbol: str, *, depth: int = 20) -> BookRecord | None:
         inst_id = symbol.strip().upper()
-        data, _ = await self._get(
+        data, received_at = await self._get(
             "/api/v5/market/books", {"instId": inst_id, "sz": str(min(int(depth), 400))}
         )
         if not isinstance(data, list) or not data:
@@ -377,8 +401,8 @@ class OkxPublicAdapter:
         asks = _parse_levels(entry.get("asks"), limit=depth)
         if not bids and not asks:
             return None
-        observed = to_utc(entry.get("ts"), field_name="ts", source=SOURCE)
-        if observed is None:
+        venue_ts = to_utc(entry.get("ts"), field_name="ts", source=SOURCE)
+        if venue_ts is None:
             raise IngestFault(f"OKX book for {inst_id}: no timestamp", retryable=True)
         return BookRecord(
             instrument_id="",
@@ -386,8 +410,8 @@ class OkxPublicAdapter:
             venue_symbol=inst_id,
             bids=bids,
             asks=asks,
-            observed_at=observed,
-            venue_timestamp=observed,
+            observed_at=received_at,
+            venue_timestamp=venue_ts,
             entitlement="LIVE",
             source=SOURCE,
         )
@@ -396,7 +420,14 @@ class OkxPublicAdapter:
 # --------------------------------------------------------------------------- parsing
 
 
-def _parse_candle(row: Sequence[Any], inst_id: str, canonical: str, duration: timedelta) -> BarRecord | None:
+def _parse_candle(
+    row: Sequence[Any],
+    inst_id: str,
+    canonical: str,
+    duration: timedelta,
+    *,
+    received_at: datetime | None = None,
+) -> BarRecord | None:
     """OKX candle row: ``[ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]``.
 
     ``vol`` is in base currency for SPOT and in contracts for derivatives; ``volCcy`` is
@@ -433,6 +464,9 @@ def _parse_candle(row: Sequence[Any], inst_id: str, canonical: str, duration: ti
         trades=None,  # OKX candles do not publish a trade count
         confirmed=confirmed,
         source=SOURCE,
+        # ``open_time`` is the venue's event time and stays the archive's partition key;
+        # ``observed_at`` is when the response carrying this candle arrived.
+        observed_at=received_at,
     )
 
 

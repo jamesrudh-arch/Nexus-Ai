@@ -78,6 +78,23 @@ from nexus.ingestion.okx import (
 
 D = Decimal
 NOW = datetime(2026, 11, 25, 12, 0, 0, tzinfo=UTC)
+
+#: The receipt clock every fixture transport is pinned to, and the venue stamp most payloads carry
+#: (`1764072000000` == 2025-11-25T12:00:00Z). They are a year apart **on purpose**: an assertion
+#: that `observed_at is not None`, or that it is timezone-aware, passes just as happily when an
+#: adapter copies the venue's stamp into it — which is what all four adapters did before Stage 8.4,
+#: and which is what finding F-14 (ledger `O-012`) is. Distance is what makes the assertion mean
+#: something, so the two clocks are never allowed to be near each other in a fixture.
+RECEIPT = datetime(2026, 11, 27, 6, 43, 35, tzinfo=UTC)
+VENUE_MS = 1_764_072_000_000
+VENUE_TS = datetime(2025, 11, 25, 12, 0, 0, tzinfo=UTC)
+
+
+def _pinned_transport() -> RecordingTransport:
+    """A transport whose receipt clock is ours, and cannot be mistaken for the venue's."""
+    return RecordingTransport(now_fn=lambda: RECEIPT)
+
+
 BYBIT_BASE = "https://api.bybit.com"
 OKX_BASE = "https://www.okx.com"
 VISION_BASE = "https://data.binance.vision"
@@ -410,13 +427,13 @@ class TestBybitIntervalMapping:
 
 class TestBybitAdapter:
     def _transport(self, path: str, payload: object) -> RecordingTransport:
-        transport = RecordingTransport()
+        transport = _pinned_transport()
         transport.set_json(f"{BYBIT_BASE}{path}", payload)
         return transport
 
     def _category_transport(self, path: str, payloads: dict[str, object]) -> RecordingTransport:
         """Key responses by query params: instruments-info is fetched once per category."""
-        transport = RecordingTransport()
+        transport = _pinned_transport()
         for category, payload in payloads.items():
             transport.set_json(f"{BYBIT_BASE}{path}", payload, params={"category": category})
         return transport
@@ -470,7 +487,13 @@ class TestBybitAdapter:
         assert info.min_order_qty == D("0.001")
         assert info.qty_step == D("0.001")
         assert info.status == "Trading"
-        assert info.observed_at is not None
+        # Was `observed_at is not None`, which the pre-8.4 adapter satisfied by copying the venue's
+        # envelope clock into it. Both halves are pinned now: the receipt time is ours, and the
+        # venue's field holds the envelope `time` because a Bybit instruments-info entry carries no
+        # stamp of its own — the fallback survived the fix, but it falls back to *their* clock.
+        assert info.observed_at == RECEIPT
+        assert info.observed_at.tzinfo is not None
+        assert info.venue_timestamp == VENUE_TS
         assert info.raw["contractType"] == "LinearPerpetual"
 
     async def test_instrument_info_without_filter_returns_all(self) -> None:
@@ -552,7 +575,12 @@ class TestBybitAdapter:
         assert quote.last == D("99123.40")
         assert quote.bid_size == D("0.500")
         assert quote.is_crossed_or_locked is False
-        assert quote.observed_at is not None and quote.observed_at.tzinfo is not None
+        # Was `observed_at is not None and observed_at.tzinfo is not None`. The payload's entry
+        # carries `"ts": 1764072000000`, a year before the pinned receipt clock, so the two fields
+        # can only agree if an adapter is copying one into the other.
+        assert quote.observed_at == RECEIPT
+        assert quote.observed_at.tzinfo is not None
+        assert quote.venue_timestamp == VENUE_TS
         assert quote.instrument_id == ""  # resolved by the pipeline, never guessed here
 
     async def test_ticker_single_symbol_object_response_is_handled(self) -> None:
@@ -723,7 +751,7 @@ class TestBybitAdapter:
 
 class TestOkxAdapter:
     def _transport(self, path: str, payload: object) -> RecordingTransport:
-        transport = RecordingTransport()
+        transport = _pinned_transport()
         transport.set_json(f"{OKX_BASE}{path}", payload)
         return transport
 
@@ -783,7 +811,10 @@ class TestOkxAdapter:
         assert quotes[0].bid == D("99100.4")
         assert quotes[0].ask == D("99100.6")
         assert quotes[0].last == D("99100.5")
-        assert quotes[0].observed_at is not None
+        # Was `observed_at is not None`. OKX's ticker publishes `"ts": "1764072000000"`, so this
+        # payload has both a venue stamp and — since 8.4 — a receipt time, and they are a year apart.
+        assert quotes[0].observed_at == RECEIPT
+        assert quotes[0].venue_timestamp == VENUE_TS
 
     async def test_candles_newest_first_are_reversed(self) -> None:
         base_ms = int(NOW.timestamp() * 1000)
@@ -1287,8 +1318,13 @@ class TestDukascopyParsing:
         assert len(ticks) == 2
         assert ticks[0].price == D("108.5")
         assert ticks[1].price == D("108.5015")
-        assert ticks[0].observed_at == hour
-        assert ticks[1].observed_at == hour + timedelta(seconds=1)
+        # hour + offset is the venue's declaration of when the tick happened, so it is the
+        # venue's field. `observed_at` is None here because nothing was received: these bytes were
+        # built in the test, not fetched, and inventing a receipt time from the local clock would
+        # be the same lie F-14 was, told in the other direction.
+        assert ticks[0].venue_timestamp == hour
+        assert ticks[1].venue_timestamp == hour + timedelta(seconds=1)
+        assert ticks[0].observed_at is None
         assert ticks[0].venue == "DUKASCOPY"
 
     def test_ask_side_uses_the_ask_price(self) -> None:
@@ -1440,7 +1476,7 @@ class TestDukascopyLayoutVerification:
 class TestDukascopyFetch:
     async def test_fetch_hour_reports_provenance(self) -> None:
         hour = datetime(2026, 11, 25, 14, 0, tzinfo=UTC)
-        transport = RecordingTransport()
+        transport = _pinned_transport()
         transport.set_bytes(
             expected_bi5_url("EURUSD", hour), _bi5_payload([(0, 10_850_100, 10_850_000, 1.0, 2.0)])
         )
@@ -1450,6 +1486,13 @@ class TestDukascopyFetch:
         assert result.side == "BID"
         assert result.hour_start == hour
         assert len(result.ticks) == 1
+        # Provenance has two halves and this test named only one of them. The hour arrived at a
+        # moment this process can state, and the tick inside it is timed by the file's own hour plus
+        # its offset — the venue's declaration, not ours.
+        assert result.received_at == RECEIPT
+        assert result.to_dict()["received_at"] is not None
+        assert result.ticks[0].observed_at == RECEIPT
+        assert result.ticks[0].venue_timestamp == hour
         # The report must agree with the module constant, whichever way it is set: a report that
         # claimed verification the parser did not have would be worse than no report at all.
         assert result.layout_verified is LAYOUT_VERIFIED is True
@@ -1825,3 +1868,482 @@ class TestVenueEnumAlignment:
         from nexus.ingestion.binance_vision import VENUE as VISION_VENUE
 
         assert Venue(VISION_VENUE) is Venue.BINANCE
+
+
+# --------------------------------------------------------------------------- F-14 / batch 8.4
+#
+# `RECEIPT`, `VENUE_MS`, `VENUE_TS` and `_pinned_transport` live at the top of this file beside
+# `NOW`, because the three assertions strengthened in the adapter classes above need them too. This
+# class is the gate D-052's ruling 2 asked batch 8.4 to have of its own.
+
+
+class TestReceiptTimeIsOursAndVenueTimeIsTheirs:
+    """F-14's expensive half: four adapters get a real receipt time (D-052 ruling 2, batch 8.4).
+
+    Before this batch every adapter wrote the venue's own stamp into ``observed_at`` — and into
+    ``venue_timestamp`` beside it, so the two fields held one value, nothing recorded when this
+    process received a response, receipt latency was unmeasurable, and the freshness gate aged the
+    venue's clock while its details called the number ours.
+
+    Every test below asserts **both** halves: ``observed_at`` is the pinned receipt time and
+    ``venue_timestamp`` is the value the payload actually carried. Asserting only the first would
+    pass on an adapter that stamped our clock into both fields — a new copy of the same defect with
+    the clocks swapped — and asserting only the second passes on the pre-8.4 code.
+    """
+
+    # ------------------------------------------------------------------ okx
+
+    async def test_okx_quotes_carry_our_receipt_time_and_okxs_own_ts(self) -> None:
+        transport = _pinned_transport()
+        transport.set_json(
+            f"{OKX_BASE}/api/v5/market/ticker",
+            {
+                "code": "0",
+                "data": [
+                    {"instId": "BTC-USDT-SWAP", "bidPx": "61658.7", "askPx": "61658.8", "ts": str(VENUE_MS)}
+                ],
+            },
+        )
+        quotes = await OkxPublicAdapter(transport=transport).quotes(["BTC-USDT-SWAP"])
+        assert len(quotes) == 1
+        assert quotes[0].observed_at == RECEIPT
+        assert quotes[0].venue_timestamp == VENUE_TS
+        assert quotes[0].observed_at != quotes[0].venue_timestamp, (
+            "the two fields hold one value again, which is the defect F-14 names"
+        )
+        assert transport.received_at == [RECEIPT], "the transport stamped something else"
+
+    async def test_okx_trades_share_one_receipt_time_and_are_ordered_by_venue_time(self) -> None:
+        """One response has one arrival instant, and arrival order is not trade order.
+
+        The rows are registered newest-first, the way OKX serves some endpoints, so an adapter
+        that sorted on receipt time would return them untouched and call that chronological.
+        """
+        transport = _pinned_transport()
+        rows = [
+            {"px": "102", "sz": "1", "ts": str(VENUE_MS + 2_000), "side": "buy", "tradeId": "c"},
+            {"px": "100", "sz": "1", "ts": str(VENUE_MS), "side": "sell", "tradeId": "a"},
+            {"px": "101", "sz": "1", "ts": str(VENUE_MS + 1_000), "side": "buy", "tradeId": "b"},
+        ]
+        transport.set_json(f"{OKX_BASE}/api/v5/market/trades", {"code": "0", "data": rows})
+        ticks = await OkxPublicAdapter(transport=transport).trades("BTC-USDT-SWAP")
+        assert [t.trade_id for t in ticks] == ["a", "b", "c"]
+        assert {t.observed_at for t in ticks} == {RECEIPT}
+        assert [t.venue_timestamp for t in ticks] == [
+            VENUE_TS,
+            VENUE_TS + timedelta(seconds=1),
+            VENUE_TS + timedelta(seconds=2),
+        ]
+        assert transport.received_at == [RECEIPT], "fifty rows must not mean fifty receipts"
+
+    async def test_okx_book_separates_the_two_clocks(self) -> None:
+        transport = _pinned_transport()
+        transport.set_json(
+            f"{OKX_BASE}/api/v5/market/books",
+            {
+                "code": "0",
+                "data": [{"bids": [["61666.5", "1"]], "asks": [["61666.6", "1"]], "ts": str(VENUE_MS)}],
+            },
+        )
+        book = await OkxPublicAdapter(transport=transport).book("BTC-USDT-SWAP")
+        assert book is not None
+        assert book.observed_at == RECEIPT
+        assert book.venue_timestamp == VENUE_TS
+        # The serialised form is what an audit chain or an evidence payload would read, and it
+        # dropped the venue stamp entirely before this batch.
+        assert book.to_dict()["venue_timestamp"] is not None
+
+    async def test_okx_instruments_take_their_stamp_from_the_entry_not_the_envelope(self) -> None:
+        """OKX publishes no envelope server time, so there is nothing to fall back to."""
+        transport = _pinned_transport()
+        transport.set_json(
+            f"{OKX_BASE}/api/v5/public/instruments",
+            {
+                "code": "0",
+                "data": [
+                    {
+                        "instId": "BTC-USDT-SWAP",
+                        "ctVal": "0.01",
+                        "tickSz": "0.1",
+                        "lotSz": "1",
+                        "minSz": "0.01",
+                        "state": "live",
+                        "ts": str(VENUE_MS),
+                    }
+                ],
+            },
+        )
+        records = await OkxPublicAdapter(transport=transport).instrument_info(["BTC-USDT-SWAP"])
+        assert records[0].observed_at == RECEIPT
+        assert records[0].venue_timestamp == VENUE_TS
+
+    async def test_okx_instruments_without_a_venue_stamp_do_not_borrow_ours(self) -> None:
+        """``None`` is the honest value: our receipt time is not a claim about OKX's clock."""
+        transport = _pinned_transport()
+        transport.set_json(
+            f"{OKX_BASE}/api/v5/public/instruments",
+            {"code": "0", "data": [{"instId": "BTC-USDT-SWAP", "ctVal": "0.01", "state": "live"}]},
+        )
+        records = await OkxPublicAdapter(transport=transport).instrument_info(["BTC-USDT-SWAP"])
+        assert records[0].observed_at == RECEIPT
+        assert records[0].venue_timestamp is None
+
+    async def test_okx_bars_keep_the_event_time_and_gain_a_receipt_time(self) -> None:
+        """``open_time`` stays the venue's and stays the archive's partition key."""
+        transport = _pinned_transport()
+        row = [str(VENUE_MS), "100", "110", "90", "105", "10", "1000", "1050", "1"]
+        transport.set_json(f"{OKX_BASE}/api/v5/market/candles", {"code": "0", "data": [row]})
+        bars = await OkxPublicAdapter(transport=transport).bars("BTC-USDT-SWAP", interval="1m")
+        assert len(bars) == 1
+        assert bars[0].open_time == VENUE_TS
+        assert bars[0].observed_at == RECEIPT
+        assert bars[0].to_dict()["observed_at"] is not None
+
+    # ------------------------------------------------------------------ bybit
+
+    async def test_bybit_quotes_carry_our_receipt_time_and_the_entry_ts(self) -> None:
+        transport = _pinned_transport()
+        transport.set_json(
+            f"{BYBIT_BASE}/v5/market/tickers",
+            {
+                "retCode": 0,
+                "time": VENUE_MS,
+                "result": {
+                    "list": [{"symbol": "BTCUSDT", "bid1Price": "1", "ask1Price": "2", "ts": VENUE_MS}]
+                },
+            },
+        )
+        quotes = await BybitPublicAdapter(transport=transport).quotes(["BTCUSDT"])
+        assert quotes[0].observed_at == RECEIPT
+        assert quotes[0].venue_timestamp == VENUE_TS
+
+    async def test_bybits_server_time_fallback_lands_in_the_venues_field_not_ours(self) -> None:
+        """The fallback survives the fix, but it falls back to *their* clock.
+
+        An entry with no ``ts`` used to inherit the envelope's ``time`` into ``observed_at``, so a
+        field named for our observation carried Bybit's clock even when the entry said nothing.
+        It still inherits it — that is the best available statement about when the quote happened —
+        and it is now recorded as what it is.
+        """
+        transport = _pinned_transport()
+        transport.set_json(
+            f"{BYBIT_BASE}/v5/market/tickers",
+            {
+                "retCode": 0,
+                "time": VENUE_MS,
+                "result": {"list": [{"symbol": "BTCUSDT", "bid1Price": "1", "ask1Price": "2"}]},
+            },
+        )
+        quotes = await BybitPublicAdapter(transport=transport).quotes(["BTCUSDT"])
+        assert quotes[0].venue_timestamp == VENUE_TS, "the envelope time is the venue's fallback"
+        assert quotes[0].observed_at == RECEIPT, "and it must not become our receipt time"
+
+    async def test_bybit_trades_share_one_receipt_time_and_are_ordered_by_venue_time(self) -> None:
+        transport = _pinned_transport()
+        listing = [
+            {
+                "symbol": "BTCUSDT",
+                "price": "102",
+                "size": "1",
+                "side": "Buy",
+                "time": VENUE_MS + 2_000,
+                "execId": "c",
+            },
+            {
+                "symbol": "BTCUSDT",
+                "price": "100",
+                "size": "1",
+                "side": "Sell",
+                "time": VENUE_MS,
+                "execId": "a",
+            },
+            {
+                "symbol": "BTCUSDT",
+                "price": "101",
+                "size": "1",
+                "side": "Buy",
+                "time": VENUE_MS + 1_000,
+                "execId": "b",
+            },
+        ]
+        transport.set_json(
+            f"{BYBIT_BASE}/v5/market/recent-trade",
+            {"retCode": 0, "time": VENUE_MS, "result": {"list": listing}},
+        )
+        ticks = await BybitPublicAdapter(transport=transport).trades("BTCUSDT")
+        assert [t.trade_id for t in ticks] == ["a", "b", "c"]
+        assert {t.observed_at for t in ticks} == {RECEIPT}
+
+    async def test_bybit_book_and_instruments_separate_the_two_clocks(self) -> None:
+        transport = _pinned_transport()
+        transport.set_json(
+            f"{BYBIT_BASE}/v5/market/orderbook",
+            {
+                "retCode": 0,
+                "time": VENUE_MS,
+                "result": {"ts": VENUE_MS, "b": [["1", "2"]], "a": [["3", "4"]]},
+            },
+        )
+        book = await BybitPublicAdapter(transport=transport).book("BTCUSDT")
+        assert book is not None
+        assert book.observed_at == RECEIPT
+        assert book.venue_timestamp == VENUE_TS
+
+        instruments = _pinned_transport()
+        listing = {
+            "retCode": 0,
+            "time": VENUE_MS,
+            "result": {"list": [{"symbol": "BTCUSDT", "status": "Trading"}]},
+        }
+        instruments.set_json(
+            f"{BYBIT_BASE}/v5/market/instruments-info", listing, params={"category": "linear"}
+        )
+        instruments.set_json(
+            f"{BYBIT_BASE}/v5/market/instruments-info",
+            {"retCode": 0, "time": VENUE_MS, "result": {"list": []}},
+            params={"category": "inverse"},
+        )
+        records = await BybitPublicAdapter(transport=instruments).instrument_info(["BTCUSDT"])
+        assert records[0].observed_at == RECEIPT
+        # Bybit's instruments-info entries carry no stamp of their own, so the venue's field holds
+        # the envelope clock — theirs, not ours, and not None either.
+        assert records[0].venue_timestamp == VENUE_TS
+
+    async def test_bybit_bars_survive_the_field_by_field_rebuild(self) -> None:
+        """``bars`` rebuilds every BarRecord by hand to override ``confirmed``.
+
+        An explicit field-by-field copy drops whatever it forgets to name, which is how
+        ``BookRecord.to_dict`` lost the venue stamp. The receipt time is asserted here because the
+        rebuild is the one place a new field can silently fail to be carried.
+        """
+        transport = _pinned_transport()
+        rows = [[str(VENUE_MS - 60_000 * i), "100", "110", "90", "105", "10", "1000"] for i in range(3)]
+        transport.set_json(
+            f"{BYBIT_BASE}/v5/market/kline", {"retCode": 0, "time": VENUE_MS, "result": {"list": rows}}
+        )
+        bars = await BybitPublicAdapter(transport=transport).bars("BTCUSDT", interval="1")
+        assert len(bars) == 3
+        assert {b.observed_at for b in bars} == {RECEIPT}
+        assert bars[-1].confirmed is False
+        assert [b.open_time for b in bars] == sorted(b.open_time for b in bars)
+
+    # ------------------------------------------------------------------ binance vision
+
+    async def test_a_downloaded_trades_dump_gives_every_row_one_receipt_time(self) -> None:
+        """And the span it reports is a span of event time, not one instant published twice."""
+        day = datetime(2026, 10, 5, tzinfo=UTC)
+        rows = "".join(f"{i},100.0,0.5,1,1,{VENUE_MS + 60_000 * i},true,0\n" for i in range(3))
+        # Transcribed independently of `agg_trades_url`, per defect 38: a fixture keyed by the
+        # function under test cannot disagree with it.
+        url = f"{VISION_BASE}/data/spot/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2026-10-05.zip"
+        transport = _pinned_transport()
+        transport.set_bytes(url, _zip_csv(rows))
+        ticks, parses = await BinanceVisionHistorical(transport=transport).fetch_agg_trades("BTCUSDT", [day])
+        assert len(ticks) == 3
+        assert {t.observed_at for t in ticks} == {RECEIPT}
+        assert [t.venue_timestamp for t in ticks] == [VENUE_TS + timedelta(minutes=i) for i in range(3)]
+        assert parses[0].first_time == VENUE_TS
+        assert parses[0].last_time == VENUE_TS + timedelta(minutes=2)
+
+    async def test_a_downloaded_kline_dump_keeps_open_time_as_the_event_time(self) -> None:
+        day = datetime(2026, 10, 5, tzinfo=UTC)
+        text = "".join(
+            f"{VENUE_MS + 60_000 * i},100.0,110.0,90.0,105.0,10.5,"
+            f"{VENUE_MS + 59_999 + 60_000 * i},1050.0,42,5.0,500.0,0\n"
+            for i in range(3)
+        )
+        transport = _pinned_transport()
+        transport.set_bytes(expected_kline_url("BTCUSDT", "1m", day), _zip_csv(text))
+        bars, parses = await BinanceVisionHistorical(transport=transport).fetch_klines("BTCUSDT", "1m", [day])
+        assert len(bars) == 3
+        assert {b.observed_at for b in bars} == {RECEIPT}
+        assert [b.open_time for b in bars] == [VENUE_TS + timedelta(minutes=i) for i in range(3)]
+        assert parses[0].first_time == VENUE_TS
+        assert parses[0].last_time == VENUE_TS + timedelta(minutes=2)
+
+    # ------------------------------------------------------------------ dukascopy
+
+    async def test_a_fetched_hour_records_when_it_arrived(self) -> None:
+        from nexus.core.ids import iso_utc
+
+        hour = datetime(2026, 11, 25, 14, 0, tzinfo=UTC)
+        transport = _pinned_transport()
+        transport.set_bytes(
+            expected_bi5_url("EURUSD", hour),
+            _bi5_payload([(0, 10_850_100, 10_850_000, 1.0, 2.0), (1_000, 10_850_200, 10_850_150, 0.5, 0.75)]),
+        )
+        result = await DukascopyHistorical(transport=transport).fetch_hour("EURUSD", hour)
+        assert result.received_at == RECEIPT
+        assert result.to_dict()["received_at"] == iso_utc(RECEIPT)
+        assert {t.observed_at for t in result.ticks} == {RECEIPT}
+        # The tick's time is derived from the file's own hour and its offset inside it, which is
+        # the venue's declaration, so it is the venue's field.
+        assert [t.venue_timestamp for t in result.ticks] == [hour, hour + timedelta(seconds=1)]
+
+    # ------------------------------------------------------------------ both directions
+
+    def test_parsing_bytes_from_disk_invents_no_receipt_time(self) -> None:
+        """No fetch, no receipt: ``None`` rather than a local-clock timestamp.
+
+        A capture replayed, a fixture parsed, a layout verified — none of them received anything,
+        and stamping the local clock would assert a receipt that never happened. That is F-14's
+        error in the other direction, and it is why the parsers take the receipt time as an
+        argument instead of reading a clock.
+        """
+        hour = datetime(2026, 11, 25, 14, 0, tzinfo=UTC)
+        ticks = parse_bi5(
+            _bi5_payload([(0, 10_850_100, 10_850_000, 1.0, 2.0)]), pair="EURUSD", hour_start=hour, side="BID"
+        )
+        assert ticks[0].observed_at is None
+        assert ticks[0].venue_timestamp == hour
+
+        trades, _ = parse_agg_trades_csv(f"0,100.0,0.5,1,1,{VENUE_MS},true,0", symbol="BTCUSDT")
+        assert trades[0].observed_at is None
+        assert trades[0].venue_timestamp == VENUE_TS
+
+        bars, _ = parse_kline_csv(
+            f"{VENUE_MS},100.0,110.0,90.0,105.0,10.5,{VENUE_MS + 59_999},1050.0,42,5.0,500.0,0",
+            symbol="BTCUSDT",
+            interval="1m",
+        )
+        assert bars[0].observed_at is None
+        assert bars[0].open_time == VENUE_TS
+
+    async def test_every_adapter_surface_produced_a_receipt_time(self) -> None:
+        """The structural guarantee behind ``TickRecord.observed_at`` being optional in the type.
+
+        Optional because a disk parse has no receipt time; guaranteed on the live path because the
+        transport always has one. This walks all four adapters' record-producing surfaces and
+        asserts the guarantee rather than trusting it, so a new endpoint added later without a
+        receipt time fails here instead of quietly publishing records with no provenance.
+        """
+        okx = _pinned_transport()
+        okx.set_json(
+            f"{OKX_BASE}/api/v5/market/ticker",
+            {
+                "code": "0",
+                "data": [{"instId": "BTC-USDT-SWAP", "bidPx": "1", "askPx": "2", "ts": str(VENUE_MS)}],
+            },
+        )
+        okx.set_json(
+            f"{OKX_BASE}/api/v5/market/trades",
+            {
+                "code": "0",
+                "data": [{"px": "1", "sz": "1", "ts": str(VENUE_MS), "side": "buy", "tradeId": "1"}],
+            },
+        )
+        okx.set_json(
+            f"{OKX_BASE}/api/v5/market/books",
+            {"code": "0", "data": [{"bids": [["1", "1"]], "asks": [["2", "1"]], "ts": str(VENUE_MS)}]},
+        )
+        okx.set_json(
+            f"{OKX_BASE}/api/v5/public/instruments",
+            {"code": "0", "data": [{"instId": "BTC-USDT-SWAP", "ctVal": "0.01", "ts": str(VENUE_MS)}]},
+        )
+        okx.set_json(
+            f"{OKX_BASE}/api/v5/market/candles",
+            {"code": "0", "data": [[str(VENUE_MS), "1", "2", "0.5", "1.5", "1", "1", "1", "1"]]},
+        )
+        adapter = OkxPublicAdapter(transport=okx)
+        produced: list[object] = []
+        produced += await adapter.quotes(["BTC-USDT-SWAP"])
+        produced += await adapter.trades("BTC-USDT-SWAP")
+        produced += [await adapter.book("BTC-USDT-SWAP")]
+        produced += await adapter.instrument_info(["BTC-USDT-SWAP"])
+        produced += await adapter.bars("BTC-USDT-SWAP", interval="1m")
+
+        bybit = _pinned_transport()
+        bybit.set_json(
+            f"{BYBIT_BASE}/v5/market/tickers",
+            {
+                "retCode": 0,
+                "time": VENUE_MS,
+                "result": {
+                    "list": [{"symbol": "BTCUSDT", "bid1Price": "1", "ask1Price": "2", "ts": VENUE_MS}]
+                },
+            },
+        )
+        bybit.set_json(
+            f"{BYBIT_BASE}/v5/market/recent-trade",
+            {
+                "retCode": 0,
+                "time": VENUE_MS,
+                "result": {
+                    "list": [
+                        {
+                            "symbol": "BTCUSDT",
+                            "price": "1",
+                            "size": "1",
+                            "side": "Buy",
+                            "time": VENUE_MS,
+                            "execId": "1",
+                        }
+                    ]
+                },
+            },
+        )
+        bybit.set_json(
+            f"{BYBIT_BASE}/v5/market/orderbook",
+            {
+                "retCode": 0,
+                "time": VENUE_MS,
+                "result": {"ts": VENUE_MS, "b": [["1", "1"]], "a": [["2", "1"]]},
+            },
+        )
+        bybit.set_json(
+            f"{BYBIT_BASE}/v5/market/kline",
+            {
+                "retCode": 0,
+                "time": VENUE_MS,
+                "result": {"list": [[str(VENUE_MS), "1", "2", "0.5", "1.5", "1", "1"]]},
+            },
+        )
+        bybit.set_json(
+            f"{BYBIT_BASE}/v5/market/instruments-info",
+            {
+                "retCode": 0,
+                "time": VENUE_MS,
+                "result": {"list": [{"symbol": "BTCUSDT", "status": "Trading"}]},
+            },
+            params={"category": "linear"},
+        )
+        bybit.set_json(
+            f"{BYBIT_BASE}/v5/market/instruments-info",
+            {"retCode": 0, "time": VENUE_MS, "result": {"list": []}},
+            params={"category": "inverse"},
+        )
+        b_adapter = BybitPublicAdapter(transport=bybit)
+        produced += await b_adapter.quotes(["BTCUSDT"])
+        produced += await b_adapter.trades("BTCUSDT")
+        produced += [await b_adapter.book("BTCUSDT")]
+        produced += await b_adapter.instrument_info(["BTCUSDT"])
+        produced += await b_adapter.bars("BTCUSDT", interval="1")
+
+        day = datetime(2026, 10, 5, tzinfo=UTC)
+        vision = _pinned_transport()
+        vision.set_bytes(
+            expected_kline_url("BTCUSDT", "1m", day),
+            _zip_csv(f"{VENUE_MS},100.0,110.0,90.0,105.0,10.5,{VENUE_MS + 59_999},1050.0,42,5.0,500.0,0"),
+        )
+        vision.set_bytes(
+            f"{VISION_BASE}/data/spot/daily/aggTrades/BTCUSDT/BTCUSDT-aggTrades-2026-10-05.zip",
+            _zip_csv(f"0,100.0,0.5,1,1,{VENUE_MS},true,0"),
+        )
+        v_source = BinanceVisionHistorical(transport=vision)
+        bars, _ = await v_source.fetch_klines("BTCUSDT", "1m", [day])
+        ticks, _ = await v_source.fetch_agg_trades("BTCUSDT", [day])
+        produced += list(bars) + list(ticks)
+
+        hour = datetime(2026, 11, 25, 14, 0, tzinfo=UTC)
+        duka = _pinned_transport()
+        duka.set_bytes(
+            expected_bi5_url("EURUSD", hour), _bi5_payload([(0, 10_850_100, 10_850_000, 1.0, 2.0)])
+        )
+        d_result = await DukascopyHistorical(transport=duka).fetch_hour("EURUSD", hour)
+        produced += list(d_result.ticks)
+
+        assert produced, "no records were produced, so this test would pass on nothing"
+        for record in produced:
+            assert getattr(record, "observed_at", None) == RECEIPT, (
+                f"{type(record).__name__} left the live path without a receipt time"
+            )

@@ -1,11 +1,16 @@
 """The first ``evidence_ref`` writer (L-C, Stage 8.2) and the two timestamps it keeps apart.
 
-Finding F-14 is that ``observed_at`` holds venue time in all four adapters and no receipt time is
-recorded anywhere, so latency is not measurable. The owner's ruling for this batch was the cheap half —
+Finding F-14 was that ``observed_at`` held venue time in all four adapters and no receipt time was
+recorded anywhere, so latency was not measurable. The owner's ruling for this batch was the cheap half —
 write both columns separately and leave F-14 open — so what is asserted here is not that latency is now
 measurable. It is that the columns cannot be conflated by accident, that a missing venue timestamp says
 so instead of being papered over, and that the number the row does carry is labelled with what it
 actually conflates.
+
+*Stage 8.4 later closed F-14 at the adapters, and this file's assertions are unchanged by it: they were
+about the two columns of ``evidence_ref``, which 8.4 did not touch (D-052 scoped it to the adapters, with
+no new columns and no writer wiring). ``retrieved_at`` is still supplied by the caller; what changed
+upstream is that a receipt time worth supplying now exists.*
 """
 
 from __future__ import annotations

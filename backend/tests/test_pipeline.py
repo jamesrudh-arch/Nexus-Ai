@@ -23,10 +23,11 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from nexus.archive.parquet_store import ParquetArchive
+from nexus.archive.parquet_store import ParquetArchive, WriteResult
 from nexus.data.records import BarRecord, QuoteRecord, TickRecord
 from nexus.domain.instrument import AssetClass, Venue, VenueMapping, VenueStatus
 from nexus.ingestion.pipeline import (
@@ -124,6 +125,27 @@ def make_tick(at: datetime = NOW, *, symbol: str = "BTCUSDT", price: str = "9900
         venue_timestamp=at,
         side="BUY",
         trade_id=f"exec-{int(at.timestamp() * 1000)}",
+        source="BYBIT_V5_PUBLIC_REST",
+    )
+
+
+def make_downloaded_tick(event: datetime, received: datetime, *, symbol: str = "BTCUSDT") -> TickRecord:
+    """A tick the way a bulk download makes one: its own event time, one shared arrival instant.
+
+    `make_tick` gives both stamps the same value, which is the shape every record had before Stage
+    8.4 — and a span computed over either field then agrees, so nothing about which clock the
+    pipeline published can be told from it.
+    """
+    return TickRecord(
+        instrument_id="",
+        venue="BYBIT",
+        venue_symbol=symbol,
+        price=D("99000.00"),
+        quantity=D("0.01"),
+        observed_at=received,
+        venue_timestamp=event,
+        side="BUY",
+        trade_id=f"exec-{int(event.timestamp() * 1000)}",
         source="BYBIT_V5_PUBLIC_REST",
     )
 
@@ -510,6 +532,78 @@ class TestArchiveBeforePublish:
         await pipeline.run(venue=Venue.BYBIT, ticks=[make_tick()])
         topics = [topic for topic, _ in publisher.events]
         assert "market.ticks.archived" in topics
+
+    async def test_the_published_tick_span_is_a_span_of_event_time(self, archive: ParquetArchive) -> None:
+        """F-14's consequence for the event bus: a bulk download has one arrival, not one range.
+
+        `first`/`last` are consumed as "what period of data did this pass archive". Since Stage 8.4
+        `observed_at` is the instant this process received the response, and a downloaded dump gives
+        every row the same one, so min and max over it would publish one timestamp twice and call it
+        a range — a subscriber would read a one-instant span as an empty batch and a year of history
+        as nothing. The span therefore comes from the venue's event times.
+        """
+        event = datetime(2025, 11, 25, 12, 0, 0, tzinfo=UTC)
+        received = datetime(2026, 11, 27, 6, 43, 35, tzinfo=UTC)
+        publisher = RecordingPublisher()
+        pipeline = IngestionPipeline(
+            registry=make_registry(),
+            archive=archive,
+            publish=publisher,
+            now_fn=lambda: received,
+        )
+        ticks = [make_downloaded_tick(event + timedelta(minutes=i), received) for i in range(3)]
+        await pipeline.run(venue=Venue.BYBIT, ticks=ticks)
+        payload = dict(publisher.events)["market.ticks.archived"]
+        assert payload["count"] == 3
+        assert payload["first"] == "2025-11-25T12:00:00.000Z", payload
+        assert payload["last"] == "2025-11-25T12:02:00.000Z", payload
+        assert payload["first"] != payload["last"], (
+            "a three-row batch spanning two minutes published as one instant, which is what "
+            "reading the receipt clock as the span looks like"
+        )
+        assert "2026-11-27" not in str(payload), "the receipt instant leaked into the published span"
+
+    async def test_a_tick_with_no_venue_stamp_falls_back_to_its_receipt_time_in_the_span(
+        self,
+    ) -> None:
+        """The fallback is `event_time`'s, and it is stated rather than left to be discovered.
+
+        A tick with no venue stamp still has to appear in a span, and the only time it has is ours.
+        That is a floor, not a preference — the real archive refuses such a row (pinned in
+        `test_parquet_archive.py`), so this drives `persist` against a stub archive that accepts it,
+        in order to test the publisher's behaviour on its own rather than the archive's.
+        """
+
+        class _AcceptingArchive:
+            """Stands in for the archive so the publish path can be reached with a row it refuses."""
+
+            def write_ticks(self, ticks: Any) -> WriteResult:
+                return WriteResult(path=None, rows_written=len(ticks), rows_refused=0)
+
+        received = datetime(2026, 11, 27, 6, 43, 35, tzinfo=UTC)
+        publisher = RecordingPublisher()
+        pipeline = IngestionPipeline(
+            registry=make_registry(),
+            archive=_AcceptingArchive(),
+            publish=publisher,
+            now_fn=lambda: received,
+        )
+        no_event = TickRecord(
+            instrument_id=BTC_ID,
+            venue="BYBIT",
+            venue_symbol="BTCUSDT",
+            price=D("99000.00"),
+            quantity=D("0.01"),
+            observed_at=received,
+            venue_timestamp=None,
+            side="BUY",
+            source="BYBIT_V5_PUBLIC_REST",
+        )
+        report = PipelineReport(started_at=received)
+        await pipeline.persist(ticks=[no_event], report=report)
+        payload = dict(publisher.events)["market.ticks.archived"]
+        assert payload["first"] == "2026-11-27T06:43:35.000Z", payload
+        assert payload["last"] == "2026-11-27T06:43:35.000Z", payload
 
 
 class TestReportIntegrity:

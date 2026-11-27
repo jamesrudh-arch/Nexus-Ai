@@ -38,6 +38,7 @@ from nexus.ingestion.base import (
     BarRecord,
     QuoteRecord,
     TickRecord,
+    event_time,
     validate_bar,
     validate_quote,
     validate_tick,
@@ -431,8 +432,12 @@ class IngestionPipeline:
                         {
                             "count": len(ticks),
                             "venues": sorted({t.venue for t in ticks}),
-                            "first": iso_utc(min(t.observed_at for t in ticks)),
-                            "last": iso_utc(max(t.observed_at for t in ticks)),
+                            # The span of the *data*, so it reads the venue's event time. Since
+                            # F-14's fix `observed_at` is our receipt instant, and a bulk download
+                            # gives every tick the same one: min and max of it would publish one
+                            # timestamp twice and call it a range.
+                            "first": iso_utc(min(event_time(t) for t in ticks)),
+                            "last": iso_utc(max(event_time(t) for t in ticks)),
                         },
                     ),
                 )

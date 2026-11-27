@@ -92,6 +92,29 @@ def make_quote(at: datetime = NOW, *, symbol: str = "BTCUSDT") -> QuoteRecord:
     )
 
 
+def make_downloaded_tick(event: datetime, received: datetime, *, symbol: str = "BTCUSDT") -> TickRecord:
+    """A tick as a bulk download produces it: one arrival instant, its own event time.
+
+    `make_tick` above gives both stamps the same value, which is the shape every record had before
+    Stage 8.4 and which cannot distinguish a partition key read from one clock from the same key
+    read from the other. The two arguments here are deliberately far apart — a year, in the tests
+    that use it — so an archive that partitioned on the receipt time would file the row somewhere
+    visibly wrong instead of somewhere one microsecond off.
+    """
+    return TickRecord(
+        instrument_id="INS-BTC-USDT-USDT",
+        venue="BYBIT",
+        venue_symbol=symbol,
+        price=D("99123.40"),
+        quantity=D("0.001"),
+        observed_at=received,
+        venue_timestamp=event,
+        side="BUY",
+        trade_id=f"exec-{int(event.timestamp() * 1000)}",
+        source="TEST",
+    )
+
+
 @pytest.fixture
 def archive(tmp_path: Path) -> ParquetArchive:
     return ParquetArchive(tmp_path / "archive", now_fn=lambda: NOW)
@@ -160,19 +183,48 @@ class TestNaiveTimestampRefusal:
             archive.write_bars([naive])
 
     def test_naive_tick_time_is_refused(self, archive: ParquetArchive) -> None:
+        """The partition key is the venue's event time, so that is the stamp that must be aware.
+
+        This test used to make `observed_at` naive, which was the partition key before F-14's fix.
+        Left as it was, it would still pass after the change — refused for having no event time at
+        all rather than for a naive one — and a test that passes for a reason other than the one in
+        its name is how a refusal quietly stops being tested.
+        """
         naive = TickRecord(
             instrument_id="I",
             venue="BYBIT",
             venue_symbol="BTCUSDT",
             price=D("1"),
             quantity=D("1"),
-            observed_at=datetime(2026, 11, 25, 12, 0),
+            observed_at=datetime(2026, 11, 25, 12, 0, tzinfo=UTC),
+            venue_timestamp=datetime(2026, 11, 25, 12, 0),  # naive event time
         )
         with pytest.raises(ArchiveError, match="naive"):
             archive.write_ticks([naive])
 
-    def test_quote_without_observation_time_is_refused(self, archive: ParquetArchive) -> None:
-        """An undatable row cannot be partitioned, so it cannot be archived."""
+    def test_tick_without_an_event_time_is_refused_and_says_which_field(
+        self, archive: ParquetArchive
+    ) -> None:
+        """A receipt time is not a partition key, and the refusal must name the field it needs."""
+        no_event = TickRecord(
+            instrument_id="I",
+            venue="BYBIT",
+            venue_symbol="BTCUSDT",
+            price=D("1"),
+            quantity=D("1"),
+            observed_at=datetime(2026, 11, 25, 12, 0, tzinfo=UTC),  # ours, and only ours
+        )
+        with pytest.raises(ArchiveError, match="venue_timestamp"):
+            archive.write_ticks([no_event])
+        assert archive.count_files() == 0
+
+    def test_quote_without_an_event_time_is_refused(self, archive: ParquetArchive) -> None:
+        """An undatable row cannot be partitioned, so it cannot be archived.
+
+        Renamed with the change it records: what the archive cannot do without is the *venue's*
+        event time. A quote carrying only our receipt time is datable — just not by when the
+        market moved — and filing it under the download date would silently misplace the row.
+        """
         quote = QuoteRecord(
             instrument_id="I",
             venue="BYBIT",
@@ -181,7 +233,7 @@ class TestNaiveTimestampRefusal:
             ask=D("2"),
             observed_at=None,
         )
-        with pytest.raises(ArchiveError, match="has no timestamp"):
+        with pytest.raises(ArchiveError, match="has no venue event time"):
             archive.write_quotes([quote])
         # Nothing was written: an undatable row must not leave a partial file behind.
         assert archive.count_files() == 0
@@ -226,6 +278,65 @@ class TestPartitioning:
         path = archive.partition_dir("bars", "BYBIT", "BTCUSDT", "1m", old)
         assert "year=2025" in str(path)
         assert path.exists()
+
+    def test_a_dump_received_today_files_its_rows_under_the_event_date(self, archive: ParquetArchive) -> None:
+        """The archive half of F-14, and the one that would have been silently catastrophic.
+
+        A downloaded dump gives every row the *same* receipt instant — the moment the file arrived —
+        and event times spanning the file. Partitioning on the receipt time would file a day of 2025
+        trades under today's month, collapse every backfilled day into one partition, and leave the
+        archive's time layout looking intact while being wrong. Nothing would raise: the rows would
+        write, read back, and answer a date-range query for the wrong dates.
+        """
+        event = datetime(2025, 11, 25, 12, 0, 0, tzinfo=UTC)
+        received = datetime(2026, 11, 27, 6, 43, 35, tzinfo=UTC)
+        ticks = [make_downloaded_tick(event + timedelta(minutes=i), received) for i in range(3)]
+        archive.write_ticks(ticks)
+
+        event_partition = archive.partition_dir("ticks", "BYBIT", "BTCUSDT", "tick", event)
+        receipt_partition = archive.partition_dir("ticks", "BYBIT", "BTCUSDT", "tick", received)
+        assert event_partition.exists(), "the rows were not filed under the date they happened on"
+        assert not receipt_partition.exists(), (
+            "the rows were filed under the date this process downloaded them, which is the defect "
+            "F-14 describes applied to the archive's partition key"
+        )
+        assert "year=2025" in str(event_partition)
+        assert "year=2026" in str(receipt_partition)
+        # And the receipt time is still stored, just not as the key: it is the provenance half of
+        # the row and losing it would undo the batch that added it. The archive has no tick reader
+        # (only `read_bars`), so this reads the file it just wrote — which is the stronger check
+        # anyway, because it reads what is on disk rather than what a reader chose to return.
+        import pyarrow.parquet as pq
+
+        written = sorted(event_partition.glob("*.parquet"))
+        assert len(written) == 1
+        rows = pq.read_table(written[0]).to_pylist()
+        assert len(rows) == 3
+        assert {row["observed_at"] for row in rows} == {received}, (
+            "the receipt time was not stored, so the row can say when it happened but not when "
+            "this process got it"
+        )
+        assert sorted(row["venue_timestamp"] for row in rows) == [
+            event + timedelta(minutes=i) for i in range(3)
+        ]
+
+    def test_a_row_with_no_event_time_is_refused_rather_than_filed_under_our_clock(
+        self, archive: ParquetArchive
+    ) -> None:
+        """The refusal is the other half: no event time means no partition, not a borrowed one."""
+        tick = TickRecord(
+            instrument_id="INS-BTC-USDT-USDT",
+            venue="BYBIT",
+            venue_symbol="BTCUSDT",
+            price=D("99123.40"),
+            quantity=D("0.001"),
+            observed_at=NOW,
+            venue_timestamp=None,
+            side="BUY",
+            source="TEST",
+        )
+        with pytest.raises(ArchiveError, match="has no venue event time"):
+            archive.write_ticks([tick])
 
     def test_symbols_with_slashes_are_made_path_safe(self, archive: ParquetArchive) -> None:
         """``BTC/USDT:USDT`` would otherwise create nested directories."""

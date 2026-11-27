@@ -20,6 +20,13 @@ F-14 open rather than change four adapters inside a batch that is also rebuildin
   not, the two timestamps are equal by construction, the row says so, and no consumer can read a latency
   off it. Passing ``LOCAL_FALLBACK`` with two *different* timestamps is refused: the flag would then be
   claiming something the row contradicts.
+*(Pointer added by Stage 8.4, which closed F-14 at the adapters: the four now stamp a real receipt
+time — ``observed_at`` on every record is ours, ``venue_timestamp`` is the venue's — so the interval this
+module wanted exists upstream at last. Nothing here changed and nothing is wired: ``retrieved_at`` is
+still a required argument supplied by the caller, because D-052 scoped 8.4 to the adapters alone, with no
+writer wiring and no new columns. What 8.4 changes for a future caller is that a receipt time worth
+passing now exists; the paragraph above stays as it was ruled.)*
+
 * The apparent interval is stored beside them as ``apparent_latency_seconds``. It is **not** a latency
   measurement. It is ``retrieved_at - observed_at``, which conflates network delay with the offset
   between the venue's clock and ours, and the venue's clock runs both ahead of and behind ours —

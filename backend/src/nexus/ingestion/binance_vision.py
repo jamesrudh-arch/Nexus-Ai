@@ -15,6 +15,16 @@ CSV specifics handled here:
   trades, taker_buy_base, taker_buy_quote, ignore]``. The trailing ``ignore`` column is
   dropped rather than archived, because archiving a column the venue labels "ignore" is how
   schemas rot.
+
+**Two clocks, kept apart (F-14, batch 8.4).** A dump is downloaded, so its rows have two times
+and they are not the same kind of thing. ``venue_timestamp`` is the trade's ``transact_time`` —
+the event time, one per row, spanning the day the file covers. ``observed_at`` is when *this
+process* received that file, one value shared by every row it produced. That shared value is a
+fact about bulk retrieval, not a defect: a daily dump of 1.44 million trades really did arrive
+at one instant. What would be a defect is ordering, bucketing or partitioning on it, so
+``DumpParseResult.first_time``/``last_time``, the tick sort and the archive's partition key all
+read the event time instead. Before 8.4 both fields held ``transact_time``, so nothing recorded
+when the dump was fetched and a stale re-download was indistinguishable from a fresh one.
 """
 
 from __future__ import annotations
@@ -35,6 +45,7 @@ from nexus.ingestion.base import (
     TickRecord,
     Transport,
     epoch_unit,
+    event_time,
     to_decimal,
     to_utc,
     validate_bar,
@@ -216,9 +227,14 @@ def _sniff_header(first_field: str) -> bool:
 
 
 def parse_kline_csv(
-    text: str, *, symbol: str, interval: str, url: str = ""
+    text: str, *, symbol: str, interval: str, url: str = "", received_at: datetime | None = None
 ) -> tuple[tuple[BarRecord, ...], DumpParseResult]:
-    """Parse a klines dump into canonical bars."""
+    """Parse a klines dump into canonical bars.
+
+    ``received_at`` is when the dump carrying these rows arrived, and is optional so that a
+    caller parsing a file it read from disk — a captured fixture, a replay — can say honestly
+    that it has no receipt time rather than inventing one from the local clock.
+    """
     duration = _INTERVAL_DURATION.get(interval)
     if duration is None:
         raise IngestFault(f"BINANCE_VISION: unsupported interval {interval!r}", retryable=False)
@@ -283,6 +299,8 @@ def parse_kline_csv(
             # A published historical dump is settled by definition: the period is over.
             confirmed=True,
             source=SOURCE,
+            # ``open_time`` stays the event time and the archive's partition key.
+            observed_at=received_at,
         )
         reason = validate_bar(bar)
         if reason is not None:
@@ -307,9 +325,13 @@ def parse_kline_csv(
 
 
 def parse_agg_trades_csv(
-    text: str, *, symbol: str, url: str = ""
+    text: str, *, symbol: str, url: str = "", received_at: datetime | None = None
 ) -> tuple[tuple[TickRecord, ...], DumpParseResult]:
-    """Parse an aggregate-trades dump into canonical ticks."""
+    """Parse an aggregate-trades dump into canonical ticks.
+
+    ``received_at`` is the dump's arrival time and is shared by every tick it yields; see
+    :func:`parse_kline_csv` for why it is optional.
+    """
     reader = csv.reader(io.StringIO(text))
     ticks: list[TickRecord] = []
     reasons: dict[str, int] = {}
@@ -336,9 +358,9 @@ def parse_agg_trades_csv(
             continue
         record = dict(zip(AGG_TRADE_FIELDS, row, strict=False))
         _note_unit(units, record.get("transact_time"))
-        observed = to_utc(record.get("transact_time"), field_name="transact_time", source=SOURCE)
+        venue_ts = to_utc(record.get("transact_time"), field_name="transact_time", source=SOURCE)
         price = to_decimal(record.get("price"), field_name="price", source=SOURCE)
-        if observed is None or price is None:
+        if venue_ts is None or price is None:
             rejected += 1
             reasons["UNPARSEABLE_TIME_OR_PRICE"] = reasons.get("UNPARSEABLE_TIME_OR_PRICE", 0) + 1
             continue
@@ -352,8 +374,8 @@ def parse_agg_trades_csv(
             venue_symbol=symbol.strip().upper(),
             price=price,
             quantity=to_decimal(record.get("quantity"), field_name="quantity", source=SOURCE),
-            observed_at=observed,
-            venue_timestamp=observed,
+            observed_at=received_at,
+            venue_timestamp=venue_ts,
             side=side,
             trade_id=str(record.get("agg_trade_id") or "") or None,
             source=SOURCE,
@@ -364,8 +386,10 @@ def parse_agg_trades_csv(
             reasons[reason] = reasons.get(reason, 0) + 1
             continue
         ticks.append(tick)
-        first_time = observed if first_time is None or observed < first_time else first_time
-        last_time = observed if last_time is None or observed > last_time else last_time
+        # The dump's reported span is a span of *event* time. Computing it from receipt time
+        # would report the same instant twice and call it a range.
+        first_time = venue_ts if first_time is None or venue_ts < first_time else first_time
+        last_time = venue_ts if last_time is None or venue_ts > last_time else last_time
 
     return tuple(ticks), DumpParseResult(
         url=url,
@@ -415,7 +439,7 @@ class BinanceVisionHistorical:
                 symbol, interval, period, market=self._market, periodicity=periodicity, base_url=self._base
             )
             try:
-                payload = await self._transport.get_bytes(url)
+                fetched = await self._transport.fetch_bytes(url)
             except IngestFault as exc:
                 if report is not None:
                     report.errors.append(f"missing dump {url}: {exc.detail[:120]}")
@@ -424,7 +448,10 @@ class BinanceVisionHistorical:
                     raise
                 continue
             try:
-                text = _unzip(payload, url=url)
+                # Unzipped after the receipt stamp, deliberately: the stamp is the moment the
+                # bytes arrived, and charging decompression to it would inflate every measured
+                # latency by our own CPU time.
+                text = _unzip(fetched.payload, url=url)
             except IngestFault as exc:
                 if report is not None:
                     report.reject("NOT_A_ZIP")
@@ -432,7 +459,9 @@ class BinanceVisionHistorical:
                 if not missing_is_ok:
                     raise
                 continue
-            parsed, summary = parse_kline_csv(text, symbol=symbol, interval=interval, url=url)
+            parsed, summary = parse_kline_csv(
+                text, symbol=symbol, interval=interval, url=url, received_at=fetched.received_at
+            )
             parses.append(summary)
             bars.extend(parsed)
             if report is not None:
@@ -461,7 +490,7 @@ class BinanceVisionHistorical:
                 symbol, period, market=self._market, periodicity=periodicity, base_url=self._base
             )
             try:
-                payload = await self._transport.get_bytes(url)
+                fetched = await self._transport.fetch_bytes(url)
             except IngestFault as exc:
                 if report is not None:
                     report.reject("DUMP_UNAVAILABLE")
@@ -470,7 +499,7 @@ class BinanceVisionHistorical:
                     raise
                 continue
             try:
-                text = _unzip(payload, url=url)
+                text = _unzip(fetched.payload, url=url)
             except IngestFault as exc:
                 if report is not None:
                     report.reject("NOT_A_ZIP")
@@ -478,14 +507,18 @@ class BinanceVisionHistorical:
                 if not missing_is_ok:
                     raise
                 continue
-            parsed, summary = parse_agg_trades_csv(text, symbol=symbol, url=url)
+            parsed, summary = parse_agg_trades_csv(
+                text, symbol=symbol, url=url, received_at=fetched.received_at
+            )
             parses.append(summary)
             ticks.extend(parsed)
             if report is not None:
                 report.fetched += summary.rows_read
                 report.accepted += summary.records_accepted
                 report.rejected += summary.records_rejected
-        ticks.sort(key=lambda t: t.observed_at)
+        # Event time, not receipt time: every tick from one dump shares a receipt instant, so
+        # sorting on it would leave 1.44 million rows in parser order and call it chronological.
+        ticks.sort(key=event_time)
         return tuple(ticks), parses
 
 

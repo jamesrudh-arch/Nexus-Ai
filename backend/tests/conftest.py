@@ -9,7 +9,7 @@ Two limit profiles are used throughout:
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -180,64 +180,86 @@ def portfolio_with_btc() -> PortfolioSnapshot:
     )
 
 
+#: How far a venue's own stamp typically sits behind the moment we receive it. Since Stage 8.4
+#: `observed_at` is *our* receipt time, so a fixture that models a real feed has to say when the
+#: venue stamped the datum too — otherwise every shared fixture in the suite is a pre-8.4 record
+#: with one clock, and a test written against it cannot tell the two apart.
+VENUE_LAG = timedelta(milliseconds=400)
+
+
+def _received() -> datetime:
+    return utc_now()
+
+
 @pytest.fixture
 def fresh_btc_quote() -> MarketSnapshot:
+    received = _received()
     return MarketSnapshot(
         instrument_id="INS-BTCUSDT-PERP-BYBIT",
         venue="BYBIT",
         bid=D("99990"),
         ask=D("100010"),
         last=D("100000"),
-        observed_at=utc_now(),
+        observed_at=received,
+        venue_timestamp=received - VENUE_LAG,
         source="WS",
     )
 
 
 @pytest.fixture
 def stale_btc_quote() -> MarketSnapshot:
+    received = _received() - timedelta(seconds=30)
     return MarketSnapshot(
         instrument_id="INS-BTCUSDT-PERP-BYBIT",
         venue="BYBIT",
         bid=D("99990"),
         ask=D("100010"),
         last=D("100000"),
-        observed_at=utc_now() - timedelta(seconds=30),
+        observed_at=received,
+        venue_timestamp=received - VENUE_LAG,
         source="WS",
     )
 
 
 @pytest.fixture
 def crossed_btc_quote() -> MarketSnapshot:
+    received = _received()
     return MarketSnapshot(
         instrument_id="INS-BTCUSDT-PERP-BYBIT",
         venue="BYBIT",
         bid=D("100010"),
         ask=D("99990"),  # bid >= ask: crossed market
-        observed_at=utc_now(),
+        observed_at=received,
+        venue_timestamp=received - VENUE_LAG,
         source="WS",
     )
 
 
 @pytest.fixture
 def future_btc_quote() -> MarketSnapshot:
+    received = _received() + timedelta(seconds=120)  # our clock fault, and it is ours: the gate
+    # reads the receipt time, so a venue stamp sitting in the past beside it still faults
     return MarketSnapshot(
         instrument_id="INS-BTCUSDT-PERP-BYBIT",
         venue="BYBIT",
         bid=D("99990"),
         ask=D("100010"),
-        observed_at=utc_now() + timedelta(seconds=120),  # clock fault
+        observed_at=received,
+        venue_timestamp=received - VENUE_LAG,
         source="WS",
     )
 
 
 @pytest.fixture
 def entitled_book() -> OrderBookSnapshot:
+    received = _received()
     return OrderBookSnapshot(
         instrument_id="INS-BTCUSDT-PERP-BYBIT",
         venue="BYBIT",
         bids=((D("99990"), D("1.5")), (D("99980"), D("2.0"))),
         asks=((D("100010"), D("1.2")), (D("100020"), D("3.0"))),
-        observed_at=utc_now(),
+        observed_at=received,
+        venue_timestamp=received - VENUE_LAG,
         entitlement="LIVE",
         source="WS",
     )
@@ -245,12 +267,15 @@ def entitled_book() -> OrderBookSnapshot:
 
 @pytest.fixture
 def unentitled_book() -> OrderBookSnapshot:
+    # No venue stamp: a terminal feed that publishes none. Keeping one shared fixture in that shape
+    # means the "no venue time" branch is exercised by every suite that consumes these, not only by
+    # the tests that thought to build it.
     return OrderBookSnapshot(
         instrument_id="INS-XAUUSD-MT5",
         venue="MT5",
         bids=(),
         asks=(),
-        observed_at=utc_now(),
+        observed_at=_received(),
         entitlement="NONE",
         source="TERMINAL",
     )
@@ -259,6 +284,17 @@ def unentitled_book() -> OrderBookSnapshot:
 @pytest.fixture
 def data_gate(settings: Settings) -> DataQualityGate:
     return DataQualityGate(settings.data_quality)
+
+
+@pytest.fixture
+def data_gate_limits(settings: Settings) -> Any:
+    """The limits alone, for a test that must pin the gate to a fixed clock.
+
+    `data_gate` runs on the real clock, which is right for a threshold test — a threshold that only
+    holds at one instant is not a threshold — and wrong for an arithmetic test, where the published
+    numbers have to be exact. A test that wants both builds its own gate on this fixture.
+    """
+    return settings.data_quality
 
 
 @pytest.fixture

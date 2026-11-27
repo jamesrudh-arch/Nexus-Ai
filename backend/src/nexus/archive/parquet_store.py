@@ -203,18 +203,25 @@ def _bar_rows(bars: Iterable[BarRecord], *, ingested_at: datetime) -> list[dict[
 def _tick_rows(ticks: Iterable[TickRecord], *, ingested_at: datetime) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for tick in ticks:
-        if tick.observed_at.tzinfo is None:
+        if tick.venue_timestamp is None or tick.venue_timestamp.tzinfo is None:
+            # Names the field it actually checked. This message said `observed_at` while the check
+            # read the venue's stamp, and a refusal that points at the wrong field sends whoever
+            # reads it to fix a timestamp that was never the problem.
             raise ArchiveError(
                 RejectReason.CONFIG_INVALID,
-                f"tick observed_at for {tick.venue_symbol} is naive; the archive stores UTC only",
+                f"tick venue_timestamp for {tick.venue_symbol} is missing or naive; "
+                "the archive stores UTC only, and the venue's event time is the partition key",
             )
         rows.append(
             {
                 "instrument_id": tick.instrument_id,
                 "venue": tick.venue,
                 "venue_symbol": tick.venue_symbol,
-                "observed_at": tick.observed_at.astimezone(UTC),
-                "venue_timestamp": tick.venue_timestamp.astimezone(UTC) if tick.venue_timestamp else None,
+                # Our receipt time, and it may legitimately be absent: a tick parsed from bytes
+                # on disk was never received. The column stays nullable rather than being filled
+                # from the venue's stamp, because a copied value is the defect this batch removed.
+                "observed_at": tick.observed_at.astimezone(UTC) if tick.observed_at else None,
+                "venue_timestamp": tick.venue_timestamp.astimezone(UTC),
                 "price": str(tick.price),
                 "quantity": _dec(tick.quantity),
                 "side": tick.side,
@@ -413,12 +420,26 @@ class ParquetArchive:
 
     @staticmethod
     def _time_of(record: Any, kind: str) -> datetime:
-        raw_time = record.open_time if kind == "bars" else record.observed_at
+        """The record's **event** time — the partition key, so it is never our receipt time.
+
+        Bars carry ``open_time``; ticks and quotes carry the venue's ``venue_timestamp``. Since
+        F-14's fix ``observed_at`` is the instant this process received the response, which for a
+        downloaded dump is one value shared by every row: partitioning on it would file a day of
+        2020 trades under today's date and silently destroy the archive's time layout. A record
+        with no event time is refused here, as it always was — the reason now names the field the
+        archive actually needs.
+        """
+        if kind == "bars":
+            raw_time: datetime | None = record.open_time
+        else:
+            raw_time = record.venue_timestamp
         when: datetime | None = raw_time
         if when is None:
             raise ArchiveError(
                 RejectReason.DATA_UNAVAILABLE,
-                f"{kind} record for {record.venue_symbol} has no timestamp; refusing to archive it",
+                f"{kind} record for {record.venue_symbol} has no venue event time "
+                "(venue_timestamp); refusing to archive it, because a partition key invented from "
+                "our receipt clock would file the row under the wrong date",
             )
         if when.tzinfo is None:
             raise ArchiveError(

@@ -471,10 +471,14 @@ DOSSIER_VIEW_GAPS: tuple[dict[str, Any], ...] = (
         "why_not_servable": (
             "evidence_ref holds observed_at (the venue's stamp) and retrieved_at (our clock at receipt). "
             "A source's own publication moment has no column, so the first of J-04's three times is not "
-            "recordable — and F-14 is still open, so observed_at is venue time in all four adapters"
+            "recordable. Stage 8.4 closed F-14 by giving all four adapters a real receipt time, and that "
+            "does not reach this gap: a receipt time says when we got it, not when the source published "
+            "it, so J-04's first time is exactly as unrecordable as it was"
         ),
-        "deferred_by": "F-14/O-012 stays open — its expensive half is authorised as Stage 8.4 by D-051, "
-        "so no third timestamp arrives before then",
+        "deferred_by": "D-051 scheduled this gap's batch as Stage 8.4, and 8.4 has now landed without "
+        "filling it — its ruling scoped it to F-14's expensive half alone, with no new tables, no new "
+        "columns and no writer wiring, so no third timestamp arrived with it. Nothing is scheduled for "
+        "this gap now",
     },
     {
         "element": "research depth Tier 0–4",

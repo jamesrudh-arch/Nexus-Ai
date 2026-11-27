@@ -12,6 +12,16 @@ pretending the data is complete.
 Endpoints used (all unauthenticated):
 ``/v5/market/instruments-info``, ``/v5/market/tickers``, ``/v5/market/recent-trade``,
 ``/v5/market/kline``, ``/v5/market/orderbook``.
+
+**Two clocks, kept apart (F-14, batch 8.4).** Bybit is the one venue here that publishes its
+own clock in the response envelope (``time``), and before 8.4 that value was written into
+``observed_at`` — sometimes directly, sometimes as the fallback when an entry carried no
+``ts``/``time`` of its own. So the field named for our observation held the venue's clock, and
+the fallback made it hold the venue's clock even when the entry said nothing. Now
+``observed_at`` is this process's receipt time, stamped by the transport at the wire, and
+``venue_timestamp`` is the venue's: the entry's own stamp where it has one, the envelope's
+``time`` where it does not. The fallback survives, but it falls back to *their* clock and is
+recorded in *their* field, which is what it always was.
 """
 
 from __future__ import annotations
@@ -34,6 +44,7 @@ from nexus.ingestion.base import (
     TokenBucket,
     Transport,
     dedupe_bars,
+    event_time,
     require_decimal,
     to_decimal,
     to_utc,
@@ -111,9 +122,16 @@ class BybitPublicAdapter:
 
     # ------------------------------------------------------------------ plumbing
 
-    async def _get(self, path: str, params: dict[str, Any]) -> Any:
+    async def _get(self, path: str, params: dict[str, Any]) -> tuple[Any, datetime | None, datetime]:
+        """Return ``(result, server_time, received_at)``.
+
+        ``server_time`` is Bybit's own clock from the envelope and stays optional, because the
+        venue may omit it. ``received_at`` is not optional: a response that arrived has an
+        arrival time, and that is the one the records carry as ``observed_at``.
+        """
         url = f"{self._base}{path}"
-        payload = await self._transport.get_json(url, params=params)
+        fetched = await self._transport.fetch_json(url, params=params)
+        payload = fetched.payload
         if not isinstance(payload, dict):
             raise IngestFault(f"BYBIT {path}: response is not an object", retryable=False)
         ret_code = payload.get("retCode")
@@ -125,7 +143,7 @@ class BybitPublicAdapter:
             )
         result = payload.get("result")
         server_time = to_utc(payload.get("time"), field_name="time", source=SOURCE)
-        return result, server_time
+        return result, server_time, fetched.received_at
 
     # ------------------------------------------------------------------ instruments
 
@@ -143,7 +161,7 @@ class BybitPublicAdapter:
         wanted = {s.strip().upper() for s in symbols} if symbols else None
         records: list[InstrumentInfoRecord] = []
         for category in categories:
-            result, server_time = await self._get(
+            result, server_time, received_at = await self._get(
                 "/v5/market/instruments-info",
                 {"category": category},
             )
@@ -158,7 +176,7 @@ class BybitPublicAdapter:
                 symbol = str(entry.get("symbol") or "").strip()
                 if not symbol or (wanted is not None and symbol.upper() not in wanted):
                     continue
-                records.append(_parse_instrument(entry, category, server_time))
+                records.append(_parse_instrument(entry, category, server_time, received_at))
         return tuple(records)
 
     # ------------------------------------------------------------------ tickers
@@ -168,7 +186,7 @@ class BybitPublicAdapter:
         params: dict[str, Any] = {"category": category}
         if len(symbols) == 1:
             params["symbol"] = symbols[0]
-        result, server_time = await self._get("/v5/market/tickers", params)
+        result, server_time, received_at = await self._get("/v5/market/tickers", params)
         if not isinstance(result, dict):
             return ()
         listing = result.get("list") or []
@@ -184,7 +202,7 @@ class BybitPublicAdapter:
             symbol = str(entry.get("symbol") or "").strip().upper()
             if not symbol or (wanted is not None and symbol not in wanted):
                 continue
-            out.append(_parse_ticker(entry, symbol, server_time))
+            out.append(_parse_ticker(entry, symbol, server_time, received_at))
         return tuple(out)
 
     # ------------------------------------------------------------------ trades
@@ -194,7 +212,7 @@ class BybitPublicAdapter:
     ) -> tuple[TickRecord, ...]:
         """Recent public trades. Bybit caps this endpoint's history, so it is a top-up
         source, never the primary archive filler."""
-        result, server_time = await self._get(
+        result, server_time, received_at = await self._get(
             "/v5/market/recent-trade",
             {"category": category, "symbol": symbol, "limit": min(int(limit), 1000)},
         )
@@ -207,10 +225,12 @@ class BybitPublicAdapter:
         for entry in listing:
             if not isinstance(entry, dict):
                 continue
-            tick = _parse_trade(entry, symbol, server_time)
+            tick = _parse_trade(entry, symbol, server_time, received_at)
             if tick is not None:
                 out.append(tick)
-        return tuple(sorted(out, key=lambda t: t.observed_at))
+        # Ordered by the venue's trade time: one response has one receipt instant, so sorting
+        # on it would call arrival order trade order.
+        return tuple(sorted(out, key=event_time))
 
     # ------------------------------------------------------------------ klines
 
@@ -243,7 +263,7 @@ class BybitPublicAdapter:
         if start is not None:
             params["start"] = int(start.timestamp() * 1000)
 
-        result, _server_time = await self._get("/v5/market/kline", params)
+        result, _server_time, received_at = await self._get("/v5/market/kline", params)
         if not isinstance(result, dict):
             return ()
         listing = result.get("list") or []
@@ -285,6 +305,10 @@ class BybitPublicAdapter:
                     # confirmed would let a partial bar poison every rollup above it.
                     confirmed=not is_last,
                     source=SOURCE,
+                    # This rebuild copies every field by hand, so the receipt time has to be
+                    # named here too: a field left out of an explicit copy is a field silently
+                    # dropped, which is how the book's venue stamp went missing in records.py.
+                    observed_at=received_at,
                 ),
             )
         if report is not None:
@@ -340,7 +364,7 @@ class BybitPublicAdapter:
     # ------------------------------------------------------------------ order book
 
     async def book(self, symbol: str, *, category: str = "linear", depth: int = 20) -> BookRecord | None:
-        result, server_time = await self._get(
+        result, server_time, received_at = await self._get(
             "/v5/market/orderbook",
             {"category": category, "symbol": symbol, "limit": min(int(depth), 500)},
         )
@@ -350,8 +374,8 @@ class BybitPublicAdapter:
         asks = _parse_levels(result.get("a"), limit=depth)
         if not bids and not asks:
             return None
-        observed = to_utc(result.get("ts"), field_name="ts", source=SOURCE) or server_time
-        if observed is None:
+        venue_ts = to_utc(result.get("ts"), field_name="ts", source=SOURCE) or server_time
+        if venue_ts is None:
             raise IngestFault(f"BYBIT orderbook for {symbol}: no timestamp", retryable=True)
         return BookRecord(
             instrument_id="",  # resolved by the caller through the registry
@@ -359,8 +383,8 @@ class BybitPublicAdapter:
             venue_symbol=symbol.upper(),
             bids=bids,
             asks=asks,
-            observed_at=observed,
-            venue_timestamp=observed,
+            observed_at=received_at,
+            venue_timestamp=venue_ts,
             entitlement="LIVE",  # Bybit publishes public depth without entitlement checks
             source=SOURCE,
         )
@@ -375,7 +399,7 @@ def _as_millis(value: Any) -> int:
 
 
 def _parse_instrument(
-    entry: dict[str, Any], category: str, server_time: datetime | None
+    entry: dict[str, Any], category: str, server_time: datetime | None, received_at: datetime
 ) -> InstrumentInfoRecord:
     symbol = str(entry.get("symbol") or "").strip().upper()
     price_filter = (
@@ -401,7 +425,8 @@ def _parse_instrument(
         max_order_qty=to_decimal(lot_filter.get("maxOrderQty"), field_name="maxOrderQty", source=SOURCE),
         qty_step=to_decimal(lot_filter.get("qtyStep"), field_name="qtyStep", source=SOURCE),
         status=str(entry.get("status") or "") or None,
-        observed_at=server_time,
+        observed_at=received_at,
+        venue_timestamp=server_time,
         raw={
             "category": category,
             "contractType": contract_type,
@@ -412,8 +437,12 @@ def _parse_instrument(
     )
 
 
-def _parse_ticker(entry: dict[str, Any], symbol: str, server_time: datetime | None) -> QuoteRecord:
-    observed = to_utc(entry.get("ts"), field_name="ts", source=SOURCE) or server_time
+def _parse_ticker(
+    entry: dict[str, Any], symbol: str, server_time: datetime | None, received_at: datetime
+) -> QuoteRecord:
+    # The entry's own ``ts`` first, the envelope's ``time`` as the fallback — both are Bybit's
+    # clock, so both belong in ``venue_timestamp``. Neither is our receipt time.
+    venue_ts = to_utc(entry.get("ts"), field_name="ts", source=SOURCE) or server_time
     return QuoteRecord(
         instrument_id="",  # resolved by the caller through the registry
         venue=VENUE,
@@ -423,21 +452,25 @@ def _parse_ticker(entry: dict[str, Any], symbol: str, server_time: datetime | No
         bid_size=to_decimal(entry.get("bid1Size"), field_name="bid1Size", source=SOURCE),
         ask_size=to_decimal(entry.get("ask1Size"), field_name="ask1Size", source=SOURCE),
         last=to_decimal(entry.get("lastPrice"), field_name="lastPrice", source=SOURCE),
-        observed_at=observed,
-        venue_timestamp=observed,
+        observed_at=received_at,
+        venue_timestamp=venue_ts,
         delayed=False,
         source=SOURCE,
     )
 
 
-def _parse_trade(entry: dict[str, Any], symbol: str, server_time: datetime | None) -> TickRecord | None:
+def _parse_trade(
+    entry: dict[str, Any], symbol: str, server_time: datetime | None, received_at: datetime
+) -> TickRecord | None:
     price = to_decimal(entry.get("price"), field_name="price", source=SOURCE)
     if price is None:
         return None
     side_raw = entry.get("side")
     side = str(side_raw).upper() if side_raw in ("Buy", "Sell", "buy", "sell", "BUY", "SELL") else None
-    observed = to_utc(entry.get("time"), field_name="time", source=SOURCE) or server_time
-    if observed is None:
+    venue_ts = to_utc(entry.get("time"), field_name="time", source=SOURCE) or server_time
+    if venue_ts is None:
+        # No event time from either the entry or the envelope: the trade cannot be ordered or
+        # archived, and substituting our receipt clock would put a fake trade time in the record.
         return None
     return TickRecord(
         instrument_id="",
@@ -445,8 +478,8 @@ def _parse_trade(entry: dict[str, Any], symbol: str, server_time: datetime | Non
         venue_symbol=symbol.upper(),
         price=price,
         quantity=to_decimal(entry.get("size"), field_name="size", source=SOURCE),
-        observed_at=observed,
-        venue_timestamp=observed,
+        observed_at=received_at,
+        venue_timestamp=venue_ts,
         side=side,
         trade_id=str(entry.get("execId") or "") or None,
         source=SOURCE,

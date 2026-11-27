@@ -30,7 +30,7 @@ from decimal import Decimal
 from typing import Any
 
 from nexus.core.ids import iso_utc
-from nexus.data.records import BarRecord, TickRecord
+from nexus.data.records import BarRecord, TickRecord, event_time
 
 #: Canonical interval → duration. Single source of truth for both builders.
 INTERVAL_DURATION: dict[str, timedelta] = {
@@ -218,7 +218,16 @@ def bars_from_ticks(
     valid: list[TickRecord] = []
     for tick in ticks:
         source_count += 1
-        if tick.observed_at.tzinfo is None:
+        if tick.venue_timestamp is None:
+            # Its own reason, and not "NAIVE_TIMESTAMP": a tick with no event time is a different
+            # fact from one whose event time lacks a zone, and a rollup report that called the
+            # first one naive would send whoever reads it looking for a timezone bug that is not
+            # there. Since F-14's fix the event time is the bucket key, so its absence is fatal to
+            # the rollup rather than merely cosmetic.
+            rejected += 1
+            reasons["MISSING_EVENT_TIME"] = reasons.get("MISSING_EVENT_TIME", 0) + 1
+            continue
+        if tick.venue_timestamp.tzinfo is None:
             rejected += 1
             reasons["NAIVE_TIMESTAMP"] = reasons.get("NAIVE_TIMESTAMP", 0) + 1
             continue
@@ -226,7 +235,7 @@ def bars_from_ticks(
             rejected += 1
             reasons["NON_POSITIVE_PRICE"] = reasons.get("NON_POSITIVE_PRICE", 0) + 1
             continue
-        if tick.observed_at > reference:
+        if tick.venue_timestamp > reference:
             # A future tick is a clock or feed fault. Dropping it silently would hide the
             # fault, so it is counted and excluded.
             rejected += 1
@@ -242,13 +251,15 @@ def bars_from_ticks(
     # same data ingested twice in different orders would yield two different bars. Sorting
     # first makes the result deterministic and open/close genuinely time-correct. ``sorted``
     # is stable, so ticks sharing a timestamp keep their relative order.
-    for tick in sorted(valid, key=lambda t: t.observed_at):
-        start = bucket_start(tick.observed_at, interval)
+    # Bucketed by the venue's event time. Every tick from one downloaded file shares a single
+    # receipt instant, so bucketing on it would collapse a whole dump into one bar.
+    for tick in sorted(valid, key=event_time):
+        start = bucket_start(event_time(tick), interval)
         bucket = buckets.get(start)
         if bucket is None:
             bucket = _Bucket(open_time=start, confirmed=start < current_bucket)
             buckets[start] = bucket
-        _accumulate(bucket, tick.price, tick.quantity, tick.observed_at)
+        _accumulate(bucket, tick.price, tick.quantity, event_time(tick))
         bucket.trades += 1
         bucket.trade_count_known = True
 

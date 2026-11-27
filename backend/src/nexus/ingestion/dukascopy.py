@@ -36,6 +36,14 @@ inside EURUSD's real band — the assertion that exists to catch a wrong point d
 error warned about below. ``LAYOUT_VERIFIED`` is therefore ``True`` and every record carries
 ``source="DUKASCOPY_BI5"``. Evidence: ``docs/14`` §1.4 F-1 and §2.1, and ``docs/00`` O-010.
 
+**Two clocks, kept apart (F-14, batch 8.4).** A bi5 tick has no timestamp of its own: its time is
+*derived*, ``hour_start + offset_ms``, from the file's own hour and the tick's offset inside it. That
+derived value is the venue's declaration of when the tick happened, so it is ``venue_timestamp`` — one
+per row, spanning the hour. ``observed_at`` is when this process received the file, one value shared
+by every tick in it, which for a bulk hour download is a fact rather than a defect. Before 8.4 both
+fields held the derived time, so nothing recorded the download and a re-fetch of the same hour was
+indistinguishable from the first one.
+
 What is still **NOT** verified, and must not be inferred from the above: only EURUSD has been
 checked, so **12 of the 13 divisors** in ``POINT_DIVISORS`` have never met a real file. The feed
 is also intermittent, and the runs did not agree about why: the production User-Agent worked outright
@@ -183,6 +191,9 @@ class DukascopyHour:
     decompressed_bytes: int
     layout_verified: bool
     empty: bool
+    # When this process received the hour file. Appended last with a default so the nine
+    # positional fields above keep their meaning; every existing construction is by keyword.
+    received_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -195,6 +206,7 @@ class DukascopyHour:
             "decompressed_bytes": self.decompressed_bytes,
             "layout_verified": self.layout_verified,
             "empty": self.empty,
+            "received_at": iso_utc(self.received_at) if self.received_at else None,
         }
 
 
@@ -205,12 +217,18 @@ def parse_bi5(
     hour_start: datetime,
     side: str = "BID",
     venue_symbol: str | None = None,
+    received_at: datetime | None = None,
 ) -> tuple[TickRecord, ...]:
     """Decompress and parse a bi5 hour file into canonical ticks.
 
     An empty body is a **closed market**, not an error — FX does not trade on weekends, and
     Dukascopy serves a zero-length file for those hours. Returning ``()`` with ``empty=True``
     at the caller keeps that distinction visible.
+
+    ``received_at`` is when the file carrying these ticks arrived, shared by all of them. It is
+    optional so that a caller parsing bytes it read from disk — a captured fixture, a replay,
+    the layout verifier — states honestly that it has no receipt time instead of inventing one
+    from the local clock.
     """
     if hour_start.tzinfo is None:
         raise IngestFault("DUKASCOPY: hour_start must be timezone-aware", retryable=False)
@@ -250,7 +268,10 @@ def parse_bi5(
                 f"DUKASCOPY: tick offset {offset_ms}ms exceeds one hour; layout mismatch",
                 retryable=False,
             )
-        observed = base + timedelta(milliseconds=offset_ms)
+        # Derived, not read: the venue's declaration of when this tick happened, built from the
+        # file's own hour and the tick's offset inside it. It is the venue's time, so it goes in
+        # the venue's field.
+        venue_ts = base + timedelta(milliseconds=offset_ms)
         price_points = bid_points if side_key == "BID" else ask_points
         price = Decimal(int(price_points)) / divisor
         if price <= 0:
@@ -263,8 +284,8 @@ def parse_bi5(
                 venue_symbol=symbol,
                 price=price,
                 quantity=volume if volume > 0 else None,
-                observed_at=observed,
-                venue_timestamp=observed,
+                observed_at=received_at,
+                venue_timestamp=venue_ts,
                 side=None,  # a bid/ask print is not a buyer- or seller-initiated trade
                 trade_id=None,
                 source=source,
@@ -342,9 +363,13 @@ class DukascopyHistorical:
     ) -> DukascopyHour:
         """Download and parse one hour. A 404 is recorded as a gap, never as zero ticks."""
         url = hour_url(pair, hour, base_url=self._base)
-        payload = await self._transport.get_bytes(url)
+        # Stamped at the wire by the transport, before LZMA decompression: an hour file expands
+        # roughly 2.5x, and charging that CPU time to the receipt would inflate every latency
+        # this feed reports by our own work rather than the network's.
+        fetched = await self._transport.fetch_bytes(url)
+        payload = fetched.payload
         try:
-            ticks = parse_bi5(payload, pair=pair, hour_start=hour, side=side)
+            ticks = parse_bi5(payload, pair=pair, hour_start=hour, side=side, received_at=fetched.received_at)
         except IngestFault as exc:
             if report is not None:
                 report.reject(f"PARSE_FAULT:{exc.reason.value}")
@@ -368,6 +393,7 @@ class DukascopyHistorical:
             decompressed_bytes=decompressed,
             layout_verified=LAYOUT_VERIFIED,
             empty=len(ticks) == 0,
+            received_at=fetched.received_at,
         )
 
     async def fetch_range(

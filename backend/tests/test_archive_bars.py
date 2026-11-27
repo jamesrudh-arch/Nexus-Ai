@@ -254,13 +254,15 @@ class TestBarsFromTicks:
         assert report.rejection_reasons == {"NON_POSITIVE_PRICE": 2}
 
     def test_naive_tick_timestamps_are_rejected(self) -> None:
+        """Naive in the field the rollup buckets by, which since F-14's fix is the venue's."""
         naive = TickRecord(
             instrument_id="INS-BTC-USDT-USDT",
             venue="BYBIT",
             venue_symbol="BTCUSDT",
             price=D("100"),
             quantity=D("1"),
-            observed_at=datetime(2026, 11, 25, 12, 0),  # naive
+            observed_at=datetime(2026, 11, 25, 12, 0, tzinfo=UTC),
+            venue_timestamp=datetime(2026, 11, 25, 12, 0),  # naive event time
             source="TEST",
         )
         _, report = bars_from_ticks(
@@ -272,6 +274,29 @@ class TestBarsFromTicks:
             now=BASE + timedelta(minutes=5),
         )
         assert report.rejection_reasons == {"NAIVE_TIMESTAMP": 1}
+
+    def test_a_tick_with_no_event_time_is_rejected_under_its_own_reason(self) -> None:
+        """Not `NAIVE_TIMESTAMP`: there is no timestamp to be naive, and the reason is read by
+        whoever has to fix the feed. A rollup buckets by the venue's event time, so a tick
+        carrying only our receipt time cannot join a bar at all."""
+        no_event = TickRecord(
+            instrument_id="INS-BTC-USDT-USDT",
+            venue="BYBIT",
+            venue_symbol="BTCUSDT",
+            price=D("100"),
+            quantity=D("1"),
+            observed_at=datetime(2026, 11, 25, 12, 0, tzinfo=UTC),
+            source="TEST",
+        )
+        _, report = bars_from_ticks(
+            [no_event],
+            interval="1m",
+            instrument_id="INS-BTC-USDT-USDT",
+            venue="BYBIT",
+            venue_symbol="BTCUSDT",
+            now=BASE + timedelta(minutes=5),
+        )
+        assert report.rejection_reasons == {"MISSING_EVENT_TIME": 1}
 
     def test_missing_volume_is_none_not_zero(self) -> None:
         """Zero volume is a claim; absence is not."""

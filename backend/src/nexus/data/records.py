@@ -17,6 +17,15 @@ Rules enforced here:
 * **Free-tier politeness.** A token-bucket rate limiter and exponential backoff with
   jitter are built into the transport: getting throttled or IP-banned from a free endpoint
   would cost the project its data source.
+* **Two timestamps, two owners.** ``observed_at`` is *ours*: the instant this process had the
+  response in hand, stamped by the transport at the wire. ``venue_timestamp`` is *theirs*:
+  the stamp the venue published for the datum. F-14 (ledger ``O-012``) was that all four
+  adapters wrote the venue's value into both, so the field named for our observation carried
+  somebody else's clock, the two were indistinguishable, and latency was unmeasurable — any
+  staleness gate computed against venue time while calling it ours. Fixed in batch 8.4 under
+  D-052's ruling that F-14's expensive half gets its own batch. Neither field is derived from
+  the other and no fallback silently mixes them: a consumer that needs event time asks for
+  ``venue_timestamp`` and refuses a record that has none.
 """
 
 from __future__ import annotations
@@ -29,7 +38,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 # This module deliberately lives in ``nexus.data`` rather than ``nexus.ingestion``: the
 # archiver, the ingestion pipeline and the venue adapters all depend on these record types,
@@ -204,14 +213,25 @@ def to_utc(value: Any, *, field_name: str, source: str) -> datetime | None:
 
 @dataclass(frozen=True, slots=True)
 class TickRecord:
-    """One canonical trade/tick observation."""
+    """One canonical trade/tick observation.
+
+    ``observed_at`` is when *this process* received the response carrying the tick; for a
+    historical dump that is the download instant, shared by every row the file produced, and
+    that is a fact about bulk retrieval rather than a defect. ``venue_timestamp`` is the
+    venue's own time for the trade, and it is what ordering, bucketing and archiving use.
+    """
 
     instrument_id: str
     venue: str
     venue_symbol: str
     price: Decimal
     quantity: Decimal | None
-    observed_at: datetime
+    # Optional in the type, guaranteed on the live path: every adapter gets its receipt time from
+    # the transport, which always has one, and a test asserts that for all four. It is optional
+    # because parsing bytes read from disk — a captured fixture, a replay, the layout verifier —
+    # genuinely has no receipt instant, and inventing one from the local clock would be the same
+    # lie F-14 was, told in the other direction.
+    observed_at: datetime | None = None
     venue_timestamp: datetime | None = None
     side: str | None = None  # BUY | SELL | None when the feed does not say
     trade_id: str | None = None
@@ -224,7 +244,7 @@ class TickRecord:
             "venue_symbol": self.venue_symbol,
             "price": str(self.price),
             "quantity": str(self.quantity) if self.quantity is not None else None,
-            "observed_at": iso_utc(self.observed_at),
+            "observed_at": iso_utc(self.observed_at) if self.observed_at else None,
             "venue_timestamp": iso_utc(self.venue_timestamp) if self.venue_timestamp else None,
             "side": self.side,
             "trade_id": self.trade_id,
@@ -234,7 +254,8 @@ class TickRecord:
 
 @dataclass(frozen=True, slots=True)
 class QuoteRecord:
-    """Top-of-book observation."""
+    """Top-of-book observation. ``observed_at`` is our receipt time, ``venue_timestamp`` the
+    venue's stamp for the quote — see :class:`TickRecord`."""
 
     instrument_id: str
     venue: str
@@ -291,6 +312,12 @@ class BarRecord:
     trades: int | None = None
     confirmed: bool = False
     source: str = "UNKNOWN"
+    # Our receipt time — when the response carrying this bar arrived. Appended after the
+    # defaulted fields rather than placed beside ``open_time`` so positional construction of
+    # the eleven fields above keeps working. ``open_time`` remains the event time and the
+    # archive's partition key; a bar has no ``venue_timestamp`` because ``open_time`` *is* the
+    # venue's stamp for it, and a second name for one value is how F-14 started.
+    observed_at: datetime | None = None
 
     def is_consistent(self) -> bool:
         """OHLC must satisfy low <= open,close <= high. A violation is a feed fault."""
@@ -314,6 +341,7 @@ class BarRecord:
             "trades": self.trades,
             "confirmed": self.confirmed,
             "source": self.source,
+            "observed_at": iso_utc(self.observed_at) if self.observed_at else None,
         }
 
 
@@ -325,7 +353,8 @@ class BookLevel:
 
 @dataclass(frozen=True, slots=True)
 class BookRecord:
-    """Order-book snapshot, plus the entitlement we actually hold."""
+    """Order-book snapshot, plus the entitlement we actually hold. ``observed_at`` is our
+    receipt time, ``venue_timestamp`` the venue's stamp for the snapshot."""
 
     instrument_id: str
     venue: str
@@ -354,6 +383,10 @@ class BookRecord:
             "best_bid": str(self.best_bid) if self.best_bid is not None else None,
             "best_ask": str(self.best_ask) if self.best_ask is not None else None,
             "observed_at": iso_utc(self.observed_at),
+            # Was missing entirely, so the venue's own stamp for the book was dropped from the
+            # serialised form — the one place a reader could have compared the two clocks. Found
+            # while giving this record a receipt time; the field existed and was never published.
+            "venue_timestamp": iso_utc(self.venue_timestamp) if self.venue_timestamp else None,
             "entitlement": self.entitlement,
             "source": self.source,
         }
@@ -361,7 +394,12 @@ class BookRecord:
 
 @dataclass(frozen=True, slots=True)
 class InstrumentInfoRecord:
-    """Trading rules as published by the venue — the source for registry mappings."""
+    """Trading rules as published by the venue — the source for registry mappings.
+
+    ``observed_at`` is our receipt time. ``venue_timestamp`` is the venue's own clock where the
+    envelope publishes one (Bybit returns ``time``; OKX's market-data envelope does not), and is
+    ``None`` where it does not — never a copy of ours, because a copied stamp is the defect.
+    """
 
     venue: str
     venue_symbol: str
@@ -374,6 +412,7 @@ class InstrumentInfoRecord:
     qty_step: Decimal | None = None
     status: str | None = None  # venue's own listing status string
     observed_at: datetime | None = None
+    venue_timestamp: datetime | None = None
     raw: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -389,6 +428,7 @@ class InstrumentInfoRecord:
             "qty_step": str(self.qty_step) if self.qty_step is not None else None,
             "status": self.status,
             "observed_at": iso_utc(self.observed_at) if self.observed_at else None,
+            "venue_timestamp": iso_utc(self.venue_timestamp) if self.venue_timestamp else None,
         }
 
 
@@ -466,9 +506,41 @@ class BackoffPolicy:
 # --------------------------------------------------------------------------- transport
 
 
+@dataclass(frozen=True, slots=True)
+class Fetched:
+    """One response, and the instant this process had it in hand.
+
+    The receipt time is stamped **at the wire** rather than where a payload is parsed, and the
+    difference is not pedantry: a Dukascopy hour file is LZMA-compressed and a Binance Vision
+    daily dump is a zip, so parsing can take longer than the fetch. Stamping after parsing
+    would charge our own CPU time to the venue's latency and reproduce F-14's error in the
+    opposite direction — a number that looks like a measurement of the network and is not.
+
+    ``attempts`` is carried because a retry is part of the receipt story: the timestamp is the
+    last attempt's, and a response that took four tries to arrive is not the same fact as one
+    that took one.
+    """
+
+    payload: Any
+    received_at: datetime
+    url: str
+    attempts: int = 1
+
+
 @runtime_checkable
 class Transport(Protocol):
-    """Minimal HTTP surface adapters need. Injected so tests need no network."""
+    """Minimal HTTP surface adapters need. Injected so tests need no network.
+
+    ``fetch_json`` and ``fetch_bytes`` are the methods an adapter must use: they return the
+    receipt time with the payload. ``get_json`` and ``get_bytes`` return the payload alone, so
+    a caller that reaches for them has no way to record when the response arrived — which is
+    precisely what F-14 was. They are kept for callers that genuinely do not need a receipt
+    time (a reachability probe, a layout check) and not for adapters building records.
+    """
+
+    async def fetch_json(self, url: str, *, params: dict[str, Any] | None = None) -> Fetched: ...
+
+    async def fetch_bytes(self, url: str, *, params: dict[str, Any] | None = None) -> Fetched: ...
 
     async def get_json(self, url: str, *, params: dict[str, Any] | None = None) -> Any: ...
 
@@ -509,7 +581,7 @@ class HttpTransport:
             )
         return self._client
 
-    async def _request(self, url: str, params: dict[str, Any] | None, *, want_bytes: bool) -> Any:
+    async def _request(self, url: str, params: dict[str, Any] | None, *, want_bytes: bool) -> Fetched:
         client = self._ensure_client()
         attempt = 0
         while True:
@@ -522,7 +594,11 @@ class HttpTransport:
                     raise IngestFault(f"{url} returned HTTP {status}", retryable=True)
                 if status >= 400:
                     raise IngestFault(f"{url} returned HTTP {status}", retryable=False)
-                return response.content if want_bytes else response.json()
+                # Stamped before the body is decoded, so the receipt time is the moment the
+                # response was in hand and not the moment we finished reading it.
+                received_at = utc_now()
+                payload = response.content if want_bytes else response.json()
+                return Fetched(payload=payload, received_at=received_at, url=url, attempts=attempt + 1)
             except IngestFault:
                 if not self._backoff.allows(attempt):
                     raise
@@ -534,14 +610,22 @@ class HttpTransport:
                 await asyncio.sleep(self._backoff.delay(attempt))
                 attempt += 1
 
-    async def get_json(self, url: str, *, params: dict[str, Any] | None = None) -> Any:
+    async def fetch_json(self, url: str, *, params: dict[str, Any] | None = None) -> Fetched:
         return await self._request(url, params, want_bytes=False)
 
-    async def get_bytes(self, url: str, *, params: dict[str, Any] | None = None) -> bytes:
-        result = await self._request(url, params, want_bytes=True)
-        if not isinstance(result, bytes):
+    async def fetch_bytes(self, url: str, *, params: dict[str, Any] | None = None) -> Fetched:
+        fetched = await self._request(url, params, want_bytes=True)
+        if not isinstance(fetched.payload, bytes):
             raise IngestFault(f"{url} did not return bytes", retryable=False)
-        return result
+        return fetched
+
+    async def get_json(self, url: str, *, params: dict[str, Any] | None = None) -> Any:
+        return (await self.fetch_json(url, params=params)).payload
+
+    async def get_bytes(self, url: str, *, params: dict[str, Any] | None = None) -> bytes:
+        # `fetch_bytes` has already refused anything that is not bytes, so the cast restates a
+        # guarantee that was checked one line earlier rather than asserting an unchecked one.
+        return cast(bytes, (await self.fetch_bytes(url, params=params)).payload)
 
     async def aclose(self) -> None:
         if self._client is not None:
@@ -558,10 +642,21 @@ class RecordingTransport:
     take precedence over URL-keyed ones.
     """
 
-    def __init__(self, responses: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        responses: dict[str, Any] | None = None,
+        *,
+        now_fn: Callable[[], datetime] = utc_now,
+    ) -> None:
         self._responses: dict[str, Any] = dict(responses or {})
         self._by_params: dict[tuple[str, tuple[tuple[str, Any], ...]], Any] = {}
         self.requests: list[tuple[str, dict[str, Any] | None]] = []
+        # Injectable so a test can pin the receipt time and assert that a record carries *it*
+        # rather than the venue's stamp. Without a controllable clock the two are only
+        # distinguishable by luck, and "the adapter copied the venue time into observed_at" is
+        # exactly the defect an assertion has to be able to see.
+        self._now_fn = now_fn
+        self.received_at: list[datetime] = []
 
     @staticmethod
     def _key(url: str, params: dict[str, Any] | None) -> tuple[str, tuple[tuple[str, Any], ...]]:
@@ -588,19 +683,30 @@ class RecordingTransport:
             return self._responses[url]
         raise IngestFault(f"no recorded response for {url} params={params}", retryable=False)
 
-    async def get_json(self, url: str, *, params: dict[str, Any] | None = None) -> Any:
+    async def fetch_json(self, url: str, *, params: dict[str, Any] | None = None) -> Fetched:
         payload = self._lookup(url, params)
         if isinstance(payload, BaseException):
             raise payload
-        return payload
+        return self._fetched(url, payload)
 
-    async def get_bytes(self, url: str, *, params: dict[str, Any] | None = None) -> bytes:
+    async def fetch_bytes(self, url: str, *, params: dict[str, Any] | None = None) -> Fetched:
         payload = self._lookup(url, params)
         if isinstance(payload, BaseException):
             raise payload
         if not isinstance(payload, bytes):
             raise IngestFault(f"recorded response for {url} is not bytes", retryable=False)
-        return payload
+        return self._fetched(url, payload)
+
+    def _fetched(self, url: str, payload: Any) -> Fetched:
+        received_at = self._now_fn()
+        self.received_at.append(received_at)
+        return Fetched(payload=payload, received_at=received_at, url=url, attempts=1)
+
+    async def get_json(self, url: str, *, params: dict[str, Any] | None = None) -> Any:
+        return (await self.fetch_json(url, params=params)).payload
+
+    async def get_bytes(self, url: str, *, params: dict[str, Any] | None = None) -> bytes:
+        return cast(bytes, (await self.fetch_bytes(url, params=params)).payload)
 
     async def aclose(self) -> None:
         return None
@@ -704,6 +810,30 @@ class HistoricalSource(Protocol):
 # --------------------------------------------------------------------------- validation
 
 
+# A record with neither clock sorts last rather than raising: ordering must stay total for
+# hand-built records, and a tick with no event time is refused by the archive anyway.
+_SORT_FLOOR = datetime.min.replace(tzinfo=UTC)
+
+
+def event_time(tick: TickRecord) -> datetime:
+    """The tick's **event** time, total over every tick that can exist.
+
+    Since F-14's fix a tick has two clocks and either may be absent: the venue's stamp is missing
+    when a feed published none, and the receipt time is missing when the bytes came from disk
+    rather than from a fetch. Ordering, bucketing and partitioning all need one comparable value,
+    and each of those call sites was writing its own ``or`` chain — four copies of a rule that has
+    to mean the same thing everywhere. So the rule lives here: the venue's stamp first, because it
+    is the event time; ours next, because a tick with no venue stamp still happened before we
+    received it; and the sort floor last, so a record with neither sorts rather than raising.
+
+    Returning the floor is not a claim that the tick happened at the beginning of time. It is a
+    way of being total, and every consumer that *acts* on the value — the archive's partition key,
+    the rollup's bucket — refuses a tick with no venue stamp under its own reason before it gets
+    here.
+    """
+    return tick.venue_timestamp or tick.observed_at or _SORT_FLOOR
+
+
 def validate_bar(bar: BarRecord, *, report: IngestReport | None = None) -> str | None:
     """Return a rejection reason for a bad bar, or ``None`` when it is acceptable."""
     reason: str | None = None
@@ -728,8 +858,14 @@ def validate_tick(tick: TickRecord, *, report: IngestReport | None = None) -> st
         reason = "NON_POSITIVE_PRICE"
     elif tick.quantity is not None and tick.quantity < 0:
         reason = "NEGATIVE_QUANTITY"
-    elif tick.observed_at.tzinfo is None:
+    elif tick.observed_at is not None and tick.observed_at.tzinfo is None:
         reason = "NAIVE_TIMESTAMP:tick observed_at has no timezone"
+    # The event time is checked too, and separately: since F-14's fix it is the field ordering,
+    # bucketing and the archive's partition key read, so a naive one corrupts a partition rather
+    # than merely looking odd. A missing one is refused downstream, not here — ``None`` means the
+    # feed published no stamp, which the archiver reports as its own reason.
+    elif tick.venue_timestamp is not None and tick.venue_timestamp.tzinfo is None:
+        reason = "NAIVE_TIMESTAMP:tick venue_timestamp has no timezone"
     elif tick.side is not None and tick.side not in {"BUY", "SELL"}:
         reason = f"UNKNOWN_SIDE:{tick.side}"
     if reason is not None and report is not None:
@@ -791,7 +927,13 @@ def dedupe_ticks(ticks: Iterable[TickRecord]) -> list[TickRecord]:
             continue
         seen.add(key)
         out.append(tick)
-    return sorted(out, key=lambda t: t.observed_at)
+    # Ordered by the venue's event time, not by our receipt time: since F-14's fix every row of a
+    # downloaded dump shares one receipt instant, so sorting on it would leave thousands of ticks
+    # in whatever order the parser emitted them and call that chronological. The fallback to
+    # ``observed_at`` is for a feed that published no stamp at all; such a tick cannot be archived
+    # (the partition key refuses it), and ordering must not raise on a record the validators will
+    # reject anyway.
+    return sorted(out, key=event_time)
 
 
 __all__ = [
@@ -800,6 +942,7 @@ __all__ = [
     "BookLevel",
     "BookRecord",
     "FeedKind",
+    "Fetched",
     "HistoricalSource",
     "HttpTransport",
     "IngestFault",
@@ -814,6 +957,7 @@ __all__ = [
     "Transport",
     "dedupe_bars",
     "dedupe_ticks",
+    "event_time",
     "require_decimal",
     "sort_bars",
     "to_decimal",
