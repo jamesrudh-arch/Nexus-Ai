@@ -419,7 +419,7 @@ h3 .tag { font-family: var(--font-family-mono); font-size: var(--font-size-capti
 .card table { width: 100%; }
 </style></head><body><div class='wrap'>
 <div class="lede">Nexus-AI &middot; Stage 8 of 23 &middot; sub-deliverable 8.3 &middot; authorised by
-D-051 as <b>L-D + L-E only</b> &middot; <b>awaiting review</b></div>
+D-051 as <b>L-D + L-E only</b> &middot; <b>approved 2026-11-26 (D-052)</b></div>
 <h1 style="font-size:var(--font-size-heading);font-weight:var(--font-weight-semibold);margin:6px 0 0">
 A dossier can be opened at ABSTAIN, the route that serves it names nine things it cannot, and one of
 Stage 8.2&rsquo;s published claims turns out to have been false</h1>
@@ -774,7 +774,22 @@ Recorded in <span class="cite">docs/15</span> &sect;10.8.</p>
 <h3>12 &middot; Limitations of this batch<span class="tag">docs/15 §10.6</span></h3>
 <div class="card"><table><thead><tr><th>#</th><th>Limitation</th><th>Why it is published rather than fixed here</th></tr></thead><tbody><tr><td>1</td><td><b>Nothing calls <span class='mono'>open_dossier</span>.</b> The route serves an honest empty in every environment and says so.</td><td>Deciding <i>what</i> the system should research was not this batch's ruling. The same limitation §9.7 recorded for <span class='mono'>record_evidence</span>, which still has no caller either. A test greps <span class='mono'>src/nexus</span> for callers of both, so the state cannot change silently.</td></tr><tr><td>2</td><td><b>A stance is recorded, never produced.</b> Nothing derives a stance from evidence.</td><td><span class='mono'>DecisionRecord</span> is still never constructed in <span class='mono'>src/</span> (F-17). A dossier's stance is whatever a caller passed, validated against a vocabulary and nothing more.</td></tr><tr><td>3</td><td><b><span class='mono'>sufficiency</span> is a string with no meter.</b></td><td>The basis and target are pinned and required above <span class='mono'>INSUFFICIENT</span>, but the value itself is not validated against any list, because no list exists. Stage 10 defines the meter; until then a caller can write <span class='mono'>SUFFICIENT_FOR_ANYTHING</span>.</td></tr><tr><td>4</td><td><b><span class='mono'>venue_maps_instrument</span> is a snapshot taken at open.</b></td><td>If the master later maps that venue the row still says <span class='mono'>False</span>. Nothing re-checks it, and a dossier is not re-projected when an instrument is.</td></tr><tr><td>5</td><td><b>Foreign keys are still declared and still not enforced.</b></td><td>The writer refuses a dangling parent and the database would not (§3). With the pragma off, a row written by anything other than this writer can still point at an instrument that does not exist. §9.7's limitation 2 is unchanged.</td></tr><tr><td>6</td><td><b>The checksum proves integrity, not authenticity, and nothing verifies it on a schedule.</b></td><td>F-21's fix makes the value cover the row and gives the route a recomputation, but there is no periodic audit, no alert on a <span class='mono'>False</span>, and no signature over the bytes a venue actually sent. Question 4 in §13.</td></tr><tr><td>7</td><td><b>The route reads the projection, not the chain.</b></td><td>A row the projection lost and recovery has not yet restored is invisible here. <span class='mono'>served_from</span> says so in every response, and <span class='mono'>reproject_missing</span> is what closes the gap.</td></tr><tr><td>8</td><td><b>The dossier view's nine gaps are named, not filled.</b></td><td>Two (contradictions, beliefs with validity intervals) are deferred by D-051 to stage 10; one (publication time) waits on 8.4; the other six have no ruling behind them at all and no column, and this batch added none.</td></tr></tbody></table></div>
 
-<h3>13 &middot; Decision requested<span class="tag">docs/15 §10.7</span></h3>
+<h3>13 &middot; Decision requested &mdash; and ruled<span class="tag">docs/15 §10.7 &middot; D-052 in §10.9</span></h3>
+<div class="ribbon"><b>Ruled 2026-11-26 &mdash; D-052.</b> All four questions below were answered
+<span class="mono">Recommend</span>, each against exactly one marked recommendation, and the questions are left
+here exactly as they were asked. <b>(1) Stage 8.3 is approved</b>, with both disclosures standing &mdash; the
+F-21 correction to what an approved batch stored (&sect;9) and the skew-series correction (&sect;10) &mdash; and
+the offered alternatives, bounding <span class="mono">sufficiency</span> against a list now or reworking the
+checksum fix, were <b>not</b> taken, so limitation 3 stays published as written. <b>(2) 8.4 is F-14&rsquo;s
+expensive half alone</b>: a real receipt time in the four adapters and nothing else &mdash; no dossier work, no
+new tables, no writer wiring &mdash; with its own gate and its own live runs before and after, so a regression
+is attributable to it and to nothing else; <span class="mono">O-012</span> stays <b>OPEN</b> until it lands.
+<b>(3) Nothing opens a dossier or records evidence yet</b>: both writers stay unwired, the test that greps
+<span class="mono">src/nexus</span> for callers keeps saying so, and the next thing built is <b>stage
+10&rsquo;s <span class="mono">memory_item</span> writer</b>, which carries F-18&rsquo;s three columns and
+<span class="mono">evidence_ref.contradicts</span> that D-051 deferred to exactly there. <b>(4) No periodic
+checksum audit yet, but the gap is recorded as F-22</b> (&sect;14, ledger row
+<span class="mono">O-014</span>) &mdash; global numbering continues, so the next id is <b>F-23</b>.</div>
 <div class="ask">
 <p><b>Recommendation: approve Stage 8.3 as delivered, with F-21 disclosed, and take 8.4 as F-14&rsquo;s
 expensive half alone.</b> The dossier writer is what makes the intelligence layer able to hold a case, and the
@@ -807,7 +822,32 @@ That finding would be <b>F-22</b>, continuing the global sequence D-051 ruled on
 </ol>
 </div>
 
-<footer>Stage 8.3 &middot; L-D + L-E &middot; authorised by D-051, <b>awaiting review as D-052</b> &middot;
+<h3>14 &middot; F-22 &mdash; the finding ruling 4 opened on purpose<span class="tag">NEW · docs/15 §10.10 · ledger O-014</span></h3>
+<div class="blocked"><b>Status <span class="mono">OPEN</span>, recorded by ruling rather than discovered by
+accident &mdash; which is the point of it.</b> <span class="mono">verify_evidence_checksum</span> exists, is
+tested against nine tampered fields and a <span class="mono">NULL</span> value, and runs in exactly one place:
+<span class="mono">_dossier_view</span>, when a route serves a row. So the system can tell whether an evidence
+row still matches what its writer hashed &mdash; but only if somebody asks for that row.</div>
+<p>Nothing in <span class="mono">src/</span> writes <span class="mono">evidence_ref</span> except
+<span class="mono">record_evidence</span>, so a change can only come from outside the application: a restored
+backup, a hand-edited database file, a migration gone wrong, a disk fault, or a future writer nobody has
+reviewed. <b>Every one of those happens whether or not a reader asks.</b> An integrity check that runs on read
+therefore reports tampering only for rows somebody happened to request, and reports nothing at all for the
+rest &mdash; including the whole table on a day nobody opens the Intelligence Centre.</p>
+<p><b>What F-22 is not.</b> Not a claim that the checksum is wrong: F-21 fixed what it covers and the fix is
+tested. Not a claim that a periodic audit is needed now: ruling 4 says it is not, and with both tables empty in
+production there is nothing to sweep. It is the gap between those two facts, written down so that it is a known
+absence rather than an unnoticed one &mdash; because an unrecorded gap is discovered later as an absence
+somebody has to explain.</p>
+<p><b>What would close it</b>, for whoever picks it up: a verification pass that recomputes every
+<span class="mono">evidence_ref.checksum</span> outside a request &mdash; at boot, on a schedule, or inside
+<span class="mono">audit/chain.py</span>&rsquo;s existing verification &mdash; <b>plus</b> a decision about where
+a mismatch goes. That decision is the hard part and the reason this is not a one-line fix: a mismatch can be
+reported into <span class="mono">/v1/status</span>, which the owner reads; into the audit chain, which is
+append-only and cannot retract a false alarm; or into an alert channel, and D-020 fixed that set as Telegram +
+Web Push + Brevo + in-app with none of them wired yet. F-22 stays open until both halves exist.</p>
+
+<footer>Stage 8.3 &middot; L-D + L-E &middot; authorised by D-051, <b>approved as D-052</b> &middot;
 11 files in <span class="mono">backend/</span>, +2,079 / &minus;24, gate <b>1,258 passed / 2 skipped / 0
 failed</b> (+141 tests: dossier writer 87, routes 39, F-21 15), mypy strict clean on 61, ruff and format clean
 on 91 &middot; 13 application routes, 2 of them read-only <span class="mono">GET</span>s on
@@ -819,5 +859,7 @@ checksum moved &middot; CI on <span class="mono">ffc4128</span>: three runs, all
 the <span class="mono">pull_request</span> one carrying <b>run 31</b> &mdash; 44/0/5/<b>0</b> of 49, skew
 <b>2.35&times;</b>, <span class="mono">layout_flag=True</span>, <span class="mono">buy=50 sell=0</span>
 &middot; two published numbers corrected as inserted pointers: the checksum&rsquo;s coverage (&sect;9) and the
-skew series, now a <b>range</b> rather than a count (&sect;10)</footer>
+skew series, now a <b>range</b> rather than a count (&sect;10) &middot; <b>F-22 opened by ruling 4</b>
+(&sect;14, ledger <span class="mono">O-014</span>), so the next finding id is <b>F-23</b> &middot; 8.4 =
+F-14&rsquo;s expensive half alone, then stage 10&rsquo;s <span class="mono">memory_item</span> writer</footer>
 </div></body></html>

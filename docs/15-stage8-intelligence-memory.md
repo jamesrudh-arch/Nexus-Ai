@@ -1,8 +1,19 @@
 # Stage 8 — Intelligence Memory: what exists, what is schema-only, and what a writer must satisfy
 
-**Sub-deliverable 8.1 — research.** Status: `DELIVERED, AWAITING REVIEW`.
-Authorised by **D-049** (research only; no production code).
+**Sub-deliverable 8.1 — research.** Status: `APPROVED` (**D-050**). Authorised by **D-049** (research only;
+no production code). Date: 2026-11-26.
+**Sub-deliverable 8.2 — L-A + L-B + L-C.** Status: `APPROVED` (**D-051**). Authorised by **D-050**. §9.
+**Sub-deliverable 8.3 — L-D + L-E.** Status: `APPROVED` (**D-052**). Authorised by **D-051** as L-D + L-E
+only. §10, with the ruling in §10.9 and **F-22** in §10.10.
+**8.4 — F-14's expensive half, and nothing else.** Status: `AUTHORISED, NOT STARTED` (**D-051**, re-confirmed
+by **D-052**). The batch after it is **stage 10's `memory_item` writer**, which carries F-18's three columns
+and `evidence_ref.contradicts`, also by **D-052**.
 Date: 2026-11-26.
+
+> **This header was three rulings out of date and is corrected here.** It named only 8.1 and still read
+> `DELIVERED, AWAITING REVIEW` after D-050, D-051 and D-052 had each been recorded further down the same
+> file. A status header that lags the record it heads is the same defect class as a stale count: it is the
+> first thing a reader trusts and the least thing anybody re-measures.
 
 > **8.1 changed no production code.** The owner's ruling was explicit: read the code and the approved
 > design, inventory what exists against what is schema-only, and produce findings, $0 levers and a
@@ -1258,6 +1269,10 @@ check in it exercises the dossier writer or the route.
 
 ### 10.7 Decision requested
 
+> **Ruled 2026-11-26 — D-052.** All four questions below were answered `Recommend`, each against exactly one
+> marked recommendation. §10.9 is the ruling and §10.10 is the finding ruling 4 opens; the questions are left
+> here exactly as they were asked.
+
 1. **Is Stage 8.3 approved?** L-D + L-E as described, with the **F-21 correction to an approved batch**
    disclosed in §10.3 — the evidence checksum now covers nine stored fields instead of the payload alone,
    which changes what `record_evidence` stores. **Recommendation: approve**, and record as **D-052**.
@@ -1351,3 +1366,63 @@ is endless and each turn of it publishes a total that is stale on arrival. That 
 phrasing above exists to stop. So the rule this section leaves behind is the rule it follows: **the series is
 open-ended, the range is the claim, and the next batch that touches this record picks the table up from
 wherever CI has reached** — with every pair re-read from its own annotation before it is written down.
+
+### 10.9 D-052 — the four rulings, and the finding the fourth one opens
+
+All four questions in §10.7 were answered `Recommend`, each against exactly one marked recommendation, and
+are recorded as **D-052**. §10.7 is left as it was put; this section is the ruling.
+
+| # | Question as put | Ruled | What it changes |
+|---|---|---|---|
+| 1 | Is Stage 8.3 approved? | **Approved, recorded as D-052**, with the F-21 correction to an approved batch disclosed (§10.3) and the skew-series correction disclosed (§10.4, §10.8) | This batch's rows in `docs/07` move to `APPROVED`. The checksum now covers nine stored fields, so `record_evidence` stores a different value than the one D-051 was ruled on, and that is on the record rather than in a diff. §10.6's eight limitations stand as published — in particular limitation 3, `sufficiency` unvalidated against any list, is **not** bounded by this ruling, exactly as D-051 left `memory_item.confidence`'s range unbounded |
+| 2 | What is 8.4? | **F-14's expensive half alone** | A real receipt time in `okx`, `bybit`, `binance_vision` and `dukascopy`, and nothing else: no dossier work, no new tables, no writer wiring. Its own gate and its own live runs before and after, so a regression is attributable to it and to nothing else. `O-012` stays `OPEN` until it lands |
+| 3 | Should anything open a dossier or record evidence yet? | **Not yet** | Both writers stay unwired, and the test that greps `src/nexus` for callers keeps saying so. The next thing built is **stage 10's `memory_item` writer**, because a dossier with no beliefs beside it is a case file with no conclusions in it — and that batch carries F-18's three columns plus `evidence_ref.contradicts`, which D-051 deferred to exactly there |
+| 4 | Should the checksum be verified anywhere other than on a read? | **No periodic audit yet — but record the gap as a finding** | **F-22 is opened** (§10.10) and ledger row `O-014` carries it. Ruling 4 is the reason it is a finding and not a shrug: an integrity check that only runs when somebody looks cannot catch a change nobody looks at, and an unrecorded gap is discovered later as an absence |
+
+Two things this ruling does **not** do, stated so nobody has to infer them. It does not bound
+`sufficiency` against a list — stage 10 defines the meter, and until then a caller can still write
+`SUFFICIENT_FOR_ANYTHING`. And it does not fill any of the nine `view_gaps`: two stay deferred to stage 10
+by D-051, one waits on 8.4, and six have no ruling behind them at all.
+
+**Runs 32 and 33 — and the rule §10.8 leaves behind, exercised immediately.** The commit that carried run
+31's record (`9dad6b7`, documents and design only) triggered its own `Live public endpoints` run, and so did
+the commit that carried §10.8 (`9664c7b`). Both are `conclusion=success`, as are all three runs of each of
+`ffc4128`, `9dad6b7` and `9664c7b`. **Neither run's numbers are quoted here**, for the reason §10.8 states:
+quoting them needs another commit, which triggers another run, whose numbers would be unquoted for the same
+reason. The series is open-ended, the range is the claim — **0.80×–3.97×** across every run that has
+published both intervals — and the next batch that touches this record picks the table up from wherever CI
+has reached, re-reading each pair from its own annotation before writing it down. 8.4 is that batch, and it
+needs runs before and after the change it makes.
+
+### 10.10 F-22 — the evidence checksum is verified only when somebody looks (NEW, opened by D-052's ruling 4)
+
+**Status: `OPEN`, recorded by ruling rather than discovered by accident — which is the point of it.**
+
+`verify_evidence_checksum` exists, is exported, is tested against nine tampered fields and a NULL value, and
+runs in exactly one place: `_dossier_view`, when `GET /v1/intelligence/dossiers` or its detail route serves a
+row. So the system can tell whether an evidence row still matches what its writer hashed — but only if
+somebody asks for that row.
+
+**Why that is a finding and not a design.** The checksum's purpose, as §9.5 published it and §10.3 restored
+it, is integrity: detecting that a stored row changed after it was written. Nothing in `src/` writes to
+`evidence_ref` except `record_evidence`, so a change can only come from outside the application — a restored
+backup, a hand-edited database file, a migration gone wrong, a disk fault, or a future writer nobody has
+reviewed. Every one of those happens whether or not a reader asks. An integrity check that runs on read
+therefore reports tampering only for rows somebody happened to request, and reports nothing at all for the
+rest — including the whole table on a day nobody opens the Intelligence Centre.
+
+**What F-22 is not.** It is not a claim that the checksum is wrong: F-21 fixed what it covers, and the fix is
+tested. It is not a claim that a periodic audit is needed now: D-052's ruling 4 says it is not, and with both
+tables empty in production there is nothing to sweep. It is the gap between those two facts, written down so
+that it is a known absence rather than an unnoticed one.
+
+**What would close it**, for whoever picks it up: a verification pass that recomputes every
+`evidence_ref.checksum` outside a request — at boot, on a schedule, or as part of `audit/chain.py`'s existing
+verification — plus a decision about where a mismatch goes. That decision is the hard part, and it is the
+reason this is not a one-line fix: a mismatch can be reported into `/v1/status` (which the owner reads), into
+the audit chain (which is append-only and cannot retract a false alarm), or into an alert channel (which
+`docs/00` D-020 fixed as Telegram + Web Push + Brevo + in-app, none of them wired yet). F-22 stays open until
+both halves exist.
+
+**Ledger row:** `O-014`. **Sequence:** the global numbering D-051 ruled on, so F-22 follows F-21 and the next
+finding is **F-23**.
