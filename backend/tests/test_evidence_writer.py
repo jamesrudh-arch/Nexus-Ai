@@ -28,6 +28,10 @@ from nexus.audit.chain import sha256_hex
 from nexus.audit.log import AuditLog, SqliteAuditStore
 from nexus.core.errors import RejectReason
 from nexus.data.freshness import DataStatus, MarketSnapshot
+from nexus.instruments.projection import project_master
+from nexus.instruments.registry import InstrumentRegistry
+from nexus.instruments.seed import seed_master
+from nexus.intelligence.dossier import open_dossier
 from nexus.intelligence.evidence import (
     CHECKSUMMED_FIELDS,
     EVENT_TYPE,
@@ -38,18 +42,34 @@ from nexus.intelligence.evidence import (
     snapshot_payload,
     verify_evidence_checksum,
 )
+from nexus.intelligence.memory import record_memory_item
 from nexus.store.operational import PersistenceError, SqliteOperationalStore
 from nexus.store.serialise import dumps_canonical
 from nexus.store.writeahead import PROJECTABLE, reproject_missing
 
 OBSERVED = datetime(2026, 11, 26, 12, 0, 0, tzinfo=UTC)
 RETRIEVED = OBSERVED + timedelta(seconds=1, milliseconds=170)
+SUMMARY = "Perp basis widening into the US session; watching for a funding flip."
+UNCERTAINTY = "Sixty seconds of ticker data only, so the regime is unknown."
+BELIEF_BODY = "Perp basis on OKX runs wide into the US session and narrows again at the London close."
+BTC_PERP = "INS-BTC-USDT-USDT"
 
 
 def _durable(tmp_path: Path) -> tuple[AuditLog, SqliteOperationalStore]:
     path = tmp_path / "nexus.db"
     audit = AuditLog(SqliteAuditStore(path))
     return audit, SqliteOperationalStore(path, audit=audit)
+
+
+def _booted(tmp_path: Path) -> tuple[AuditLog, SqliteOperationalStore]:
+    """A store holding the seeded master, because a real parent is the only kind this file can now
+    attach evidence to (F-25, closed here) and ``open_dossier`` refuses an instrument the master has
+    never held."""
+    audit, store = _durable(tmp_path)
+    registry = InstrumentRegistry()
+    seed_master(registry)
+    project_master(registry, audit=audit, store=store)
+    return audit, store
 
 
 def _pragma(tmp_path: Path, what: str) -> list[tuple[Any, ...]]:
@@ -813,7 +833,14 @@ class TestReadsAreOrdered:
         store.close()
 
     def test_a_dossier_filter_returns_only_its_own_evidence(self, tmp_path: Path) -> None:
+        """Re-aimed by Stage 8.6, not deleted. This test is about the store's filter, and it used to
+        name a dossier nobody had opened — which F-25 was: the writer accepted it. The parent is now
+        created through ``store.save_dossier`` rather than through ``open_dossier``, deliberately: the
+        subject here is ``evidence_refs(dossier_id=...)`` at the store layer, and the store is the layer
+        that does *not* check parents, so boot recovery cannot fail on a read."""
         audit, store = _durable(tmp_path)
+        store.save_dossier({"dossier_id": "DOS-1", "summary": SUMMARY, "instrument_id": BTC_PERP})
+        assert store.get_dossier("DOS-1") is not None
         record_evidence(
             audit=audit,
             store=store,
@@ -838,3 +865,237 @@ def test_the_reason_vocabulary_was_not_extended() -> None:
         "EVIDENCE" in member.name and member.name != "EVIDENCE_INSUFFICIENT" for member in RejectReason
     )
     assert RejectReason.EVIDENCE_INSUFFICIENT.value == "EVIDENCE_INSUFFICIENT"
+
+
+def _open_with(audit: AuditLog, store: SqliteOperationalStore, instrument_id: Any) -> Any:
+    return open_dossier(
+        audit=audit,
+        store=store,
+        summary=SUMMARY,
+        uncertainty=UNCERTAINTY,
+        instrument_id=instrument_id,
+        venue="OKX",
+    )
+
+
+def _evidence_contradicting(audit: AuditLog, store: SqliteOperationalStore, contradicts: Any) -> Any:
+    return record_evidence(
+        audit=audit,
+        store=store,
+        source="okx.ticker",
+        observed_at=OBSERVED,
+        retrieved_at=RETRIEVED,
+        contradicts=contradicts,
+    )
+
+
+def _evidence_in(audit: AuditLog, store: SqliteOperationalStore, dossier_id: Any) -> Any:
+    return record_evidence(
+        audit=audit,
+        store=store,
+        source="okx.ticker",
+        observed_at=OBSERVED,
+        retrieved_at=RETRIEVED,
+        dossier_id=dossier_id,
+    )
+
+
+def _belief_resting_on(audit: AuditLog, store: SqliteOperationalStore, evidence_ids: Any) -> Any:
+    return record_memory_item(audit=audit, store=store, body=BELIEF_BODY, evidence_ids=evidence_ids)
+
+
+def _context(audit: AuditLog, store: SqliteOperationalStore) -> dict[str, str]:
+    """One real case with one real observation attached, so a guard can be tested against both halves:
+    a parent that exists and a parent that does not."""
+    dossier_id = str(_open_with(audit, store, BTC_PERP).dossier_id)
+    evidence_id = str(_evidence_in(audit, store, dossier_id).evidence_id)
+    return {"dossier_id": dossier_id, "evidence_id": evidence_id}
+
+
+#: The four parent references this codebase guards, as ``docs/15`` §12.9's table names them. Three were
+#: guarded when that table was measured in Stage 8.5 and the fourth — ``evidence_ref.dossier_id`` — was
+#: not, which is F-25. One tuple is the source of truth and both halves below are derived from it, so a
+#: parent cannot be dropped from one test and kept in the other: removing any one of the four guards
+#: fails a test that names the parent, which is the gate D-054's ruling 3 asked for.
+_PARENTS: tuple[tuple[str, str, Any, Any, str, Any], ...] = (
+    #   the parent reference, as §12.9 names it · the table a write would land in · the call that takes
+    #   it · a value that dangles · the text the refusal must name · a callable producing a value that
+    #   does not dangle, given one real case and one real row
+    (
+        "dossier.instrument_id -> instrument",
+        "dossier",
+        _open_with,
+        "NOPE:NOPE",
+        "NOPE:NOPE",
+        lambda _ctx: BTC_PERP,
+    ),
+    (
+        "evidence_ref.contradicts -> evidence_ref",
+        "evidence_ref",
+        _evidence_contradicting,
+        "EV-NOPE",
+        "EV-NOPE",
+        lambda ctx: ctx["evidence_id"],
+    ),
+    (
+        "evidence_ref.dossier_id -> dossier",
+        "evidence_ref",
+        _evidence_in,
+        "DOS-NOPE",
+        "DOS-NOPE",
+        lambda ctx: ctx["dossier_id"],
+    ),
+    (
+        "memory_item's evidence_ids (payload, no FK)",
+        "memory_item",
+        _belief_resting_on,
+        ("EV-INVENTED",),
+        "EV-INVENTED",
+        lambda ctx: (ctx["evidence_id"],),
+    ),
+)
+
+DANGLING_PARENTS = [
+    pytest.param(label, table, attempt, dangling, needle, id=needle)
+    for label, table, attempt, dangling, needle, _grounded in _PARENTS
+]
+
+GROUNDED_PARENTS = [
+    pytest.param(label, table, attempt, grounded, id=needle)
+    for label, table, attempt, _dangling, needle, grounded in _PARENTS
+]
+
+
+class TestEveryGuardedParentIsGuarded:
+    """Both halves of all four guards, because one half alone proves nothing.
+
+    A test that only asserts "a dangling parent is refused" passes on a writer that refuses everything,
+    and a test that only asserts "a real parent is accepted" passes on a writer with no guard at all —
+    the shape of the mistake Stage 8.4's receipt-time gate was built to avoid, where asserting one clock
+    passed on either the old code or the same defect with the two swapped. So each parent is attempted
+    twice, and each attempt also asserts what landed: a refusal leaves neither a row nor an audit entry
+    (L-2 is audit-first, so a write that was refused wrote nothing to audit either), and an acceptance
+    adds exactly one row.
+    """
+
+    @pytest.mark.parametrize(("parent", "table", "attempt", "dangling", "needle"), DANGLING_PARENTS)
+    def test_a_parent_the_store_has_never_held_is_refused_by_the_writer_that_takes_it(
+        self, tmp_path: Path, parent: str, table: str, attempt: Any, dangling: Any, needle: str
+    ) -> None:
+        audit, store = _booted(tmp_path)
+        _context(audit, store)
+        before = store.counts()[table], audit.length
+        with pytest.raises(ValueError) as excinfo:
+            attempt(audit, store, dangling)
+        message = str(excinfo.value)
+        assert needle in message, f"{parent}: the refusal must name the value that dangles — {message}"
+        assert (store.counts()[table], audit.length) == before, (
+            f"{parent}: refused before the write, so neither a row nor an audit entry may exist"
+        )
+        store.close()
+
+    @pytest.mark.parametrize(("parent", "table", "attempt", "grounded"), GROUNDED_PARENTS)
+    def test_the_same_reference_is_accepted_when_the_parent_exists(
+        self, tmp_path: Path, parent: str, table: str, attempt: Any, grounded: Any
+    ) -> None:
+        audit, store = _booted(tmp_path)
+        context = _context(audit, store)
+        before = store.counts()[table]
+        attempt(audit, store, grounded(context))
+        assert store.counts()[table] == before + 1, f"{parent}: a real parent is not an excuse to refuse"
+        store.close()
+
+
+class TestACaseMustExistBeforeEvidenceCanNameIt:
+    """F-25, closed. ``PRAGMA foreign_keys`` is off by design, so the writer is the only place a dangling
+    ``evidence_ref.dossier_id`` can be refused — the reasoning that produced the other three guards."""
+
+    def test_a_dossier_the_store_has_never_held_is_refused(self, tmp_path: Path) -> None:
+        audit, store = _booted(tmp_path)
+        before = store.counts()["evidence_ref"], audit.length
+        with pytest.raises(ValueError) as excinfo:
+            _evidence_in(audit, store, "DOS-NOPE")
+        message = str(excinfo.value)
+        assert "DOS-NOPE" in message
+        assert "orphaned" in message, "the consequence, not only the rule: the row would be unreachable"
+        assert "404" in message, "the route that serves evidence cannot find a case that does not exist"
+        assert "0002_memory" in message, "the clause that has existed since the table was built"
+        assert "foreign_keys" in message, "why SQLite would have stored it without comment"
+        assert (store.counts()["evidence_ref"], audit.length) == before
+        store.close()
+
+    @pytest.mark.parametrize("value", ["", "   "])
+    def test_an_empty_dossier_id_is_refused_and_is_not_the_same_claim_as_none(
+        self, tmp_path: Path, value: str
+    ) -> None:
+        """Two refusals, two messages: ``None`` means "belongs to no case yet" and ``''`` means neither.
+
+        The two messages are pinned *against each other* rather than only asserted different, because
+        "different" is satisfied by one folded reason string that happens to interpolate the value: a
+        caller that passes ``''`` and is told ``dossier '' does not exist`` learns that a lookup failed,
+        when what happened is that it named nothing at all. Tampering proved the weaker form of this
+        assertion passed with the empty-string branch deleted outright.
+        """
+        audit, store = _booted(tmp_path)
+        context = _context(audit, store)
+        with pytest.raises(ValueError, match="an empty string is neither") as empty:
+            _evidence_in(audit, store, value)
+        with pytest.raises(ValueError, match="does not exist") as dangling:
+            _evidence_in(audit, store, "DOS-NOPE")
+        assert str(empty.value) != str(dangling.value), "a caller cannot be told which mistake it made"
+        assert "does not exist" not in str(empty.value), "the two refusals must not share one reason"
+        assert "None" in str(empty.value), "the message must name the value that was wanted instead"
+        receipt = _evidence_in(audit, store, None)
+        assert receipt.dossier_id is None
+        assert store.get_evidence_ref(receipt.evidence_id)["dossier_id"] is None
+        assert store.counts()["dossier"] == 1, context["dossier_id"]
+        store.close()
+
+    def test_an_id_is_stored_as_given_and_padding_makes_it_dangling(self, tmp_path: Path) -> None:
+        """Not normalised: stripping would rewrite what a caller said into something it did not say, and
+        §12.12's limitation 12 records the same choice for a confidence."""
+        audit, store = _booted(tmp_path)
+        context = _context(audit, store)
+        with pytest.raises(ValueError) as excinfo:
+            _evidence_in(audit, store, f" {context['dossier_id']} ")
+        assert context["dossier_id"] in str(excinfo.value)
+        receipt = _evidence_in(audit, store, context["dossier_id"])
+        row = store.get_evidence_ref(receipt.evidence_id)
+        assert row is not None
+        assert row["dossier_id"] == context["dossier_id"]
+        assert receipt.dossier_id == context["dossier_id"]
+        store.close()
+
+    def test_record_snapshot_inherits_the_refusal_instead_of_needing_its_own(self, tmp_path: Path) -> None:
+        audit, store = _booted(tmp_path)
+        with pytest.raises(ValueError) as excinfo:
+            record_snapshot(
+                audit=audit,
+                store=store,
+                snapshot=_snapshot(),
+                retrieved_at=RETRIEVED,
+                dossier_id="DOS-NOPE",
+            )
+        assert "DOS-NOPE" in str(excinfo.value)
+        assert store.counts()["evidence_ref"] == 0
+        store.close()
+
+    def test_the_guard_is_in_the_writer_and_not_in_the_store(self, tmp_path: Path) -> None:
+        """Pinned so nobody "fixes" it in the wrong layer. ``save_evidence_ref`` accepts a dangling
+        parent on purpose: it is the projection target, and a replay that had to read the parent before
+        writing the child would fail whenever the chain is re-projected in an order that is not
+        parent-first — the reason ``save_dossier`` gives for its own unenforced foreign key."""
+        audit, store = _booted(tmp_path)
+        store.save_evidence_ref(
+            {
+                "evidence_id": "EV-PROJECTED",
+                "dossier_id": "DOS-NOPE",
+                "source": "okx.ticker",
+                "observed_at": "2026-11-26T12:00:00.000Z",
+                "retrieved_at": "2026-11-26T12:00:01.170Z",
+            }
+        )
+        assert store.get_evidence_ref("EV-PROJECTED") is not None
+        assert store.get_dossier("DOS-NOPE") is None
+        assert _pragma(tmp_path, "foreign_keys")[0][0] == 0, "off by design, not by accident"
+        store.close()

@@ -73,6 +73,32 @@ stated here because each is a way the column could be over-read:
   satisfied by a confidence value*, and ``docs/10`` §3.2 that confidence never overrides a failed stage. A
   contradiction is an input to a review, which is a person, and this batch builds no reviewer.
 
+**``dossier_id`` names a case, and the case must exist.** Stage 8.6 added the check and closed **F-25**,
+which Stage 8.5 measured rather than fixed: ``record_evidence(dossier_id="DOS-NOPE")`` was accepted, the
+row landed, and the store held zero dossiers — while the same codebase already refused a dangling
+``instrument_id``, a dangling ``contradicts`` and a dangling ``evidence_ids`` entry, so the fourth parent
+was the only one nothing guarded. ``evidence_ref.dossier_id`` has carried a ``REFERENCES`` clause since
+``0002_memory``, and ``PRAGMA foreign_keys`` is deliberately off (``docs/13`` §2.5: recovery re-projects in
+chain order, which is not always parent-first, and a hard FK failure mid-recovery would be worse than the
+inconsistency it prevents), so SQLite stored the dangling parent without comment. The row was not corrupt —
+it verified against its own checksum — it was **orphaned**: ``GET /v1/intelligence/dossiers/{id}`` returns
+404 for an id that names no case, so it was unreachable through the one route that serves evidence, and
+``ix_evidence_dossier`` indexed a value that matched nothing. Two things are stated here because each is a
+way the check could be over-read:
+
+* ``None`` stays legitimate and is **not** the same claim as a name that resolves. ``None`` says the
+  evidence belongs to no case yet, which ``0002_memory`` allows by making the column nullable, and refusing
+  it would make the first writer depend on the second — the reason ``0002_memory``'s own ordering survived
+  Stage 8.3 at all.
+* The value is stored **as given**, not stripped and not normalised. An id with padding is not an id the
+  store holds, so it is refused as dangling rather than quietly rewritten into one that is, and what a
+  caller said is what lands in the row — the same choice §12.12's limitation 12 records for a confidence.
+
+The check lives in this writer and not in ``store.save_evidence_ref``, for the reason ``save_dossier``'s
+docstring already gives for the instrument check: the store cannot refuse a dangling parent without making
+boot recovery depend on a read, and a replay that fails on a missing parent is worse than the row it was
+replaying. ``record_snapshot`` forwards here, so it inherits the refusal rather than needing its own.
+
 ``kind`` is passed through as free text with the schema's default. No vocabulary for it is declared
 anywhere in the repository — the only thing the schema says is ``DEFAULT 'DATA'`` — and inventing one
 here would put a plausible-looking enum in front of a distinction nobody has yet drawn.
@@ -237,6 +263,44 @@ def _resolve_contradiction(store: Any, contradicts: str | None, evidence_id: str
     return target
 
 
+def _resolve_dossier(store: Any, dossier_id: str | None) -> str | None:
+    """Check the case a row is attached to, and return it as given, or ``None`` when none was named.
+
+    Two claims are refused, separately, because they are different mistakes and folding them into one
+    message would tell a caller less than the writer knows. An empty string is neither a case nor ``None``:
+    ``None`` is how this writer records evidence that belongs to no case yet, and ``''`` is a caller that
+    meant to pass one of the two and passed neither. A name the store has never held is a dangling parent —
+    ``evidence_ref.dossier_id`` has carried ``REFERENCES dossier`` since ``0002_memory``, but
+    ``PRAGMA foreign_keys`` is deliberately off (``docs/13`` §2.5), so SQLite would store it without
+    comment and the row would be orphaned rather than corrupt: it still verifies its own checksum, it is
+    indexed by ``ix_evidence_dossier`` against nothing, and the route that serves evidence 404s on an id
+    naming no case, so nothing that reads the system through its API can ever find it again. That is F-25,
+    which Stage 8.5 measured and D-054's ruling 3 ordered fixed alone.
+
+    The parent is checked before the contradiction because it is the wider claim of the two: a row that
+    belongs to no case that exists has no business recording a disagreement inside one.
+    """
+    if dossier_id is None:
+        return None
+    target = str(dossier_id)
+    if not target.strip():
+        raise ValueError(
+            "dossier_id must name a dossier or be None; an empty string is neither, and None — not '' — "
+            "is how this writer records evidence that belongs to no case yet"
+        )
+    if store.get_dossier(target) is None:
+        raise ValueError(
+            f"dossier {target!r} does not exist, so evidence cannot be attached to it: the row would be "
+            "orphaned rather than corrupt — it would still verify its own checksum, ix_evidence_dossier "
+            "would index a value matching nothing, and the route that serves evidence 404s on an id naming "
+            "no case, so nothing reading through the API could find it again. evidence_ref.dossier_id "
+            "REFERENCES dossier since migration 0002_memory, but PRAGMA foreign_keys is deliberately off, "
+            "so SQLite would store this dangling parent without comment. Open the dossier first, or pass "
+            "dossier_id=None to record evidence that belongs to no case yet"
+        )
+    return target
+
+
 @dataclass(frozen=True, slots=True)
 class EvidenceReceipt:
     """What one write produced. Returned so the caller can cite the evidence it just recorded."""
@@ -324,6 +388,10 @@ def record_evidence(
     ``contradicts`` names another ``evidence_ref`` row this one is recorded as disagreeing with. It is
     optional and ``None`` means no disagreement was claimed, which is not the same as claiming that none
     exists — nothing in this system can establish that, and the column does not pretend to.
+
+    ``dossier_id`` names the case this evidence belongs to and must exist in the store, or be ``None`` —
+    which is a different claim, not a missing one: evidence that belongs to no case yet (F-25, closed by
+    Stage 8.6).
     """
     if not source:
         raise ValueError("evidence needs a source: an observation from nowhere cannot be audited")
@@ -344,6 +412,10 @@ def record_evidence(
             "timestamp exists and should be passed with observed_at_source=VENUE"
         )
 
+    # The case before the contradiction: the parent is the wider claim, and a row attached to no case
+    # that exists has no business recording a disagreement inside one.
+    resolved_dossier = _resolve_dossier(store, dossier_id)
+
     # Resolved before the contradiction is checked, so a row generated in this same call can be compared
     # against the id it points at: a self-contradiction is not a disagreement, it is a mistake.
     resolved_id = str(evidence_id or "") or new_id(EVIDENCE_PREFIX)
@@ -362,7 +434,7 @@ def record_evidence(
 
     event: dict[str, Any] = {
         "evidence_id": resolved_id,
-        "dossier_id": dossier_id,
+        "dossier_id": resolved_dossier,
         "contradicts": resolved_contradicts,
         "source": source,
         "kind": kind,
@@ -392,7 +464,7 @@ def record_evidence(
         apparent_latency_seconds=round(latency, 6),
         data_status=status.value,
         checksum=str(event["checksum"]),
-        dossier_id=dossier_id,
+        dossier_id=resolved_dossier,
         contradicts=resolved_contradicts,
     )
 

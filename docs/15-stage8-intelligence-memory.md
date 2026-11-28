@@ -12,9 +12,14 @@ re-confirmed by **D-052**'s ruling 2. §11, with the ruling in §11.14 and **F-2
 `APPROVED` (**D-054**). Authorised by **D-052**'s ruling 3, re-ordered by **D-053**'s ruling 4 against the
 alternative (wiring `retrieved_at` first), which was declined. §12, with the ruling in §12.14, **F-24** in
 §12.8 and **F-25** in §12.9. **F-18 is narrowed, not closed** — gaps 1 and 3 close, gaps 2 and 4 stay open.
-Nothing calls the writer and no route serves `memory_item`, by ruling. **Next: 8.6 = F-25 alone, then
-8.7 = `expires_at`.**
-Date: 2026-11-27.
+Nothing calls the writer and no route serves `memory_item`, by ruling.
+**8.6 — F-25 alone: the fourth parent is guarded.** Status: `BUILT — AWAITING REVIEW`. Authorised by
+**D-054**'s ruling 3, which ordered one refusal in `record_evidence` and a gate naming **all four** parents
+rather than three. §13, with all **nine** declared foreign keys inventoried in §13.5. **No migration, no
+column, no route, no schema text** — three files, +339 / −2. Approval requested as **D-055** (§13.8), which
+also asks whether §13.5's five unguarded trading-path keys become **F-26**. **Next after it: 8.7 =
+`expires_at` on `memory_item` only.**
+Date: 2026-11-28.
 
 > **This header was three rulings out of date and is corrected here.** It named only 8.1 and still read
 > `DELIVERED, AWAITING REVIEW` after D-050, D-051 and D-052 had each been recorded further down the same
@@ -2746,6 +2751,13 @@ others, and 8.2 wrote the writer before any dossier existed to point at.
 Recorded, not fixed: **F-25**. Fixing it inside this batch would have changed a writer D-052 approved, in a
 batch ruled to be about `memory_item`, and §12.13 question 3 asks whether it should be its own batch.
 
+> **F-25 was closed by Stage 8.6, and this section is left as it was written.** D-054's ruling 3 ordered
+> the fix as its own batch; §13.1 records the refusal that shipped and §13.3 the gate that names all four
+> parents, so the table above now measures **4 guarded and 0 unguarded** rather than 3 and 1. Its fourth
+> row stays true of the commit it was measured at, `4443287`, which is why it is annotated rather than
+> edited — a measurement is a fact about a tree, and rewriting it would make this section a claim about
+> code that no longer exists.
+
 ### 12.10 The gate
 
 | Check | Result | At 8.4 (`c0bfaea`) |
@@ -2982,3 +2994,269 @@ this PR produces another live reading of the same adapter code until an adapter 
 (F-25's refusal) nor 8.7 (`expires_at`) changes one.
 
 ---
+
+---
+
+## 13. Stage 8.6 delivered (D-054's ruling 3): the fourth parent is guarded, and a gate that names all four
+
+### 13.0 What was ruled, and what this batch therefore did not do
+
+Ruling 3 asked for **one refusal in `record_evidence`** plus **a test that all four parent references this
+codebase guards are guarded, rather than three of them**. That is the whole batch. Three files changed,
+**+339 / −2**:
+
+| File | Change |
+|---|---|
+| `intelligence/evidence.py` | 444 → **516** lines: one private resolver (`_resolve_dossier`), two refusals, one call site, and the module docstring's block on `dossier_id`. `raise ValueError` in the file goes **8 → 10** |
+| `store/operational.py` | 1,351 → **1,355** lines: **four lines of docstring** on `save_evidence_ref`, saying that `dossier_id` is stored as given on the same terms as `contradicts`. No code |
+| `tests/test_evidence_writer.py` | 840 → **1,101** lines: **42 → 49** test functions, **54 → 68** tests, one test re-aimed and none deleted |
+
+Nothing else moved, and each absence was measured rather than assumed: `git diff HEAD -- store/schema.py
+migrations/ api/app.py` is **empty**, so there is **no migration, no column, no route, no gap text and no
+schema text** in this batch. `MIGRATIONS` is still **5** with the same five checksums (`0005_memory_beliefs`
+still `4520e5b5e259eb4c…`, and its pin in `test_schema_fidelity.py` untouched), `PROJECTABLE` is still
+**15**, `CHECKSUMMED_FIELDS` is still **10 of 12**, `app.py` still declares **13** routes and
+`DOSSIER_VIEW_GAPS` is still **9**. `src` stays at **62** files (16,181 → **16,257** lines) and `tests` at
+**31** (19,121 → **19,382**), both baselines re-derived from `git archive HEAD` into a scratch tree.
+
+The writers D-052 and D-054 approved are unchanged except for the branch ruling 3 ordered: `open_dossier`
+and `record_memory_item` were **read, not edited**, and appear in this batch only as two of the four parents
+the new gate names.
+
+### 13.1 The refusal: two branches, because two mistakes are not one
+
+`evidence_ref.dossier_id` has carried `REFERENCES dossier` since `0002_memory`, and `PRAGMA foreign_keys` is
+deliberately off (`docs/13` §2.5: recovery re-projects in chain order, which is not always parent-first, and
+a hard FK failure mid-recovery would be worse than the inconsistency it prevents). So the writer is the only
+place this can be refused — the reasoning that produced the other three guards. §12.9 already wrote the
+shape of the check down, and it is what shipped:
+
+```python
+if store.get_dossier(target) is None:
+    raise ValueError(...)
+```
+
+Two branches, two messages, and the distinction is the content:
+
+| Claim | Outcome | Why it is its own refusal |
+|---|---|---|
+| `dossier_id=None` | **accepted** | The legitimate state: evidence that belongs to no case yet. `0002_memory` makes the column nullable for exactly this, and refusing it would make the first writer depend on the second |
+| `dossier_id=""` or `"   "` | **refused** | Not a name and not `None` either. Telling this caller "dossier `''` does not exist" would report a failed lookup when what happened is that it named nothing at all |
+| a name the store has never held | **refused** | F-25. The row would be orphaned rather than corrupt, and the message says which: it would still verify its own checksum, `ix_evidence_dossier` would index a value matching nothing, and the route that serves evidence 404s on an id naming no case |
+
+The value is stored **as given** — not stripped, not case-folded, not normalised. Measured: `" CASE-… "`,
+`"CASE-…\n"` and `"case-…"` are all refused as dangling while the exact id is accepted, and the stored value
+equals what the caller passed. Stripping would rewrite what a caller said into something it did not say,
+which is the choice §12.12's limitation 12 records for a confidence, applied to an id.
+
+The parent is checked **before** the contradiction, because it is the wider claim of the two: a row that
+belongs to no case that exists has no business recording a disagreement inside one. That order is a
+decision, not an accident, and it is **not gated** — no test pins it, and §13.7 says so rather than implying
+otherwise.
+
+`record_snapshot` forwards to `record_evidence`, so it inherits the refusal instead of needing its own;
+measured, `record_snapshot(dossier_id="DOS-NOPE")` raises the same `ValueError` and writes nothing.
+
+### 13.2 The layer: the writer refuses, the store does not — and now a test says so
+
+`store.save_evidence_ref` still accepts a dangling parent, on purpose, and this batch made that explicit in
+its docstring rather than leaving it to be inferred from `save_dossier`'s. The store is the projection
+target: a check there would make boot recovery depend on a read, and could fail the replay of an event the
+chain already holds. Measured rather than argued — `save_evidence_ref(dossier_id="DOS-NOPE",
+contradicts="EV-ALSO-NOPE")` stores both, `get_dossier("DOS-NOPE")` returns `None`, `save_dossier` accepts
+`instrument_id="NOPE:NOPE"` on the same terms, and `PRAGMA foreign_keys` reads **0**.
+
+`test_the_guard_is_in_the_writer_and_not_in_the_store` pins the layering, so a future reader who "hardens"
+the store gets a red gate and an explanation instead of a silently broken recovery. Tampering proved it
+load-bearing: adding the check to `save_evidence_ref` fails exactly that test and nothing else.
+
+The consequence is stated rather than hidden: an orphan row is still **writable at the store layer**, and a
+replay of a pre-8.6 `evidence.recorded` event carrying a dangling `dossier_id` would still project one.
+Nothing in this batch scans for orphans and nothing removes them. Both intelligence tables are empty in
+production, so there is nothing to scan today; §13.7 carries it as a limitation.
+
+### 13.3 The four-parent gate: one table, both halves
+
+`docs/15` §12.9's table is now the test's data. One module-level tuple is the source of truth and both
+halves are derived from it, so a parent cannot be dropped from one test and kept in the other:
+
+| Parent reference | Dangling → | Grounded → |
+|---|---|---|
+| `dossier.instrument_id → instrument` | refused, naming the id and how many the master holds | `dossier` +1 |
+| `evidence_ref.contradicts → evidence_ref` | refused, naming the row | `evidence_ref` +1 |
+| `evidence_ref.dossier_id → dossier` | **refused** (this batch) | `evidence_ref` +1 |
+| `memory_item`'s `evidence_ids` (payload, no FK) | refused, naming the id | `memory_item` +1 |
+
+Re-measured live: **4 guarded, 0 unguarded** — §12.9 measured 3 and 1.
+
+Both halves exist because one half alone proves nothing. A test asserting only "a dangling parent is
+refused" passes on a writer that refuses everything; a test asserting only "a real parent is accepted"
+passes on a writer with no guard at all. That is the shape of the mistake Stage 8.4's receipt-time gate was
+built to avoid, where asserting one clock passed on either the old code or the same defect with the two
+swapped. Each attempt also asserts what landed: a refusal leaves the table count **and** `audit.length`
+unchanged (L-2 is audit-first, so a refused write wrote nothing to the chain either), and an acceptance adds
+exactly one row.
+
+### 13.4 What the tamper proof found before the batch shipped
+
+Nine sites, **nine caught, zero silent passes**, across four files (`evidence.py`, `dossier.py`,
+`memory.py`, `operational.py`), baseline **276** collected over the four test files that exercise them:
+
+| Tampered site | Result |
+|---|---|
+| the dangling-`dossier_id` branch deleted (F-25 back again) | **6 failed**, 270 passed |
+| the empty-string branch deleted | **2 failed**, 274 passed |
+| the refusal no longer names the value | **4 failed**, 272 passed |
+| the id stripped before the lookup | **1 failed**, 275 passed |
+| `None` refused too (the guard over-reaches) | **83 failed**, 193 passed |
+| the dangling-`contradicts` branch deleted | **2 failed**, 274 passed |
+| `open_dossier`'s instrument guard deleted | **3 failed**, 273 passed |
+| `record_memory_item`'s `evidence_ids` guard deleted | **3 failed**, 273 passed |
+| the guard moved into `save_evidence_ref` | **1 failed**, 275 passed |
+
+The middle three rows are the point of ruling 3: deleting a guard that **predates this batch** now fails a
+test that names the parent, which is what "the fourth cannot go missing again without a red gate" means in
+practice. The 83-failure row is the guard over-reaching — refusing `None` breaks nearly every evidence test
+in the repository, which is the cheapest possible proof that `None` is load-bearing rather than tolerated.
+
+**One site passed silently on the first run, and the test was weak, not the tamper.** Deleting the
+empty-string branch left 275 passing: with the branch gone, `""` fell through to the lookup and was refused
+by the *dangling* message, and the assertion as drafted — `str(empty.value) != str(dangling.value)` plus
+`"None" in str(empty.value)` — was satisfied by that folded message, because the dangling message
+interpolates the value and ends by naming `None` as the alternative. Two mistakes in one assertion: it
+compared two messages without pinning either, and it accepted a message that was true of a different
+condition. The test now pins each refusal with `match=` against text only that branch produces
+(`"an empty string is neither"` / `"does not exist"`) and asserts the empty-string message does **not**
+contain the dangling one's phrase, so a folded reason string fails. It is parametrised over `""` and
+`"   "` on the model of the contradiction test beside it, and the site now fails **2** of 68. The docstring
+records that tampering found it, because an assertion strengthened after a silent pass is the only kind
+whose weakness is documented rather than inherited.
+
+### 13.5 The nine declared foreign keys, and which of them a writer can guard
+
+Measured from the live schema with `PRAGMA foreign_key_list` over every table, because the question
+"which parents does this codebase check?" is only answerable against the whole map and not against the
+intelligence tables:
+
+| Foreign key | Guarded by a writer? |
+|---|---|
+| `dossier.instrument_id → instrument` | **yes** — `open_dossier`, since 8.3 |
+| `evidence_ref.contradicts → evidence_ref` | **yes** — `record_evidence`, since 8.5 |
+| `evidence_ref.dossier_id → dossier` | **yes** — `record_evidence`, since **this batch** |
+| `venue_instrument_mapping.instrument_id → instrument` (`ON DELETE CASCADE`) | **by construction** — `project_master` writes parents and children from one registry, so there is no id to dangle |
+| `decision.instrument_id → instrument` | **no writer calls it** |
+| `trade_intent.decision_id → decision` | **no writer calls it** |
+| `orders.intent_id → trade_intent` | projection only (`writeahead.py:178`) |
+| `fills.order_id → orders` | projection only (`writeahead.py:93`) |
+| `approval.intent_id → trade_intent` | **no writer calls it** |
+
+Plus one reference that is not a foreign key at all: `memory_item`'s `evidence_ids`, inside `payload`,
+guarded by `record_memory_item` since 8.5 — which is why the gate names four parents and not three.
+
+The five unguarded rows are the trading path, and they are unguarded for a structural reason rather than an
+oversight: `save_decision` takes a `DecisionRecord`, `save_intent` a `TradeIntent`, `save_approval` an
+`ApprovalRecord` — domain objects, with no store in the seam — and nothing in `src/` calls them, so there is
+no writer to put a guard in. `DecisionRecord.instrument_id` is `str | None` with no validation, so a
+dangling instrument is *representable* today; it is not *writable* by any code path, because no code path
+writes it. Whether that is a finding now or a note for Stage 9 is question 3 of §13.8, and this section
+measures it either way.
+
+### 13.6 The gate
+
+```
+$ .venv/bin/python -m pytest
+1408 passed, 2 skipped, 1 warning in 30.57s
+$ .venv/bin/ruff check src tests
+All checks passed!
+$ .venv/bin/ruff format --check src tests
+93 files already formatted
+$ .venv/bin/mypy src
+Success: no issues found in 62 source files
+```
+
+**1,408 passed / 2 skipped / 0 failed** — +14 over 8.5's 1,394, and both skips are the pre-existing ones
+(`test_live_endpoints.py:84`, `test_archive_bars.py:117`). Per file, each run separately:
+`test_evidence_writer.py` **68** (was 54), `test_dossier_writer.py` **87**, `test_memory_writer.py` **77**,
+`test_intelligence_routes.py` **44**, `test_schema_fidelity.py` **41**, `test_repo_hygiene.py` **88**,
+`test_migrations.py` **15** — six of the seven unchanged in count, which is the arithmetic check on "one
+file's worth of tests were added". The +14 is **+7 test functions**: two four-parent gates parametrised
+over the derived halves (4 + 4 cases), one empty-string test parametrised over `''` and `'   '` (2 cases),
+and four single tests — the refusal, the id stored as given, `record_snapshot`'s inheritance, and the
+layering pin. **42 + 7 = 49** functions and **54 + 14 = 68** tests, and this one file's diff reads **261
+insertions and 0 deletions**: the re-aimed test gained its parent, its assertion and a docstring saying why,
+without losing a line, so nothing in it was deleted and nothing outside it was touched.
+
+No adapter changed, so **no live endpoint was called** and no venue run speaks to this batch. The push
+carrying this record spends one anyway, by §10.8's mechanism, and its numbers are not quoted.
+
+### 13.7 Limitations of this batch
+
+1. **The guard is a read.** One `get_dossier` per write, so a caller attaching a hundred observations to one
+   case pays a hundred lookups for one answer. Invisible at Stage 8's volumes and recorded rather than
+   optimised, because a cache in front of it would be a second copy of the truth about what exists.
+2. **The check and the write are not atomic.** A dossier removed between the lookup and the insert would
+   still orphan the row. Nothing in `src/` deletes a dossier — the only `DELETE FROM` in the package is
+   `migrations.py:246`, against `schema_migration_skips` — so the window is theoretical today and would
+   stop being one the day a deletion path is built.
+3. **An orphan is still writable at the store layer**, and a replay of a pre-8.6 event carrying a dangling
+   `dossier_id` would project one. Nothing scans for orphans and nothing removes them. Both intelligence
+   tables are empty in production, so there is nothing to find.
+4. **The gate names four parents in a tuple, and the tuple is extended by hand.** A fifth guarded parent —
+   or a fifth *unguarded* one — does not turn the gate red by existing; §13.5's inventory is what would
+   catch it, and it is a measurement in a document, not a test. A scan deriving the table from
+   `PRAGMA foreign_key_list` was considered and not built: it would need to decide what "guarded" means for
+   a projection-only writer, and inventing that rule here would be a judgement dressed as a gate.
+5. **The refusal message describes another module's behaviour** — the route's 404. If the route changes, the
+   message goes stale, and nothing asserts the two against each other. The alternative (a message that names
+   only the rule) would tell a caller less about why the rule exists.
+6. **The gate lives in `test_evidence_writer.py`**, a file named for one writer, while it asserts behaviour
+   of three. A reader looking for cross-writer invariants would look in `test_repo_hygiene.py` and not find
+   it. Question 2 of §13.8.
+7. **The check order is not gated.** The parent before the contradiction is a decision recorded in a comment
+   and in §13.1, and no test fails if the two are swapped.
+8. **`subject` is still not validated against the instrument master** and `kind` and `scope` are still free
+   text (§12.12's limitation 5), and F-24 still stands: a belief carries one confidence number where
+   `docs/10` §3.1 asks for a band. Neither is this batch's, and neither is touched by it.
+
+### 13.8 Decision requested
+
+Four questions, each with one marked recommendation.
+
+**1. Is Stage 8.6 approved, and is F-25 closed?** *Recommend: approve, recorded as **D-055**, and close
+**F-25** on the defect §12.9 named — a dangling `evidence_ref.dossier_id` refused by nothing — and not on
+orphans in general, which limitation 3 says are still writable at the store layer.* That is the distinction
+D-053's ruling 1 drew for `O-012`: close on the defect the finding named, and leave the limitation published
+beside the closure rather than retired by it. The alternative is to hold F-25 open until the store layer
+refuses too, which would require the store to depend on a read and would put boot recovery at the mercy of
+a parent that has not been projected yet.
+
+**2. Should the four-parent gate stay in `test_evidence_writer.py`, or move?** *Recommend: keep it where it
+is.* It sits beside the refusal it was ordered beside, so removing either one shows up in the same file, and
+it is the file whose writer gained the fourth guard. Moving it to `test_repo_hygiene.py` would put a
+behavioural test that builds three stores among source scans, and moving it to a new
+`tests/test_parent_references.py` would take the file count from 31 to 32 for thirteen tests and separate
+the gate from the writer it guards. The cost of keeping it is limitation 6: the file's name understates what
+it holds, which is a naming problem and not a coverage one.
+
+**3. Are §13.5's five unguarded trading-path foreign keys a finding now, or a note for Stage 9?**
+*Recommend: record **F-26** now, as a finding about the seam and not about a defect in shipped behaviour.*
+`save_decision`, `save_intent` and `save_approval` take domain objects with no store in the signature, so
+the guard the three intelligence writers have **cannot be added there without changing the seam** — and
+`DecisionRecord.instrument_id` is `str | None` with no validation, so a dangling instrument is representable
+today. Nothing writes those tables, so nothing is orphaned today, which is why this is a finding about a
+decision Stage 9 will have to make and not a defect in code that runs. Recording it now costs one row and
+keeps Stage 9 from rediscovering it five times; the alternative — wait until Stage 9 has writers — is
+defensible and is what F-17 and F-19 did, but it leaves the seam question unasked until somebody is mid-batch
+with a reason to answer it quickly.
+
+**4. Does 8.7 still mean `expires_at`, and on which table?** *Recommend: yes, unchanged, and on
+`memory_item` only.* D-054's ruling 4 ordered it and nothing in this batch changes the reason: it is F-18's
+remaining cheap half, §5.3 lists `ADD COLUMN expires_at TEXT` as `OK` with no rebuild, and `docs/10` §3.1's
+"expiring TTLs" is the one approved sentence in F-18 that still has no column at all. `memory_item` only,
+because that is the table the sentence is about — `valid_until` says until when a claim holds **in the
+world** while an expiry says when **this system** should stop serving the row (§12.1), and the disagreement
+between the two is a property of a belief, not of an observation. `evidence_ref` gains nothing from an
+expiry: its freshness is already two columns and a `data_status`, and adding a third clock to a table whose
+two clocks F-14 spent a batch separating would be the wrong kind of company. The precedent for the column
+exists in the domain model — `DecisionRecord.expires_at` — and `docs/10` §3.2's V1–V3 gates are what would
+consume it, so the writer should store it and nothing should act on it yet.

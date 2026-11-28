@@ -1118,6 +1118,10 @@ class SqliteOperationalStore:
         and name the row that is missing. Putting it here instead would make boot recovery depend on a
         read and could fail the replay of an event the chain already holds — the reason ``save_dossier``
         gives for its own unenforced foreign key.
+
+        ``dossier_id`` is stored as given on the same terms, and for the same reason: it has carried
+        ``REFERENCES dossier`` since ``0002_memory`` and Stage 8.6 put its refusal in the writer too, so
+        this method is the layer that a replay can always get through (F-25).
         """
         evidence_id = str(payload.get("evidence_id") or "")
         if not evidence_id:
