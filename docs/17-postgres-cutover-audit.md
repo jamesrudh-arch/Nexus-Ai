@@ -523,6 +523,16 @@ survives or does not, so it is a test and not a manual step.
 
 The four CI assertions were run locally from `ci.yml`'s own text rather than paraphrased.
 
+**On the runner.** The first push of this batch went red on the Pytest step, for §5.4 item 5's reason,
+and green after it: run `46154087669` (push) and its `pull_request` twin both completed with all five
+jobs `success` — Secret scanning, Backend (lint · types · tests), Runtime smoke test, Compose config
+valid, and Container image (amd64 + arm64 build) — with `venue-verification` completing `success`
+beside them, so no live venue run was spent on a failure. The Backend job's own step list is the
+evidence §10.1 needed: `Assert the PostgreSQL parity suite ran against a real server` is `success`,
+which is the runner stating that the suite ran against a server and reported no skip. Between the red
+run and the green one, the failure was readable only because the annotation step described in §5.4
+item 5 existed — it was added in the same push that failed, and earned its place on its first run.
+
 ### 9.5 The environment CI runs in is part of the behaviour under test
 
 `ci.yml:30-35` sets three variables for every job: `NEXUS_LIVE_TRADING_ENABLED=false`,
