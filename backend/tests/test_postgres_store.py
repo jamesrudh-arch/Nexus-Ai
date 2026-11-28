@@ -143,7 +143,13 @@ def pg_uri(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     if not any(root.glob("pginstall/bin/postgres")):
         pytest.skip(f"{SKIP_REASON} (pgserver shipped no server binary)")
     data = tmp_path_factory.mktemp("pgdata") / "cluster"
-    server = pgserver.get_server(str(data), cleanup_mode=None)
+    try:
+        server = pgserver.get_server(str(data), cleanup_mode=None)
+    except Exception as exc:  # noqa: BLE001 - the reason is the point, whatever raised it
+        # Skip rather than error, and carry the cause in the reason: on a runner that cannot provide
+        # a server this is the only text that survives, and the CI step that reads it fails the build,
+        # so a skip here is loud rather than silent.
+        pytest.skip(f"{SKIP_REASON} (the server would not start: {type(exc).__name__}: {exc})")
     with psycopg.connect(server.get_uri()) as probe:
         version = int(probe.execute("SHOW server_version_num").fetchone()[0])
     assert version >= 160000, f"the portable target is written for PostgreSQL 16, found {version}"

@@ -108,7 +108,29 @@ jobs:
         run: mypy
 
       - name: Pytest
-        run: pytest -q --maxfail=1
+        run: |
+          set -o pipefail
+          pytest -q --maxfail=1 2>&1 | tee pytest.log
+
+      # O-011's lesson applied to the test job as well as the image job: GitHub serves run logs from
+      # results-receiver.actions.githubusercontent.com, which is outside the egress allowlist of the
+      # environment this repository is maintained from, so a red Pytest step is unreadable there. A
+      # gate nobody can read is worse than no gate. The tail is republished as ONE error annotation,
+      # which the ordinary REST API exposes on any host.
+      - name: Publish a pytest failure as a check annotation
+        if: ${{ failure() }}
+        run: |
+          python3 - <<'PY'
+          import pathlib
+
+          path = pathlib.Path("pytest.log")
+          lines = path.read_text(errors="replace").splitlines() if path.is_file() else []
+          tail = [line for line in lines if line.strip()][-60:] or ["no pytest output was captured"]
+          text = "\n".join(tail)
+          esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          esc = esc.replace(":", "%3A").replace(",", "%2C")
+          print(f"::error title=pytest-failure::{esc}")
+          PY
 
       # F-39: pgserver has no Linux arm64 wheel and no sdist, so the parity suite can skip on a
       # machine that cannot provide a server. On this runner it can, and a skip here means the
@@ -122,12 +144,17 @@ jobs:
           # "skipped" at all, so the assertions below matched nothing and the step could never fail. A
           # gate that cannot fail is worse than no gate.
           python -m pytest tests/test_postgres_store.py -rs | tee parity.log
-          if grep -qi "skipped" parity.log; then
-            echo "::error::the PostgreSQL parity suite skipped on a runner that can provide a server"
-            exit 1
-          fi
-          if ! grep -qE "[0-9]+ passed" parity.log; then
-            echo "::error::the PostgreSQL parity suite reported no passing tests"
+          if grep -qi "skipped" parity.log || ! grep -qE "[0-9]+ passed" parity.log; then
+            python3 - <<'PY'
+          import pathlib
+
+          lines = pathlib.Path("parity.log").read_text(errors="replace").splitlines()
+          tail = [line for line in lines if line.strip()][-40:] or ["no output"]
+          text = "the PostgreSQL parity suite did not run against a real server\n" + "\n".join(tail)
+          esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          esc = esc.replace(":", "%3A").replace(",", "%2C")
+          print(f"::error title=postgres-parity::{esc}")
+          PY
             exit 1
           fi
           echo "parity suite ran against a real server: $(grep -oE '[0-9]+ passed' parity.log)"
