@@ -3323,3 +3323,460 @@ migration, no column and no writer argument exists in the tree at `f15eb43`. It 
 half and the one approved sentence in F-18 that still has no column at all — `docs/10` §3.1's "expiring
 TTLs" — with `DecisionRecord.expires_at` as the precedent for the column's shape and `docs/10` §3.2's V1–V3
 gates as what would eventually consume it. The writer stores it and nothing acts on it.
+
+> **8.7 was delivered after this ruling, and its record is §14. The paragraph above is left as it was
+> written.** It says no migration, no column and no writer argument exists in the tree *at `f15eb43`*, and
+> that is still true of `f15eb43` — §14 is what arrived after it. Migration `0006_memory_expiry`, one nullable
+> `ADD COLUMN`, one writer argument and nothing acting on the column are all recorded there, together with the
+> tamper proof that ruling 4's second half is load-bearing and with **F-27**, which this batch found while
+> writing `0006`'s tests and which spends the finding id named in the last line above.
+
+---
+
+## 14. Stage 8.7 delivered (D-055's ruling 4): `expires_at` on `memory_item` — stored, and acted on by nothing
+
+### 14.0 What was ruled, and what this batch therefore did not do
+
+D-055's ruling 4 ordered this batch and scoped it in one sentence: **`expires_at` on `memory_item` only** —
+one nullable `ADD COLUMN`, one writer argument, and **nothing acting on it**, because the gates that would
+consume an expiry are `docs/10` §3.2's V1–V3, which finalise at Stage 11. `evidence_ref` gains nothing.
+
+Everything below is inside that scope, and the things outside it are listed rather than left to be inferred:
+
+| Not done | Why it is not done |
+|---|---|
+| No expiry **filter** anywhere — not in `memory_items()`, not in a route | A `WHERE expires_at > now()` in the store would be an expiry **policy** decided in a query: invisible to a caller, hiding rows a reader has no way to ask for, and arriving before the V1–V3 gates that are supposed to decide it. §14.4 is the scan that says so |
+| No `is_expired()`-style **reader** on `memory_item` | `execution/intent.py:109-146` has exactly that shape, and it is the precedent for a *trading* deadline where an unfilled intent must stop being fillable. A belief is not an order: deciding when this system stops trusting one is Stage 11's business, and writing the reader now would put the decision in a property nobody ruled on |
+| No expiry on `evidence_ref` or `dossier` | Ruling 4 in terms. Evidence's freshness is already two columns and a `data_status`; a third clock on the table whose two clocks F-14 spent a batch separating would be the wrong kind of company |
+| No new refusal for a **past** expiry | §14.3. An item whose expiry has passed is legitimate to have recorded; refusing it would make the writer the arbiter of which beliefs should never have existed. F-18's gap 2 asked for a column, not a purge |
+| No comparison between `expires_at` and `valid_from`/`valid_until`/`created_at` | The two axes are different questions (§14.2). A refusal built on ordering them would assert a relationship the schema deliberately does not have — F-14's lesson read in reverse: clocks kept apart in the columns have to stay apart in the rules too |
+| No route, no view, no `DOSSIER_VIEW_GAPS` text | `git diff` over `src/nexus/api/`, `intelligence/evidence.py` and `intelligence/dossier.py` is **empty**. `app.py` does not contain the string `expires_at` at all; its only mentions of `memory_item` are in gap prose that already says *"there is no memory_item route"* |
+| No rebuild, no row copied | §5.3's executed survey lists `ADD COLUMN` as `OK` on SQLite, so this is `0005`'s shape and not `0004`'s: one statement against a live table, and the rows stay where they are |
+
+**F-18's gap 2 is what closed here, and only gap 2.** Gap 4 — the sufficiency meter — was declined at D-054,
+is not offered again, and stays open with no batch behind it. **F-24** (a belief carries one confidence
+number where `docs/10` §3.1 asks for a band) is untouched: this batch adds no band and no second confidence
+column. **F-26** (the five unguarded trading-path foreign keys) is untouched and is still Stage 9's decision.
+
+### 14.1 The migration: one statement, and the five things it deliberately is not
+
+`0006_memory_expiry`, appended to `MIGRATIONS` (5 → **6**), with `requires="memory_item"`:
+
+```
+ALTER TABLE memory_item ADD COLUMN expires_at TEXT;
+```
+
+One statement, one table, one column. Measured on a database built by the runner, before and after:
+
+| | before `0006` | after `0006` |
+|---|---|---|
+| `memory_item` columns | 14 | **15** |
+| the difference | — | `expires_at` |
+| `evidence_ref` columns | 12 | **12** — unchanged, `expires_at` absent |
+| `PRAGMA index_list(memory_item)` | `ix_memory_created`, `ix_memory_kind`, `sqlite_autoindex_memory_item_1` | **the same three, asserted equal** — both sets measured, the before-half from a database built by hand up to but not including `0006` |
+| `MIGRATIONS` | 5 | **6** |
+| `PROJECTABLE` | 15 | **15** — `memory.recorded` was already projectable since 8.5 |
+| checksum `0005_memory_beliefs` | `4520e5b5e259eb4c…` | `4520e5b5e259eb4c…` — **unchanged** |
+| checksum `0006_memory_expiry` | — | `f54eecd2c3f6c2c633223a6c531d63be50bc4d1867f3815a2ce8b1821c43fedb` |
+
+`0005`'s checksum being unchanged is the measurement that matters most in that table. Editing the SQL of an
+applied migration moves its checksum and the runner refuses the result (`migrations.py:191`), so a batch that
+had "tidied up" `0005`'s comment while adding `0006` would have made every existing database unbootable.
+This one appends, and nothing before it moves.
+
+Five things the statement deliberately is not:
+
+1. **Not `NOT NULL`.** `PRAGMA table_info` reports `notnull=0`. A belief recorded before this batch has no
+   expiry, and a belief recorded after one may still have none: `NULL` is the honest value for "no expiry was
+   stated", which is not the claim "never expires". Making the column `NOT NULL` would have forced that
+   second claim onto every existing row.
+2. **Not defaulted.** `PRAGMA table_info` reports `default=None`, and a raw `INSERT` naming no expiry stores
+   `NULL`. A `DEFAULT` computed from `created_at` would turn an unstated expiry into a stated one, silently,
+   in the schema — the same collapse `validity_open_ended` avoids for the interval by deriving rather than
+   defaulting. The store agrees: `save_memory_item` binds `_text(payload.get("expires_at"))`, so an absent
+   key is `NULL` and never the write clock.
+3. **Not `CHECK`ed.** There is no constraint relating `expires_at` to anything. See §14.3 for what that
+   permits, measured.
+4. **Not indexed.** `ix_memory_created` and `ix_memory_kind` are the only two indexes this codebase builds
+   on the table and both predate this batch. (`PRAGMA index_list` reports a third,
+   `sqlite_autoindex_memory_item_1`. That is SQLite's own implicit index for `memory_id TEXT PRIMARY KEY` —
+   a non-`INTEGER` primary key gets one — so it is not a decision anybody made here and not a bet on any
+   query. It is in the measured set on both sides because it has always been there, and an assertion that
+   compares the whole set has to name it or it fails.) An index is a bet that something queries the column;
+   nothing does, and a bet made in DDL is invisible to every reader who is looking at queries.
+5. **Not on a second table.** `evidence_ref` and `dossier` are untouched, per ruling 4.
+
+**The Postgres target.** `backend/migrations/` stays at **two** files. `0002_memory.sql` declares
+`expires_at TIMESTAMPTZ` **inline** in its `memory_item`, and its header now says one thing rather than two
+things are deliberately absent from it — the confidence band, F-24 — because the expiry is no longer absent.
+It is inline and not a new `0006_memory.sql` because the fidelity gate compares the concatenated target to the
+live SQLite schema table-by-table, and a mirror file containing `ALTER TABLE memory_item` would be a third
+spelling of one column: the gate reads `CREATE TABLE IF NOT EXISTS` only, so an `ALTER` in the target would
+be invisible to it while still shipping to a PostgreSQL deploy. The two DDLs now agree on fifteen columns by
+construction, and `test_schema_fidelity.py` is what makes that agreement a measurement rather than a claim.
+
+### 14.2 Four clocks on one row, and why the fourth is not a correction of the other three
+
+One belief, recorded with all four stated:
+
+| column | value | the question it answers |
+|---|---|---|
+| `created_at` | `2026-11-28T09:39:25.580Z` | when **this system** wrote the row |
+| `valid_from` | `2026-11-27T06:00:00.000Z` | from when the claim holds **in the world** |
+| `valid_until` | `2026-12-04T06:00:00.000Z` | until when the claim holds **in the world** |
+| `expires_at` | `2027-01-03T06:00:00.000Z` | when **this system** should stop serving the row |
+
+The third and fourth are the pair that needed a reason to exist separately, and in this row they disagree on
+purpose: the claim stops holding in the world on 4 December, and the system keeps serving it until 3 January.
+That is not an inconsistency to be repaired — it is the ordinary case, where a belief's usefulness outlives
+its validity (a narrow basis that ended is still the right thing to cite when the basis returns) or, more
+often, ends before it (a stale quote nobody should be shown again even though it was true when taken).
+Collapsing the two would make one of those two cases unrepresentable, and the schema would decide which.
+
+This is why `validity_of` is **unchanged**: it still returns exactly five keys —
+`change_conditions`, `evidence_ids`, `valid_from`, `valid_until`, `validity_open_ended`. An expiry is not
+part of the validity interval, and folding it in would hand every reader of that helper a collapsed pair of
+clocks with nothing in the signature to show for it. A tamper site in §14.6 adds the field to `validity_of`
+and the suite catches it.
+
+**The receipt and the event.** `MemoryReceipt` grows one field (`expires_at: str | None`, between
+`change_conditions` and `evidence_ids`) to **17**, carried in both `to_dict()` and `from_event`.
+`record_memory_item` grows one parameter (`expires_at: datetime | None = None`, in the same position) to
+**15**. `raise ValueError` in `memory.py` stays at **17** and `__all__` stays at **12**: this batch adds a
+column, not a rule.
+
+The value rides **inside** the audited event, which is law L-2 and not a stylistic choice. Measured across a
+real gap — write the belief, `DELETE FROM memory_item`, `DELETE FROM op_projection`, wait 1.05 s so a
+restamped clock could not match by rounding, then `reproject_missing()`:
+
+```
+created_at   before=2026-11-28T09:39:25.780Z  after=2026-11-28T09:39:25.780Z  identical=True
+expires_at   before=2027-01-03T06:00:00.000Z  after=2027-01-03T06:00:00.000Z  identical=True
+whole row byte-identical: True
+```
+
+A timestamp held outside the event is restamped by the replay, which is the defect `created_at` was moved
+inside the event to avoid in an earlier batch. The fourth clock went inside on the same reasoning, and the
+assertion is that the *whole row* is identical — not merely the two clocks quoted, so a replay that quietly
+dropped `payload` or `confidence` would fail here too.
+
+### 14.3 What the writer refuses, and what it deliberately permits
+
+Seven expiries through one writer, all of them measured rather than reasoned about:
+
+| expiry given | result | stored |
+|---|---|---|
+| naive `datetime(2027, 1, 3, 6, 0, 0)` | **REFUSED** | `expires_at must be an aware UTC datetime; got a naive '2027-01-03T06:00:00'` |
+| 400 days in the past | accepted | `2025-10-23T06:00:00.000Z` |
+| one day **before** `valid_from` | accepted | `2026-11-26T06:00:00.000Z` |
+| exactly `valid_from` | accepted | `2026-11-27T06:00:00.000Z` |
+| exactly `valid_until` | accepted | `2026-12-04T06:00:00.000Z` |
+| a decade **after** `valid_until` | accepted | `2036-12-01T06:00:00.000Z` |
+| not stated (`None`) | accepted | `None` |
+
+One refusal, and it is the refusal **every** clock in this codebase gets: `_aware` rejects a naive datetime
+before anything is compared with it, so the caller is told the value was naive rather than handed a bare
+`TypeError` from an aware/naive comparison — an unclassified crash at a point where nothing names the
+condition, which is the failure mode F-4 was about. Nothing is written and nothing is audited: the refusal
+test captures `audit.length` *before* the call and asserts it unchanged, which is L-2's other half.
+
+The six acceptances are the substance of this section, because each one looks like a missing validation:
+
+- **A past expiry is a date on a row, not a reason to reject it.** Refusing an expired belief would make the
+  writer the arbiter of which beliefs should never have been recorded, and the caller would have to lie about
+  the date to store a true one. 8.5 made the same call for the interval: a belief whose validity has already
+  ended is dated, not deleted.
+- **`expires_at < valid_from` is not an error.** A belief can be due for retirement before the world even
+  starts to bear it out — a short-lived quote about a regime nobody has confirmed yet. Ordering the two would
+  assert that serving-life contains validity-life, which nothing in `docs/10` or `docs/13` says.
+- **`expires_at` a decade after `valid_until` is not an error either.** That is the common case from §14.2.
+- **`expires_at == valid_until` is not refused, unlike the interval's own equality.** `valid_until <=
+  valid_from` is refused *including* equality, because an interval of zero length says the claim never held
+  and cannot be cited. Two clocks coinciding on one axis says nothing at all about either, so the same
+  comparison in the other pair would be a rule borrowed from a place it does not apply.
+
+A test parametrised over all four orderings pins them, with the reason for each in the parameter id, so a
+future reader who decides one of them *should* be refused finds the argument already written down instead of
+having to reconstruct why the code permits it.
+
+### 14.4 Nothing acts on it: the scan that says so, and why it had to become an AST walk
+
+The ruling's second half is a negative claim — *stored, and acted on by nothing* — and a negative claim is
+worth exactly as much as the scan that would fail if it became false. There is one, in
+`test_memory_writer.py`, over every `.py` file in `src/nexus`: it parses each file, collects string literals
+that look like SQL, and fails if any executable one mentions `expires_at`. It also fails if it inspected
+fewer than twenty such literals, because a scan that sees nothing passes — the silent-pass shape 8.6 had to
+fix in its own gate.
+
+Three measurements behind it:
+
+- `memory_items()` still binds exactly **three** parameters (`kind`, `scope`, `limit`) and its base SQL is
+  `SELECT * FROM memory_item` with no `WHERE` at all. A caller gets an expired row and can see that it is
+  expired, which is the honest version: the two clocks are both readable, and the decision about which to act
+  on is the caller's.
+- With one item expired 400 days ago and one expiring in a year in the same store, `memory_items()` serves
+  **2 of 2**, and the expired one is in the list.
+- `app.py` does not contain `expires_at`; `PROJECTABLE` is unchanged at 15; and the scan is not simply blind
+  to the column name, because `execution/intent.py` genuinely contains both `expires_at` and `def is_expired`
+  — the trading path's real reader, which is what an actual policy looks like in this codebase.
+
+**Getting there took three versions, and the two that failed are the reason the assertion is written this
+way.** The first grepped lines of source for `WHERE expires_at` and failed against a *docstring continuation
+line* in `store/operational.py` — the sentence explaining why there is no such clause, which names it in
+order to refuse it. The second parsed the files but did not strip SQL comments, and failed against
+`store/schema.py` twice: migrations `0004` and `0005`, because `0005`'s comment names `expires_at` in its
+list of what it deliberately did not add. A `--` line inside a SQL literal is prose exactly as much as a
+docstring is. Prose that names a thing is not code that does it, whether the prose is Python's or SQL's, and
+only a parse plus a comment strip can tell the two apart. That is F-23's lesson about a protocol growing a
+method, applied to a column growing a reader.
+
+### 14.5 F-27 — the recorded statement count is not the applied one (NEW)
+
+Found while writing `0006`'s test, by measuring rather than reading. `Migration.statements` is:
+
+```python
+return len([part for part in self.sql.split(";") if part.strip()])
+```
+
+It does not strip `--` comment lines, and it does not know that a trigger body is one statement with
+semicolons inside it. So a semicolon in a migration's own prose is counted as a statement. Measured over all
+six migrations:
+
+| migration | recorded | applied | prose `;` | |
+|---|---|---|---|---|
+| `0001_operational` | 19 | 19 | 0 | |
+| `0002_memory` | 8 | 8 | 0 | |
+| `0003_audit_append_only` | **4** | **2** | 0 | two triggers, each one statement with `;` in its body |
+| `0004_memory_fidelity` | **15** | **13** | 2 | a semicolon in each of two comment blocks |
+| `0005_memory_beliefs` | 4 | 4 | 0 | |
+| `0006_memory_expiry` | 1 | 1 | 0 | |
+
+Nothing misbehaves: the number is bookkeeping, stored in `schema_migrations.statements` and served by the
+API. But `migrations.py:11` describes the recorded row as holding "its version, its checksum and its
+statement count, so *when did the schema change* is answerable from" the database — and a reader who takes
+`statements` as "how many statements ran" is wrong by two on `0003` and by two on `0004`. The comment on
+`0004`'s assertion in `test_the_runner_records_what_it_applied` reads *"0004 rebuilds two tables and creates
+one"*, which is the inflated reading written down as though it were the count of statements.
+
+**Why this is recorded rather than fixed inside 8.7**, and the reason is measured:
+
+- Fixing the property does **not** move any checksum. `checksum` is `sha256(self.sql)` — the statement count
+  is not an input — so the forward-only refusal at `migrations.py:191` would not fire, and no existing
+  database would become unbootable.
+- But the recorded number is a **row written at apply time and never rewritten**. A fix therefore produces two
+  populations that nothing can tell apart: a database booted before the fix says `0004 → 15`, one booted
+  after says `0004 → 13`, for the identical version and checksum. Correcting history is exactly what a
+  forward-only migration system refuses to do, and the two readings would coexist in production with no way to
+  know which a given row carries.
+- So the honest options are a data migration against `schema_migrations` (which the forward-only rule was
+  built to avoid), or accepting the split and documenting it, or leaving the number alone and stopping calling
+  it a count of what was applied. That is a decision, not a one-line patch, and D-055 scoped this batch to
+  `expires_at`.
+
+**What 8.7 did instead, in two parts.** `0006`'s comment carries **no** semicolons — deliberately, and that is
+a constraint on the comment's punctuation rather than on its content, which is itself an argument for
+recording F-27 rather than working around it silently forever. And `test_schema_fidelity.py` gains one
+helper, `applied_statements()`, which strips comment lines before splitting and carries this whole finding in
+its docstring, so the two tests that need an honest count (0005's re-aimed assertion and 0006's) get one and
+the inflated values stay pinned where they were pinned, with the discrepancy stated next to them instead of
+hidden.
+
+**F-27 is not an `O-` row.** D-054 established that scheduling a batch is not opening an obligation row, and
+D-055 re-applied that to F-26: recording a finding is not either. `docs/00` still ends at `O-014`. The next
+finding id is **F-28**.
+
+### 14.6 Proof the gate is load-bearing: thirteen tampered sites, thirteen caught
+
+Each site backs up one source file, applies one string replacement, asserts the file actually **changed** — a
+stale anchor leaves the tree untouched and reports a silent pass that means nothing — re-runs the four test
+files that exercise the column, and restores from the backup. The tree's restoration is checked by SHA-256
+over all three touched files, not by comparing a file with itself, and the suite is re-run at the end and
+required to be back at its baseline.
+
+Baseline across the four files: **0 failed / 197 passed**.
+
+| # | Tamper | Caught by |
+|---|---|---|
+| 1 | the `ALTER TABLE` removed, so the column never arrives | **53** failed |
+| 2 | `evidence_ref` gains an expiry too, against ruling 4's scope | **5** failed |
+| 3 | `NOT NULL DEFAULT ''` invented for an unstated expiry | **6** failed |
+| 4 | an index built for a column nothing queries | **4** failed |
+| 5 | `0006`'s `requires="memory_item"` dropped | **1** failed — see below |
+| 6 | the aware-datetime refusal removed from the writer | **1** failed |
+| 7 | the expiry no longer rides in the audited event | **46** failed |
+| 8 | the expiry folded into `validity_of`, collapsing the two axes | **2** failed |
+| 9 | an over-reach added: `expires_at <= valid_until` refused | **4** failed |
+| 10 | the receipt stops carrying the expiry | **46** failed |
+| 11 | the projection writes `NULL` instead of the value it was given | **6** failed |
+| 12 | an unstated expiry defaulted to the write clock in the store | **1** failed |
+| 13 | the forbidden expiry filter added to `memory_items()` | **3** failed |
+
+**Thirteen sites, thirteen caught, zero silent passes — but only on the second run.** The first run found one
+silent pass, at site 5: dropping `requires="memory_item"` from `0006` left all 1,427 tests green.
+
+The reason is structural, and it is the same shape as the silent pass 8.6 found. `requires` only changes
+behaviour on a database where the required table is **absent**, and no test put the runner on one: every test
+boots a store, and `0002` creates `memory_item` before `0006` could ever need it. The dependency was declared
+and nothing in the repository could observe it.
+
+`test_migrations.py` gains the missing branch — `test_a_memory_migration_defers_when_memory_item_is_absent`
+(15 → **16** tests in that file). It boots a durable store, drops `memory_item`, deletes `0006`'s row from
+`schema_migrations` so the version is pending again while 0001–0005 stay applied and the sequence keeps no
+hole, and reopens. The runner must **skip and report** — F-20's rule, that a deferral and a bypass look
+identical in `schema_migrations` unless the skip is remembered. The same test then builds the mirror: an
+undeclared `Migration` whose SQL is `ALTER TABLE memory_item ADD COLUMN probe TEXT` against a database with no
+such table, which must raise `MigrationError`. Deferred on one side and fatal on the other is what makes the
+declared dependency observable at all, and site 5 now fails exactly **1** test, by name.
+
+Sites 7 and 10 both fail 46, and that is not a coincidence: the event and the receipt are the two ends of one
+chain, so cutting either breaks every replay test and every assertion that reads the column back. Sites 9 and
+12 fail small, which is the useful signal — an over-reaching refusal and an invented default each break only
+the tests written specifically about permissions, so the four ordering tests and the `NULL` test are what make
+those two tampering attempts visible.
+
+### 14.7 The gate
+
+```
+$ .venv/bin/python -m pytest
+1428 passed, 2 skipped, 1 warning in 32.47s
+$ .venv/bin/ruff check src tests
+All checks passed!
+$ .venv/bin/ruff format --check src tests
+93 files already formatted
+$ .venv/bin/mypy src
+Success: no issues found in 62 source files
+```
+
+**1,428 passed / 2 skipped / 0 failed**, up **20** from 8.6's 1,408. The two skips are named, because a skip
+is not a pass: `test_live_endpoints.py:86` (live venue verification needs network egress; nothing is verified
+by skipping it) and `test_archive_bars.py:117` (`7m` is not a modelled interval). Both are inherited.
+
+Where the twenty went:
+
+| file | before | after | |
+|---|---|---|---|
+| `test_memory_writer.py` | 77 | **88** | +11: the expiry class, the two re-aimed assertions, `validity_of` |
+| `test_schema_fidelity.py` | 41 | **49** | +8: `TestMigration0006` |
+| `test_migrations.py` | 15 | **16** | +1: the deferral branch §14.6 needed |
+| `test_evidence_writer.py` | 68 | 68 | unchanged |
+| `test_dossier_writer.py` | 87 | 87 | unchanged |
+| `test_intelligence_routes.py` | 44 | 44 | unchanged |
+| `test_repo_hygiene.py` | 88 | 88 | unchanged |
+
+`tests` stays at **31** files — D-055's ruling 2 kept 8.6's gate where it was rather than paying for a 32nd,
+and this batch adds no file either. `src` stays at **62** files / **16,347** lines (+90); `tests` is **31**
+files / **19,857** lines (+475).
+
+The diff is seven files, **+623 / −39**:
+
+```
+backend/migrations/0002_memory.sql       |  33 ++++-
+backend/src/nexus/intelligence/memory.py |  43 ++++--
+backend/src/nexus/store/operational.py   |  28 ++--
+backend/src/nexus/store/schema.py        |  55 +++++++
+backend/tests/test_memory_writer.py      | 238 ++++++++++++++++++++++++++--
+backend/tests/test_migrations.py         |  52 +++++++
+backend/tests/test_schema_fidelity.py    | 213 +++++++++++++++++++++++++-
+```
+
+Four source-side files, of which `operational.py`'s 28 lines are the `INSERT` (14 → **15** columns, 15 →
+**15** placeholders, arity asserted by walking the AST for the literal rather than by grepping a guess at its
+formatting) plus two docstrings. No route, no adapter, no archive, no venue code.
+
+### 14.8 Limitations of this batch
+
+1. **The column is inert by design.** Nothing in `src/` reads `expires_at` on `memory_item`, so a row that
+   should have stopped being served is still served. That is ruling 4, not an oversight — but it means the
+   expiry delivers no behaviour until Stage 11's V1–V3 gates consume it, and a reader who sees "8.7 delivered
+   expiring TTLs" would be wrong: 8.7 delivered the *column* `docs/10` §3.1's "expiring TTLs" needs, and the
+   TTL itself is still unwritten.
+2. **`memory_items()` cannot ask for "currently valid".** Its three parameters are `kind`, `scope` and
+   `limit`. A caller that wants only live beliefs must filter in Python, reading both clocks itself. §14.4
+   argues why that is the honest version; it is still a limitation for whoever builds the view.
+3. **Both writers remain unwired.** No route serves a `memory_item`, so an expiry is recordable and not
+   readable over HTTP. `app.py`'s own gap prose has said so since 8.5 and still says it.
+4. **F-18 is not closed, and its status word is not `OPEN`.** Gap 2 is what this batch delivers, and whether
+   it counts as *closed* is §14.9's Q1 — a finding's status is the owner's to set, not the batch's to
+   assume. Gap 4 (the sufficiency meter) is open with no batch. D-054 recorded F-18 as `NARROWED` rather
+   than `OPEN` for exactly this reason, and nothing here changes that word: three of four gaps delivered is
+   still not four.
+5. **F-24 and F-26 are untouched**, and neither has a batch. F-27 joins them.
+6. **F-27's inflated numbers stay in the tree.** `schema_migrations` records `0003 → 4` and `0004 → 15`, and
+   `test_the_runner_records_what_it_applied` pins both, with the discrepancy stated in a helper's docstring
+   rather than corrected. A reader of the API gets a number that is not a count of what ran.
+7. **No `0006` mirror file, so the Postgres target and the SQLite migrations express the column differently**
+   — inline in one DDL versus `ALTER` in the other. The fidelity gate compares the resulting schemas and so
+   catches a divergence in the column itself, but it cannot catch a divergence in *when* the column arrives,
+   because a PostgreSQL deploy following `0002_memory.sql` gets it at creation and a SQLite deploy gets it at
+   `0006`.
+8. **§13.7's eight limitations all still stand**, including limitation 3 — an orphan is still writable at the
+   store layer and still unscanned, published beside F-25's closure by D-055's ruling 1.
+
+### 14.9 Decision requested
+
+Four questions. Each has exactly one marked recommendation, and §14.8's limitations are published beside them
+rather than being offered as arguments for any of them.
+
+**Q1. Is Stage 8.7 approved, and is F-18's gap 2 closed?**
+
+- **(a) `Recommend` — approve 8.7 as delivered, and close F-18's gap 2 on the column and not on the TTL.**
+  The gap as recorded was that no expiry column exists anywhere; one now exists on `memory_item`, stored
+  faithfully, riding in the audited event, reproducing byte-identically across a replay, and read by nothing.
+  Closing on the column keeps limitation 1 published beside the closure — the same distinction D-053's ruling
+  1 drew for `O-012` and D-055's ruling 1 re-drew for F-25, applied a third time: close on the defect the
+  finding named, and leave the limitation visible next to it. **F-18 itself stays `NARROWED`** — the status
+  D-054 gave it — because gap 4 is untouched and a finding whose gaps close one at a time is not closed.
+- (b) Approve 8.7 but leave gap 2 open until something reads the column. Stricter, and defensible — but it
+  would make gap 2 uncloseable by any batch that obeys ruling 4, since ruling 4 forbids the reader.
+- (c) Request changes.
+
+**Q2. F-27 — the recorded statement count is not the applied one. Recorded, or given a batch?**
+
+- **(a) `Recommend` — record F-27 as `OPEN` with no batch, and leave the inflated numbers pinned where they
+  are.** §14.5's measurement is why: fixing the property moves no checksum, but the recorded value is a row
+  written at apply time and never rewritten, so a fix splits production into two populations that report
+  different counts for the same version and checksum, with nothing able to tell which a row carries. The
+  options are a data migration against `schema_migrations`, an accepted split, or leaving the number and
+  stopping calling it a count of what was applied. None of the three belongs in a batch scoped to
+  `expires_at`. `applied_statements()` already carries the finding in its docstring so the next person to
+  touch a migration reads it first.
+- (b) Give it a batch now: one small migration-less change to the property, accepting the split, and re-aim
+  `test_the_runner_records_what_it_applied` to the honest counts.
+- (c) Give it a batch that also repairs the recorded rows, i.e. a data migration against `schema_migrations`.
+- (d) Decline to record it: the number is bookkeeping and nobody acts on it.
+
+**Q3. Which stage opens next, given the directive to run several at once?**
+
+Nothing in `docs/` enumerates stages beyond the chain the record does establish — `docs/12` §1.3 names
+knowledge sufficiency as **stage 10** and the three verification gates as **stage 11**, and
+`design/build_board52.py:73-87` defines 9 as the candidate thesis / intelligence dossier, 10 as knowledge
+sufficiency, 11 as the three gates. This register will not invent the rest.
+
+- **(a) `Recommend` — open Stage 9 and settle F-26 inside it, as its first deliverable.** F-26 was recorded
+  precisely as "the decision Stage 9 will have to make", and Stage 9's candidate-thesis work is the first code
+  that would write `decision` or `trade_intent` rows — so the seam question (do those writers gain a store, or
+  does the trading path document that its parents are checked upstream?) has to be answered before that writer
+  exists rather than after. Answering it first also means Stage 9's own writers get the four-parent treatment
+  from the start instead of inheriting five unguarded keys.
+- (b) Open Stage 9 but defer F-26 again, accepting that Stage 9 writes against five unguarded foreign keys.
+- (c) Open Stage 10's sufficiency work first — F-18's gap 4 and F-24's band are both there, and neither needs
+  the trading path's seam decided.
+- (d) Name a different stage.
+
+**Q4. Does the cadence change, given "begin with multiple stages at once … we are way behind on production"?**
+
+Every batch so far has waited for a ruling before the next began. That is what makes each row in `docs/07`
+approvable, and it is also the throughput limit.
+
+- **(a) `Recommend` — batch the rulings, not the work: run 8.8 and Stage 9's first deliverable in parallel,
+  and put one combined board covering both.** The gate, the tamper proof and the register rows stay per-batch,
+  so nothing becomes unattributable; what changes is that the owner rules on two batches at once instead of
+  sequentially. Two boards become one, and the work does not stop between them.
+- (b) Keep one batch per ruling, and accept the throughput.
+- (c) Go further: authorise a run of batches against a standing scope (for example, all of Stage 9) with a
+  single ruling at the end, and an explicit list of what would still stop and ask.
+- (d) Something else.
+
+Whatever is ruled, three things do not change without a ruling of their own: no expiry **policy** before
+Stage 11's V1–V3 gates; no confidence **band** (F-24) without its own scope; and no wiring of either
+intelligence writer to a route, declined three times and not offered here.

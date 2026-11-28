@@ -154,6 +154,58 @@ class TestMigrationRefusals:
         assert report2.applied == ()
         assert [item.version for item in report2.skipped] == ["0003_audit_append_only"]
 
+    def test_a_memory_migration_defers_when_memory_item_is_absent(self, tmp_path: Path) -> None:
+        """``requires="memory_item"`` is what makes 0006 a deferral rather than a fatal boot.
+
+        The three memory migrations (0002's tables, 0005's beliefs, 0006's expiry) each declare
+        ``requires="memory_item"``, and nothing in the normal path exercises it, because 0002 creates the
+        table before any of them run. So the branch is built here: a database whose ``memory_item`` has
+        been dropped, with 0006 still pending, must **skip and report** — F-20's rule that a deferral and
+        a bypass look identical in ``schema_migrations`` unless the skip is remembered.
+
+        Without ``requires`` this boot raises ``MigrationError`` instead: ``ALTER TABLE`` against a table
+        that is not there. Both halves are asserted below, and the pair is what makes the declared
+        dependency observable at all. A tamper run for Stage 8.7 found it was not: dropping ``requires``
+        from 0006 left all 1,427 tests green, because no test put the runner on a database where the
+        difference would show.
+        """
+        path = tmp_path / "nexus.db"
+        audit = AuditLog(SqliteAuditStore(path))
+        first = SqliteOperationalStore(path, audit=audit)
+        report = first.migrations
+        assert report is not None
+        assert [item.version for item in report.applied] == [m.version for m in MIGRATIONS]
+        first.close()
+
+        conn = sqlite3.connect(path, isolation_level=None)
+        conn.execute("DROP TABLE memory_item")
+        # Leave 0006 pending again, so this boot has to make a decision about it. 0001-0005 stay applied,
+        # which also keeps the sequence free of a hole.
+        conn.execute("DELETE FROM schema_migrations WHERE version = '0006_memory_expiry'")
+        conn.close()
+
+        reopened = SqliteOperationalStore(path, audit=audit)
+        report2 = reopened.migrations
+        assert report2 is not None
+        assert [item.version for item in report2.applied] == []
+        skipped = {item.version: item.reason for item in report2.skipped}
+        assert "0006_memory_expiry" in skipped, skipped
+        assert "memory_item" in skipped["0006_memory_expiry"], skipped
+        reopened.close()
+
+        # The mirror: the same ALTER with the dependency undeclared is fatal, not deferred.
+        undeclared = Migration(
+            version="9998_needs_memory",
+            description="probe: alters memory_item without declaring the requirement",
+            sql="ALTER TABLE memory_item ADD COLUMN probe TEXT;",
+        )
+        probe = sqlite3.connect(tmp_path / "bare.db")
+        try:
+            with pytest.raises(MigrationError, match="no such table"):
+                MigrationRunner(probe, migrations=(undeclared,)).run()
+        finally:
+            probe.close()
+
     def test_a_skipped_migration_applies_once_its_table_exists(self, tmp_path: Path) -> None:
         """Skipping is deferral, not abandonment: the durable boot still gets its triggers."""
         path = tmp_path / "nexus.db"

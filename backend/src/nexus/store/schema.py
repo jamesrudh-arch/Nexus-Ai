@@ -485,6 +485,51 @@ ALTER TABLE memory_item ADD COLUMN change_conditions TEXT NOT NULL DEFAULT '';
 ALTER TABLE evidence_ref ADD COLUMN contradicts TEXT REFERENCES evidence_ref (evidence_id);
 """
 
+_MEMORY_EXPIRY = """
+-- 0006: the one column F-18's second gap asked for, which 0005 deliberately left out and named as still
+-- open in its own comment, added to the one table `docs/10` §3.1's "expiring TTLs" is about.
+--
+-- F-18 (Stage 8.1, `docs/15` §4) found four things the approved design requires that neither schema could
+-- hold. Migration 0005 closed the first and the third, and wrote down why it was not closing the second:
+-- *"no expiry column exists anywhere"*, which `docs/10` §3.1 turns into a control the Intelligence Centre
+-- has to render — "memory & knowledge (type tabs, expiring TTLs, corrections as first-class entries)".
+-- D-054's ruling 4 ordered this column as batch 8.7, and D-055's ruling 4 re-confirmed it and scoped it
+-- to `memory_item` alone.
+--
+-- `valid_until` is not this column and never was a substitute for it, which is why 0005 could add three
+-- time columns and still leave the gap open. `valid_until` says until when a claim holds *in the world*,
+-- while `expires_at` says when *this system* should stop serving the row. A belief can hold until 2027 and be
+-- expired for our purposes tomorrow, and the disagreement between the two is information rather than a
+-- conflict. Collapsing them would repeat F-14's mistake — two clocks that mean different things bound to
+-- one column — on a different pair, and F-14 cost a batch to separate the pair it was about.
+--
+-- `evidence_ref` deliberately does not gain one, and the reason is the same distinction. Its freshness is
+-- already two columns (`observed_at`, `retrieved_at`) and a `data_status`, and Stage 8.4 spent a batch
+-- separating those two clocks. Evidence is about when the world said something, while an expiry is a
+-- policy about serving it, and a third clock on that table would be the wrong kind of company.
+--
+-- One `ADD COLUMN`: nullable, no default, no CHECK and no index, each with its reason rather than in
+-- silence.
+--   * Nullable because not every memory item is a belief with a TTL — an OBSERVATION has no expiry and
+--     needs none. `NULL` means "no expiry was stated", which is not the same claim as "never expires" and
+--     is not resolved into one here, and `validity_of` already keeps that distinction for the interval by
+--     deriving `validity_open_ended` instead of defaulting `valid_until` to `created_at`.
+--   * No CHECK because the writer validates it (`intelligence/memory.py`), on 0005's reasoning: a column
+--     cannot refuse a row that fills it badly, and the rule here is about one value against a clock rather
+--     than about a format a CHECK could express.
+--   * No index because nothing queries by expiry yet. An index with no reader behind it is machinery nobody
+--     reads — the reasoning D-052's ruling 4 used to decline a periodic checksum audit and 0005 used to
+--     decline an index on `valid_until`. `memory_items()` therefore still scans, and still says so in its
+--     own docstring rather than leaving it to be discovered by whoever hits it.
+--
+-- Nothing acts on this column, and that is the ruling rather than an omission. No reader filters by it, no
+-- route serves it, and no policy decides what an expired item means: D-055's ruling 4 is that the writer
+-- stores it and nothing acts on it, because `docs/10` §3.2's V1-V3 verification gates finalise at Stage 11
+-- and are what would consume it. A column with no reader is honest about being a column. A filter invented
+-- here would be an expiry policy nobody has ruled on, wearing a WHERE clause.
+ALTER TABLE memory_item ADD COLUMN expires_at TEXT;
+"""
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(
         version="0001_operational",
@@ -520,6 +565,16 @@ MIGRATIONS: tuple[Migration, ...] = (
         sql=_MEMORY_BELIEFS,
         # Both tables this migration alters arrive from 0002 in one executescript, so requiring one of
         # them requires the other. `memory_item` is named because it is the table this batch is about.
+        requires="memory_item",
+    ),
+    Migration(
+        version="0006_memory_expiry",
+        description="give memory_item the expires_at column F-18's second gap asked for and 0005 "
+        "deliberately left out: an expiry is when this system stops serving a row, which valid_until — "
+        "until when the claim holds in the world — is not",
+        sql=_MEMORY_EXPIRY,
+        # `memory_item` arrives from 0002, so naming it is what makes this migration deferrable and
+        # *reported* rather than fatal on a backend where the intelligence tables are absent (F-20).
         requires="memory_item",
     ),
 )

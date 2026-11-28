@@ -89,14 +89,21 @@ DDLs), so a projection that filled it at write time would restamp a replayed eve
 What this module does **not** do, named rather than left to be discovered. It builds **no band**: ``docs/10``
 §3.1 asks for confidence "as a band" and D-035 approved "beliefs as bands", but a band is an interval on
 the confidence axis and the three columns this batch adds are on the time axis, so a belief still carries
-exactly one number — **F-24**, recorded in §12 and in ledger row ``O-015``, and not fixed here because two
-more columns are not this batch's ruling. It sets **no expiry**: F-18's second gap (*"no expiry column
-anywhere"*, which ``docs/10`` §3.1's "expiring TTLs" asks for) stays open, because ``expires_at`` is not
-one of the three columns D-051 deferred and ``valid_until`` is not a substitute for it. It defines **no
-sufficiency** and **no verification stage**: ``docs/10`` §3.2 fixes V1–V3 at Stage 11, and ``docs/12``
-§1.3's law (A-02+A-08) is that no gate can be satisfied by a confidence value — so nothing here reads
+exactly one number — **F-24**, recorded in ``docs/15`` §12, and not fixed here because two more columns
+are not this batch's ruling. It defines **no sufficiency** and **no verification stage**: ``docs/10``
+§3.2 fixes V1–V3 at Stage 11, and ``docs/12`` §1.3's law (A-02+A-08) is that no gate can be satisfied by
+a confidence value — so nothing here reads
 ``confidence`` as an input to any decision, and no caller exists, which the test that scans ``src/nexus``
 for one keeps saying.
+
+Since **Stage 8.7** it does set an **expiry**. ``expires_at`` — F-18's second gap (*"no expiry column
+anywhere"`*, which ``docs/10`` §3.1's "expiring TTLs" asks for) — arrived in migration
+``0006_memory_expiry`` and was closed by D-055's ruling 4. It is a **fourth clock and not a correction to
+the other three**: ``created_at`` is when this system wrote the row, ``valid_from`` and ``valid_until``
+bound the claim in the world, and ``expires_at`` is when this system should stop serving the row. A belief
+can hold until 2027 and be expired for our purposes tomorrow, and that disagreement is information rather
+than a conflict. **Storing it is all this module does with it** — no filter, no policy, no reader — because
+``docs/10`` §3.2's V1–V3 gates finalise at Stage 11 and are what would consume it.
 """
 
 from __future__ import annotations
@@ -281,6 +288,10 @@ class MemoryReceipt:
     #: ``True`` when no end was stated, which is not the same as no end. Derived, not supplied.
     validity_open_ended: bool
     change_conditions: str
+    #: When this system should stop serving the row — a fourth clock, not a correction to the other three.
+    #: ``None`` means no expiry was stated, which is not "never expires". Stage 8.7; nothing reads it yet,
+    #: by D-055's ruling 4.
+    expires_at: str | None
     #: The ``evidence_ref`` rows this item rests on, each checked to exist. Empty unless a confidence was
     #: given, in which case the writer refuses it empty.
     evidence_ids: tuple[str, ...]
@@ -305,6 +316,7 @@ class MemoryReceipt:
             "valid_until": self.valid_until,
             VALIDITY_OPEN_ENDED_KEY: self.validity_open_ended,
             "change_conditions": self.change_conditions,
+            "expires_at": self.expires_at,
             EVIDENCE_IDS_KEY: list(self.evidence_ids),
             "created_at": self.created_at,
             "superseded_by": self.superseded_by,
@@ -325,6 +337,7 @@ def record_memory_item(
     valid_from: datetime | None = None,
     valid_until: datetime | None = None,
     change_conditions: str = "",
+    expires_at: datetime | None = None,
     evidence_ids: Sequence[str] = (),
     payload: Mapping[str, Any] | None = None,
     memory_id: str | None = None,
@@ -334,8 +347,19 @@ def record_memory_item(
 
     ``audit`` and ``store`` are typed loosely to match :func:`~nexus.store.writeahead.write_with_audit`,
     which takes the same seam. Every default is the side that claims least: ``kind='OBSERVATION'``,
-    ``scope='GLOBAL'``, no confidence, no interval, no provenance — because this package's rule is that an
-    intelligence record which can be created without a basis is a record that will be.
+    ``scope='GLOBAL'``, no confidence, no interval, no expiry, no provenance — because this package's rule
+    is that an intelligence record which can be created without a basis is a record that will be.
+
+    ``expires_at`` is the fourth clock, and the one this writer refuses almost nothing about. It takes an
+    aware datetime or ``None``, and ``None`` means *no expiry was stated* — not the same claim as *never
+    expires*, and not collapsed into one here any more than ``validity_open_ended`` collapses "no end was
+    stated" into "no end exists". An expiry **in the past is accepted**: like an interval that has already
+    ended, it dates a row rather than deleting it, and refusing it would make this writer the thing that
+    decides an expired belief should never have been recorded. What it does *not* do is compare
+    ``expires_at`` against ``valid_from``, ``valid_until`` or ``created_at``, because those are different
+    clocks on different axes — the world's and this system's — and a refusal built on ordering them would
+    assert a relationship the schema deliberately does not have. That is F-14's lesson applied in reverse:
+    two clocks kept apart in the columns have to stay apart in the rules too.
 
     Raises ``ValueError`` for a call that should not have been written that way, following
     :mod:`nexus.intelligence.evidence` and :func:`nexus.core.time.iso_utc`. No ``RejectReason`` is spent:
@@ -353,6 +377,7 @@ def record_memory_item(
     resolved_confidence = confidence_text(confidence) if confidence is not None else None
     resolved_from = _aware(valid_from, "valid_from") if valid_from is not None else None
     resolved_until = _aware(valid_until, "valid_until") if valid_until is not None else None
+    resolved_expiry = _aware(expires_at, "expires_at") if expires_at is not None else None
     if resolved_from is not None and resolved_until is not None and resolved_until <= resolved_from:
         raise ValueError(
             f"valid_until ({iso_utc(resolved_until)}) must follow valid_from ({iso_utc(resolved_from)}): "
@@ -444,6 +469,7 @@ def record_memory_item(
         "valid_from": iso_utc(resolved_from) if resolved_from is not None else None,
         "valid_until": iso_utc(resolved_until) if resolved_until is not None else None,
         "change_conditions": change_conditions.strip(),
+        "expires_at": iso_utc(resolved_expiry) if resolved_expiry is not None else None,
         "payload": stored,
     }
 
@@ -463,6 +489,7 @@ def record_memory_item(
         valid_until=event["valid_until"],
         validity_open_ended=open_ended,
         change_conditions=str(event["change_conditions"]),
+        expires_at=event["expires_at"],
         evidence_ids=ids,
         created_at=now,
         superseded_by=None,

@@ -23,6 +23,7 @@ from a bug.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import sqlite3
 import time
@@ -62,6 +63,7 @@ SUBJECT = "INS-BTC-USDT-USDT"
 VALID_FROM = datetime(2026, 11, 27, 6, 0, 0, tzinfo=UTC)
 VALID_UNTIL = datetime(2026, 12, 4, 6, 0, 0, tzinfo=UTC)
 OBSERVED = datetime(2026, 11, 27, 6, 43, 35, tzinfo=UTC)
+EXPIRES_AT = VALID_UNTIL + timedelta(days=30)
 RETRIEVED = OBSERVED + timedelta(milliseconds=400)
 
 
@@ -733,6 +735,196 @@ class TestRecordingIsNotEditing:
         store.close()
 
 
+class TestAnExpiryIsAFourthClockAndNotACorrection:
+    """Stage 8.7: ``expires_at``, stored — and acted on by nothing.
+
+    D-055's ruling 4 ordered one nullable column on ``memory_item`` only, on the distinction the migration
+    carries: ``valid_until`` says until when a claim holds *in the world*, while an expiry says when *this
+    system* should stop serving the row. So the assertions here are of two kinds. That the column is stored
+    faithfully, rides in the audited event, and survives a replay byte-identically. And that the writer
+    refuses **less** than it looks like it should: an expiry in the past is accepted, and an expiry is never
+    compared with a clock on the other axis, because a refusal built on ordering two clocks the schema keeps
+    apart would assert a relationship that does not exist. Each of those permissions is pinned, since a gate
+    nobody has tested for permissiveness is a gate nobody can tell from a bug.
+    """
+
+    def test_an_expiry_is_stored_as_the_exact_text_the_writer_derived(self, tmp_path: Path) -> None:
+        audit, store = _durable(tmp_path)
+        receipt = _record(audit, store, expires_at=EXPIRES_AT)
+        row = store.get_memory_item(receipt.memory_id)
+        assert row is not None
+        assert row["expires_at"] == "2027-01-03T06:00:00.000Z"
+        assert receipt.expires_at == row["expires_at"]
+        assert receipt.to_dict()["expires_at"] == row["expires_at"]
+        store.close()
+
+    def test_an_unstated_expiry_is_null_and_is_not_defaulted_from_another_clock(self, tmp_path: Path) -> None:
+        """``NULL`` means "no expiry was stated", which is not the claim "never expires".
+
+        The same distinction ``validity_open_ended`` keeps for the interval, and the reason there is no
+        ``DEFAULT`` in the migration: a default computed from ``created_at`` would make an unstated expiry
+        into a stated one, silently, in the schema.
+        """
+        audit, store = _durable(tmp_path)
+        receipt = _record(audit, store)
+        row = store.get_memory_item(receipt.memory_id)
+        assert row is not None
+        assert row["expires_at"] is None
+        assert receipt.expires_at is None
+        assert receipt.created_at != "", "the row has a record time; it is simply not the expiry"
+        columns = {r[1]: r for r in _connect(tmp_path).execute("PRAGMA table_info(memory_item)")}
+        assert columns["expires_at"][4] is None, "no default, so an unstated expiry stays NULL"
+        store.close()
+
+    def test_a_naive_expiry_is_refused_before_anything_is_compared_with_it(self, tmp_path: Path) -> None:
+        """The one refusal this column earns, and it is the refusal every clock here gets.
+
+        ``_aware`` runs before any comparison, so a naive datetime is refused as naive rather than raising
+        a bare ``TypeError`` from being compared with an aware one — an unclassified crash at a point where
+        nothing names the condition, which is the failure mode F-4 was about. Nothing is written and, per
+        L-2, nothing is audited: the audit length is captured *before* the refused call, because the
+        evidence rows the call would cite are themselves audited and a fresh ``_evidence`` here would write
+        two more of them and move the number being asserted against.
+        """
+        audit, store = _durable(tmp_path)
+        ids = _evidence(audit, store)
+        before = audit.length
+        naive = datetime(2027, 1, 3, 6, 0, 0)
+        with pytest.raises(ValueError, match="expires_at must be an aware UTC datetime") as caught:
+            _record(audit, store, evidence_ids=ids, expires_at=naive)
+        assert "naive" in str(caught.value)
+        assert naive.isoformat() in str(caught.value), "the refusal names the value it was given"
+        assert store.counts()["memory_item"] == 0, "no row was written"
+        assert audit.length == before, "and no audit entry was written for a row that does not exist"
+        store.close()
+
+    def test_an_expiry_already_in_the_past_is_dated_rather_than_refused(self, tmp_path: Path) -> None:
+        """An item whose expiry has passed is legitimate: refusing it would make the writer the thing that
+        decides an expired belief should never have been recorded. Same treatment the interval got in 8.5 —
+        a belief whose validity has already ended is dated, not deleted."""
+        audit, store = _durable(tmp_path)
+        past = VALID_FROM - timedelta(days=400)
+        receipt = _record(audit, store, expires_at=past)
+        row = store.get_memory_item(receipt.memory_id)
+        assert row is not None
+        assert row["expires_at"] == "2025-10-23T06:00:00.000Z"
+        store.close()
+
+    @pytest.mark.parametrize(
+        ("expiry", "why"),
+        [
+            (VALID_FROM - timedelta(days=1), "before the claim starts holding in the world"),
+            (VALID_FROM, "exactly when the claim starts holding"),
+            (VALID_UNTIL, "exactly when the claim stops holding"),
+            (VALID_UNTIL + timedelta(days=3650), "a decade after the claim ends"),
+        ],
+    )
+    def test_an_expiry_is_never_compared_with_a_clock_on_the_other_axis(
+        self, tmp_path: Path, expiry: datetime, why: str
+    ) -> None:
+        """Four orderings that look like errors and are not, because the two clocks are on different axes.
+
+        ``valid_from``/``valid_until`` bound the claim in the world; ``expires_at`` bounds this system's
+        serving of the row. A belief can hold until 2027 and be expired for our purposes tomorrow, and the
+        disagreement is information rather than a conflict. Refusing any of these would assert a
+        relationship the schema deliberately does not have — F-14's mistake in reverse, since two clocks
+        kept apart in the columns have to stay apart in the rules too.
+        """
+        audit, store = _durable(tmp_path)
+        receipt = _record(audit, store, expires_at=expiry, valid_from=VALID_FROM, valid_until=VALID_UNTIL)
+        row = store.get_memory_item(receipt.memory_id)
+        assert row is not None, why
+        assert row["expires_at"] == receipt.expires_at, why
+        assert row["valid_until"] == "2026-12-04T06:00:00.000Z", why
+        store.close()
+
+    def test_the_expiry_rides_in_the_event_so_a_replay_reproduces_it(self, tmp_path: Path) -> None:
+        """L-2's payoff for the fourth clock: a timestamp that lived outside the audited event would be
+        restamped by the replay, which is the defect ``created_at`` was moved inside the event to avoid."""
+        audit, store = _durable(tmp_path)
+        ids = _evidence(audit, store)
+        receipt = _record(audit, store, evidence_ids=ids, expires_at=EXPIRES_AT)
+        original = store.get_memory_item(receipt.memory_id)
+        assert original is not None
+
+        conn = _connect(tmp_path)
+        conn.execute("DELETE FROM memory_item")
+        conn.execute("DELETE FROM op_projection")
+        conn.close()
+        assert store.counts()["memory_item"] == 0
+
+        time.sleep(1.05)
+        assert receipt.audit_ref in reproject_missing(audit=audit, store=store)
+        replayed = store.get_memory_item(receipt.memory_id)
+        assert replayed is not None
+        assert replayed["expires_at"] == original["expires_at"], "the expiry survives a replay"
+        assert replayed["created_at"] == original["created_at"]
+        store.close()
+
+    def test_no_sql_in_src_filters_on_the_column_yet(self) -> None:
+        """The ruling's second half: stored, and acted on by nothing.
+
+        A ``WHERE expires_at > now()`` anywhere in ``src/`` would be an expiry **policy** decided in a
+        query — invisible to a caller, hiding rows a reader has no way to ask for, and arriving before
+        ``docs/10`` §3.2's V1–V3 gates finalise at Stage 11.
+
+        Asserted with an AST walk over string literals rather than a grep over lines, and the reason is
+        measured rather than principled: a first version grepped lines and failed against a *docstring
+        continuation line* in ``store/operational.py`` — the sentence explaining why there is no such
+        clause, which names it in order to refuse it. A second version parsed but did not strip SQL
+        comments, and failed against migration 0005's DDL for the same reason at one level down: its
+        comment names ``expires_at`` in its list of what it deliberately did not add. Prose that names a
+        thing is not code that does it, whether the prose is Python's or SQL's, and only a parse plus a
+        comment strip can tell the two apart. That is F-23's lesson about a protocol growing a method,
+        applied to a column growing a reader.
+
+        Docstrings and ``--`` lines are excluded, and so is the writer's own ``payload.get("expires_at")``:
+        this asserts that no **executable SQL** filters on the column, which is the claim the ruling makes.
+        """
+        root = Path(__file__).resolve().parents[1] / "src" / "nexus"
+        offenders: list[str] = []
+        sql_literals = 0
+        for path in sorted(root.rglob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            docstrings = {
+                node.body[0].value
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+            }
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+                    continue
+                if node in docstrings:
+                    continue
+                # Strip SQL comment lines before looking. A second version of this test flagged
+                # `store/schema.py` twice, for the DDL of migrations 0004 and 0005 — not because either
+                # filters on the column, but because 0005's comment *names* `expires_at` in its list of
+                # what it deliberately did not add. A `--` line inside a SQL literal is prose exactly as
+                # much as a docstring is, and `applied_statements` in `tests/test_schema_fidelity.py`
+                # strips it for the same reason.
+                text = "\n".join(
+                    line for line in node.value.splitlines() if not line.strip().startswith("--")
+                )
+                if "SELECT" not in text.upper() and "WHERE" not in text.upper():
+                    continue
+                sql_literals += 1
+                if "expires_at" in text:
+                    offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+        assert offenders == [], offenders
+        assert sql_literals > 20, (
+            f"only {sql_literals} SQL literals were inspected, so the scan is not seeing the store's "
+            "queries — a scan that inspects nothing passes, which is the silent-pass shape 8.6 had to fix"
+        )
+        # And the scan is not simply blind to the column name: the trading path has had an expiry since
+        # Phase 2 and reads it in code, so the literal appears in src/ where a reader really exists.
+        intent = (root / "execution" / "intent.py").read_text(encoding="utf-8")
+        assert "expires_at" in intent and "def is_expired" in intent
+
+
 class TestWhatThisWriterDoesNotDo:
     def test_nothing_in_src_calls_it_yet(self) -> None:
         """The same limitation Stage 8.2 recorded for ``record_evidence`` and 8.3 for ``open_dossier``,
@@ -758,15 +950,36 @@ class TestWhatThisWriterDoesNotDo:
         assert "get_memory_item(" not in app
         assert "/v1/intelligence/memory" not in app
 
-    def test_no_expiry_was_invented_and_f_18s_second_gap_stays_open(self) -> None:
-        """``docs/10`` §3.1 asks for "expiring TTLs" and F-18's second gap says no expiry column exists
-        anywhere. ``expires_at`` is cheap (``docs/15`` §5.3 executed it) but it is not one of the three
-        columns D-051 deferred, so it is not here — and ``valid_until`` is not a substitute for it."""
+    def test_the_expiry_arrived_as_one_name_and_not_as_a_second_spelling(self) -> None:
+        """Re-aimed by Stage 8.7, not deleted. This test used to assert that no expiry existed — F-18's
+        second gap, which ``docs/15`` §5.3 made cheap and D-051's ruling 2 declined to spend early. D-054's
+        ruling 4 ordered the column and D-055's ruling 4 scoped it, so the absence it pinned is now a
+        presence. What is still true, and what the test is now about, is that the expiry arrived as **one**
+        name on **one** table: a second spelling (``ttl``, ``expires_on``, ``valid_for_seconds``) would be
+        two names for one clock, which is the mistake F-14 spent a batch separating."""
         parameters = set(inspect.signature(record_memory_item).parameters)
-        assert not {name for name in parameters if "expir" in name or "ttl" in name}
+        assert "expires_at" in parameters, "D-055's ruling 4 ordered this column and it is here"
+        assert {name for name in parameters if "expir" in name or "ttl" in name} == {"expires_at"}
+        assert inspect.signature(record_memory_item).parameters["expires_at"].default is None, (
+            "the ABSTAIN side: an unstated expiry is NULL, never a default computed from another clock"
+        )
         receipt_fields = {item.name for item in fields(MemoryReceipt)}
-        assert {"created_at", "valid_until", "confidence"} <= receipt_fields
-        assert not {name for name in receipt_fields if "expir" in name or "ttl" in name}
+        assert {"created_at", "valid_until", "confidence", "expires_at"} <= receipt_fields
+        assert {name for name in receipt_fields if "expir" in name or "ttl" in name} == {"expires_at"}
+
+    def test_the_expiry_is_not_folded_into_validity_of(self) -> None:
+        """``validity_of`` reports the interval — the world's axis. An expiry is this system's axis, so
+        adding it there would collapse the two clocks the migration comment separates, and every reader of
+        that helper would inherit the collapse without seeing it."""
+        returned = set(validity_of({"payload": {}}))
+        assert returned == {
+            "valid_from",
+            "valid_until",
+            VALIDITY_OPEN_ENDED_KEY,
+            "change_conditions",
+            EVIDENCE_IDS_KEY,
+        }, returned
+        assert not any("expir" in key for key in returned)
 
     def test_no_band_was_invented_and_that_is_f_24(self) -> None:
         """``docs/10`` §3.1 asks for confidence "as a band" and D-035 approved "beliefs as bands". A band is
@@ -796,8 +1009,13 @@ class TestWhatThisWriterDoesNotDo:
         assert not any("BELIEF" in member.name for member in RejectReason)
         assert not any("CONFIDENCE" in member.name for member in RejectReason)
 
-    def test_the_columns_this_batch_added_are_the_only_ones_it_added(self, tmp_path: Path) -> None:
-        """A writer that quietly grew the schema would make the ruling's scope unreadable from the tree."""
+    def test_the_table_has_exactly_the_columns_the_migrations_declare(self, tmp_path: Path) -> None:
+        """A writer that quietly grew the schema would make the ruling's scope unreadable from the tree.
+
+        Re-aimed by Stage 8.7 from "the columns this batch added are the only ones it added", which named
+        8.5's four: the set is now fifteen because ``0006_memory_expiry`` added ``expires_at``. The purpose
+        is unchanged and is the reason this is an equality rather than a subset — a column that arrives
+        without a ruling behind it turns this test red, and so does one that disappears."""
         audit, store = _durable(tmp_path)
         columns = {row[1] for row in _connect(tmp_path).execute("PRAGMA table_info(memory_item)")}
         assert columns == {
@@ -815,7 +1033,9 @@ class TestWhatThisWriterDoesNotDo:
             "valid_from",
             "valid_until",
             "change_conditions",
+            "expires_at",
         }
+        assert len(columns) == 15, sorted(columns)
         store.close()
 
     def test_kind_and_scope_are_free_text_because_no_vocabulary_is_declared(self, tmp_path: Path) -> None:

@@ -16,12 +16,19 @@
 -- migrations are immutable, and `tests/test_schema_fidelity.py` pins every checksum that says so.
 -- Nothing serves `memory_item` over HTTP yet, and no writer calls any of the three.
 --
--- Two things this file deliberately does not declare, because no batch has ruled on either. There is no
--- `expires_at`: F-18's second gap (no expiry column anywhere) stays open, and `valid_until` is not a
--- substitute — it says until when a claim holds in the world, while an expiry says when this system should
--- stop serving the row. And there is no confidence band: `confidence` stays one NUMERIC(6,5) point, while
--- `docs/10` §3.1 asks for it "as a band" and D-035 approved "beliefs as bands". That is F-24 (`docs/15`
--- §12), recorded rather than fixed, because a band is two columns and not three.
+-- Stage 8.7 added the fourth column F-18 asked for, `memory_item.expires_at`, on the same terms: declared
+-- below where it always was for this file, reaching SQLite through migration `0006_memory_expiry` (one
+-- `ADD COLUMN`) rather than through an edit of `0002_memory` there. D-054's ruling 4 ordered it and D-055's
+-- ruling 4 scoped it to `memory_item` alone. `evidence_ref` does not gain one, and `valid_until` is still
+-- not a substitute for it: `valid_until` says until when a claim holds in the world, while an expiry says
+-- when this system should stop serving the row. **Nothing acts on the column** — no reader filters by it
+-- and no route serves it — because `docs/10` §3.2's V1–V3 verification gates finalise at Stage 11 and are
+-- what would consume it.
+--
+-- One thing this file still deliberately does not declare, because no batch has ruled on it. There is no
+-- confidence band: `confidence` stays one NUMERIC(6,5) point, while `docs/10` §3.1 asks for it "as a band"
+-- and D-035 approved "beliefs as bands". That is F-24 (`docs/15` §12), recorded rather than fixed, because
+-- a band is two columns and the shape of a band has no ruling behind it.
 --
 -- All timestamps are TIMESTAMPTZ in UTC. Confidence uses NUMERIC, never FLOAT — here. The SQLite side
 -- keeps memory_item.confidence as TEXT and constrains it with a CHECK instead, because SQLite's NUMERIC
@@ -100,7 +107,19 @@ CREATE TABLE IF NOT EXISTS memory_item (
     -- nullability and foreign keys, and does not compare position.
     valid_from       TIMESTAMPTZ,
     valid_until      TIMESTAMPTZ,
-    change_conditions TEXT NOT NULL DEFAULT ''
+    change_conditions TEXT NOT NULL DEFAULT '',
+    -- Stage 8.7, F-18's second gap: `docs/10` §3.1 asks the memory & knowledge region to render
+    -- "expiring TTLs", and before this column no expiry existed anywhere in either schema. It is not
+    -- `valid_until` and does not replace it: that column bounds the claim in the world, this one says
+    -- when *this system* should stop serving the row, and a belief can hold until 2027 while being
+    -- expired for our purposes tomorrow. Nullable because not every memory item is a belief with a TTL —
+    -- an OBSERVATION has no expiry and needs none — and NULL means "no expiry was stated", which is not
+    -- the same claim as "never expires". The writer validates it
+    -- (nexus/intelligence/memory.py) rather than a CHECK here, and **nothing reads it yet**: no filter,
+    -- no route, no policy. D-055's ruling 4 is that the column is stored and acted on by nothing until
+    -- Stage 11 finalises the V1–V3 gates that would consume it, because a filter invented here would be
+    -- an expiry policy nobody has ruled on, wearing a WHERE clause.
+    expires_at       TIMESTAMPTZ
 );
 CREATE INDEX IF NOT EXISTS ix_memory_kind    ON memory_item (kind);
 CREATE INDEX IF NOT EXISTS ix_memory_created ON memory_item (created_at DESC);

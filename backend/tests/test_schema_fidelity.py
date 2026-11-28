@@ -138,6 +138,25 @@ def live_sqlite(tmp_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def applied_statements(sql: str) -> list[str]:
+    """The statements a migration actually applies, with its own comment prose stripped first.
+
+    This is **not** what ``Migration.statements`` counts, and the difference is F-27. That property splits
+    the SQL on ``";"`` and keeps every non-empty part, so a semicolon inside a ``--`` comment is counted as
+    a statement: ``0004_memory_fidelity`` records **15** and applies **13**, and
+    ``0003_audit_append_only`` records **4** for **two** triggers, because a trigger body is one statement
+    with semicolons inside it. The number is bookkeeping — stored in ``schema_migrations`` and served by
+    the API — so nothing misbehaves, but a reader who takes it as "how many statements ran" is wrong by two
+    on 0004 and by two on 0003, and ``test_the_runner_records_what_it_applied`` pins the inflated values.
+
+    Stripping the comment lines before splitting is the honest count for an ``ALTER``-shaped migration. It
+    is still wrong for a trigger body, which is why this helper is used only where the migrations are
+    ``ALTER``/``CREATE`` and the difference is stated rather than hidden.
+    """
+    code = "\n".join(line for line in sql.splitlines() if not line.strip().startswith("--"))
+    return [part.strip() for part in code.split(";") if part.strip()]
+
+
 def read_sqlite(conn: sqlite3.Connection) -> dict[str, dict[str, dict[str, Any]]]:
     out: dict[str, dict[str, dict[str, Any]]] = {}
     names = [
@@ -279,6 +298,7 @@ class TestMigration0004:
         "0003_audit_append_only": "1e9ec5a5d9154d0af95f229aa05d4677045892eda2a39b890de2d929d40ee26b",
         "0004_memory_fidelity": "4c7368d407bb1f180a79bcce3044d8a6f97e9eb7b677cc40c35932a66ca22bb6",
         "0005_memory_beliefs": "4520e5b5e259eb4c868b70d1bfdc5ebdbac58f32d7083ea00cc4e980ac789c28",
+        "0006_memory_expiry": "f54eecd2c3f6c2c633223a6c531d63be50bc4d1867f3815a2ce8b1821c43fedb",
     }
 
     def test_no_applied_migration_was_edited(self) -> None:
@@ -298,6 +318,7 @@ class TestMigration0004:
         counts = dict(conn.execute("SELECT version, statements FROM schema_migrations").fetchall())
         assert counts["0004_memory_fidelity"] == 15, "0004 rebuilds two tables and creates one"
         assert counts["0005_memory_beliefs"] == 4, "0005 is four ADD COLUMNs and nothing else"
+        assert counts["0006_memory_expiry"] == 1, "0006 is one ADD COLUMN and nothing else"
 
     def test_the_rebuild_preserves_existing_rows(self, tmp_path: Path) -> None:
         """Both tables are empty today, but a migration that is only safe on an empty table will be run
@@ -373,10 +394,27 @@ class TestMigration0005:
         assert {"valid_from", "valid_until", "change_conditions"} <= memory
         assert "contradicts" in evidence
 
-        # F-18's second gap stays open: no expiry column, and `valid_until` is not one. It says until when
-        # a claim holds in the world; an expiry says when this system should stop serving the row, which is
-        # what `docs/10` §3.1's "expiring TTLs" asks for.
-        assert not {"expires_at", "expires_on", "ttl", "ttl_seconds", "valid_for_seconds"} & memory
+        # Re-aimed by Stage 8.7, not deleted. This assertion used to say the table has no expiry column,
+        # which was F-18's second gap staying open; migration 0006 closes it, so what is still true — and
+        # what this test is *about* — is that **0005** added no expiry. The subject is the migration, not
+        # the table, and a test named for a ruling's scope has to keep asserting that scope after the next
+        # batch widens the table. `TestMigration0006` below owns the column now.
+        beliefs = next(m.sql for m in MIGRATIONS if m.version == "0005_memory_beliefs")
+        applied = applied_statements(beliefs)
+        assert applied == [
+            "ALTER TABLE memory_item ADD COLUMN valid_from TEXT",
+            "ALTER TABLE memory_item ADD COLUMN valid_until TEXT",
+            "ALTER TABLE memory_item ADD COLUMN change_conditions TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE evidence_ref ADD COLUMN contradicts TEXT REFERENCES evidence_ref (evidence_id)",
+        ], applied
+        # Asserted against the *statements*, not the SQL text: 0005's comment names `expires_at` in its
+        # list of what it deliberately did not add, so a grep of the text reads that disclosure as the
+        # column arriving. The comment is the reason this test existed; it is not the thing under test.
+        assert not any("expires_at" in statement for statement in applied)
+        assert {"expires_on", "ttl", "ttl_seconds", "valid_for_seconds"} & memory == set(), (
+            "0006 added `expires_at` and nothing else: a second expiry spelling would be two names for one "
+            "clock, which is what F-14 spent a batch separating"
+        )
         # F-24: a band is an interval on the confidence axis, so it is two columns, and neither was ruled
         # into this batch. Pinning the absence is what stops a later reader inferring that the three new
         # columns delivered "confidence as a band" — they are on the time axis.
@@ -487,7 +525,7 @@ class TestMigration0005:
         the precedent — its shape is declared in the target too, and only SQLite needed the rebuild.
         """
         pg = parse_postgres(_postgres_ddl())
-        assert {"valid_from", "valid_until", "change_conditions"} <= set(pg["memory_item"])
+        assert {"valid_from", "valid_until", "change_conditions", "expires_at"} <= set(pg["memory_item"])
         assert "contradicts" in pg["evidence_ref"]
         assert pg["memory_item"]["valid_from"]["type"] == "TIMESTAMPTZ"
         assert pg["memory_item"]["valid_until"]["type"] == "TIMESTAMPTZ"
@@ -500,6 +538,171 @@ class TestMigration0005:
             if "ALTER TABLE memory_item" in path.read_text()
         ]
         assert altering == [], altering
+
+
+class TestMigration0006:
+    """F-18's second gap: one `expires_at` on `memory_item`, and nothing acting on it.
+
+    D-054's ruling 4 ordered this column and D-055's ruling 4 scoped it to `memory_item` alone, on the
+    distinction the migration's own comment carries: `valid_until` says until when a claim holds *in the
+    world*, while an expiry says when *this system* should stop serving the row. So what is asserted here is
+    not only that the column arrives but that it arrives **alone** — one statement, one table, one column —
+    and that the ruling's second half holds too: no reader filters on it, no index was built for it, and the
+    PostgreSQL target declares it inline rather than in an ALTER file the fidelity gate cannot see.
+    """
+
+    def test_it_applies_after_0005_and_is_reported(self, tmp_path: Path) -> None:
+        path = tmp_path / "nexus.db"
+        audit = AuditLog(SqliteAuditStore(path))
+        store = SqliteOperationalStore(path, audit=audit)
+        report = store.migrations
+        assert report is not None
+        assert [item.version for item in report.applied] == [m.version for m in MIGRATIONS]
+        assert [item.version for item in report.applied][-2:] == [
+            "0005_memory_beliefs",
+            "0006_memory_expiry",
+        ], "0006 is last, and forward-only means it cannot be inserted earlier"
+        assert report.skipped == (), [s.reason for s in report.skipped]
+        store.close()
+
+    def test_it_adds_exactly_one_column_to_exactly_one_table(self, tmp_path: Path) -> None:
+        """`evidence_ref` does not gain one, and that absence is the ruling rather than an oversight.
+
+        D-055's ruling 4 named `memory_item` only: evidence is about when the world said something, so its
+        freshness is already two columns and a `data_status`, and a third clock on the table whose two
+        clocks Stage 8.4 spent a batch separating would be the wrong kind of company.
+        """
+        conn = live_sqlite(tmp_path)
+        memory = {row[1] for row in conn.execute("PRAGMA table_info(memory_item)")}
+        evidence = {row[1] for row in conn.execute("PRAGMA table_info(evidence_ref)")}
+        dossier = {row[1] for row in conn.execute("PRAGMA table_info(dossier)")}
+        assert "expires_at" in memory
+        assert "expires_at" not in evidence, "ruling 4 scoped the column to memory_item"
+        assert "expires_at" not in dossier
+        migration = next(m for m in MIGRATIONS if m.version == "0006_memory_expiry")
+        assert applied_statements(migration.sql) == ["ALTER TABLE memory_item ADD COLUMN expires_at TEXT"]
+        # And here the two counts agree, because 0006's comment carries no semicolons — deliberately, so
+        # this batch does not add to F-27's tally. That is a constraint on the comment's punctuation rather
+        # than on its content, which is exactly why F-27 is recorded instead of worked around silently.
+        assert migration.statements == 1
+
+    def test_the_column_is_nullable_with_no_default_and_no_check(self, tmp_path: Path) -> None:
+        """`NULL` means "no expiry was stated", which is not the same claim as "never expires".
+
+        A default would collapse the two, and a `CHECK` would put the rule in the schema where the writer
+        cannot see it — 0005's reasoning for the three columns it added, which is why the refusal for a
+        naive datetime lives in `intelligence/memory.py` instead.
+        """
+        conn = live_sqlite(tmp_path)
+        info = {row[1]: row for row in conn.execute("PRAGMA table_info(memory_item)")}
+        column = info["expires_at"]
+        assert column[2] == "TEXT", column
+        assert column[3] == 0, "not NOT NULL: an OBSERVATION has no expiry and needs none"
+        assert column[4] is None, f"no default, so an unstated expiry stays NULL: {column[4]!r}"
+        conn.execute(
+            "INSERT INTO memory_item (memory_id, body, created_at) VALUES ('MEM-NOEXPIRY','b',?)",
+            ("2026-11-28T15:00:00+00:00",),
+        )
+        conn.commit()
+        assert conn.execute("SELECT expires_at FROM memory_item").fetchone()[0] is None
+
+    def test_it_is_additive_and_an_existing_row_keeps_every_value(self, tmp_path: Path) -> None:
+        """Build the pre-0006 schema, write a row, apply 0006, and read the row back unchanged."""
+        conn = sqlite3.connect(tmp_path / "additive.db")
+        conn.executescript("CREATE TABLE audit_log (seq INTEGER PRIMARY KEY);")
+        for migration in MIGRATIONS:
+            if migration.version == "0006_memory_expiry":
+                break
+            conn.executescript(migration.sql)
+        stamp = "2026-11-27T15:00:00+00:00"
+        conn.execute(
+            "INSERT INTO memory_item (memory_id, body, created_at, confidence, valid_from, valid_until, "
+            "change_conditions) VALUES (?,?,?,?,?,?,?)",
+            ("MEM-1", "kept", stamp, "0.25", stamp, stamp, "a funding flip"),
+        )
+        conn.commit()
+        before = {row[1] for row in conn.execute("PRAGMA table_info(memory_item)")}
+        assert "expires_at" not in before, "the pre-0006 schema is what F-18's second gap was about"
+
+        conn.executescript(next(m.sql for m in MIGRATIONS if m.version == "0006_memory_expiry"))
+
+        row = conn.execute(
+            "SELECT memory_id, body, created_at, confidence, valid_from, valid_until, change_conditions, "
+            "expires_at FROM memory_item"
+        ).fetchone()
+        assert row == ("MEM-1", "kept", stamp, "0.25", stamp, stamp, "a funding flip", None)
+        assert {r[1] for r in conn.execute("PRAGMA table_info(memory_item)")} == before | {"expires_at"}
+
+    def test_0004s_check_on_confidence_survives_it(self, tmp_path: Path) -> None:
+        """The second `ADD COLUMN` migration in a row, and the constraint 0004 added is still there.
+
+        Worth pinning twice rather than once: 0005 proved an append does not drop a `CHECK`, and a reader
+        who trusts that proof for 0006 is trusting an induction. This is the base case for the new one.
+        """
+        conn = live_sqlite(tmp_path)
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO memory_item (memory_id, body, created_at, confidence, expires_at) "
+                "VALUES ('MEM-JUNK','b','2026-11-28T15:00:00+00:00','not-a-number',NULL)"
+            )
+        conn.execute(
+            "INSERT INTO memory_item (memory_id, body, created_at, confidence, expires_at) "
+            "VALUES ('MEM-OK','b','2026-11-28T15:00:00+00:00','0.25','2027-01-01T00:00:00+00:00')"
+        )
+        conn.commit()
+        assert conn.execute("SELECT expires_at FROM memory_item").fetchone()[0] == (
+            "2027-01-01T00:00:00+00:00"
+        )
+
+    def test_no_index_was_built_for_a_column_nothing_queries(self, tmp_path: Path) -> None:
+        """An index with no reader behind it is machinery nobody reads — D-052's ruling 4, and 0005's own
+        reason for declining an index on `valid_until`. `memory_items()` still scans and says so."""
+        conn = live_sqlite(tmp_path)
+        indexes = {r[1] for r in conn.execute("PRAGMA index_list(memory_item)")}
+        assert indexes == {"ix_memory_kind", "ix_memory_created", "sqlite_autoindex_memory_item_1"}, indexes
+        assert not any("expir" in name for name in indexes), indexes
+        sql = next(m.sql for m in MIGRATIONS if m.version == "0006_memory_expiry")
+        assert "CREATE INDEX" not in sql
+
+    def test_the_target_declares_it_inline_and_not_as_an_alteration(self) -> None:
+        """Same reason as 0005's four: `parse_postgres` reads `CREATE TABLE` only, so an ALTER-only target
+        would be invisible to the fidelity gate — the columns would exist in SQLite and be unasserted in the
+        mirror, which is F-15."""
+        pg = parse_postgres(_postgres_ddl())
+        assert pg["memory_item"]["expires_at"]["type"] == "TIMESTAMPTZ"
+        assert pg["memory_item"]["expires_at"]["notnull"] is False
+        assert "expires_at" not in pg["evidence_ref"]
+        altering = [
+            path.name
+            for path in sorted(MIGRATIONS_DIR.glob("*.sql"))
+            if "ALTER TABLE memory_item" in path.read_text()
+        ]
+        assert altering == [], altering
+
+    def test_nothing_in_the_store_filters_on_it(self) -> None:
+        """The ruling's second half: stored, and acted on by nothing.
+
+        `memory_items()` still serves every row, because a `WHERE expires_at > now()` in the store would be
+        an expiry **policy** — decided in a query, invisible to a caller, and hiding rows a reader has no
+        way to ask for. `docs/10` §3.2's V1–V3 gates finalise at Stage 11 and are what would consume it.
+        """
+        source = Path(__file__).resolve().parents[1] / "src" / "nexus" / "store" / "operational.py"
+        text = source.read_text(encoding="utf-8")
+        # rindex, not index: the Protocol at the top of the module declares `memory_items` too, and its
+        # declaration has no docstring to split on. The implementation is the last one.
+        method = text[text.rindex("def memory_items(") : text.rindex("def get_memory_item(")]
+        # The docstring names the column, on purpose: it is where the decision not to filter is written
+        # down. What must not name it is the code after the docstring, which is the query.
+        code = method.split('"""', 2)[2]
+        assert "expires_at" not in code, (
+            "the query must not mention the column; the docstring may, and does, to say why not"
+        )
+        assert "WHERE expires_at" not in code
+        assert code.count("?") == 3, "kind, scope and limit are still the only three parameters"
+        # The whole-module grep is deliberately *not* asserted: the docstring above the query names
+        # `WHERE expires_at > now()` in order to say why there is no such clause, so a grep of the file
+        # fails against the sentence that documents the decision. Same shape as the assertion 8.6 had to
+        # strengthen — text that mentions a thing is not text that does it.
 
 
 class TestConfidenceConstraint:

@@ -1204,9 +1204,11 @@ class SqliteOperationalStore:
         is not ``valid_from``, which is when the claim starts to hold in the world — collapsing the two
         would be the same mistake F-14 named, in a different pair of columns.
 
-        The three columns migration ``0005_memory_beliefs`` added are stored as given. None of them is
-        ``NOT NULL`` without a default, and none is checked here: a belief whose confidence has no validity
-        interval and no change conditions is what ``docs/10`` §3.1 calls a defect, and the refusal lives in
+        The three columns migration ``0005_memory_beliefs`` added, and the ``expires_at`` migration
+        ``0006_memory_expiry`` added, are stored as given. None of the four is ``NOT NULL`` without a
+        default, and none is checked here: a belief whose confidence has no validity interval and no change
+        conditions is what ``docs/10`` §3.1 calls a defect, and an expiry in the past is a row this system
+        should stop serving rather than a row that should never have been written. Both refusals live in
         ``intelligence.memory.record_memory_item``, because a projection that refused a row would fail the
         replay of an event the chain already holds.
 
@@ -1229,8 +1231,9 @@ class SqliteOperationalStore:
             conn.execute(
                 """INSERT OR REPLACE INTO memory_item
                    (memory_id, kind, scope, subject, body, created_at, superseded_by, cited_by,
-                    confidence, payload, audit_ref, valid_from, valid_until, change_conditions)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    confidence, payload, audit_ref, valid_from, valid_until, change_conditions,
+                    expires_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     memory_id,
                     str(payload.get("kind") or "OBSERVATION"),
@@ -1246,6 +1249,7 @@ class SqliteOperationalStore:
                     _text(payload.get("valid_from")),
                     _text(payload.get("valid_until")),
                     str(payload.get("change_conditions") or ""),
+                    _text(payload.get("expires_at")),
                 ),
             )
             self._mark(conn, audit_ref, "memory_item", memory_id)
@@ -1261,11 +1265,15 @@ class SqliteOperationalStore:
         query change. At the volumes Stage 8 writes that is invisible, and it is recorded here rather than
         left to be discovered, which is what ``dossiers`` does for its own scan.
 
-        What this method deliberately does not offer is a "currently valid" filter. ``valid_from`` and
-        ``valid_until`` bound a claim in the world, and deciding which items a reader should see now is a
-        judgement about expiry that no ruling has made — F-18's second gap is still open and there is no
-        ``expires_at`` column to filter on either. Serving every row and letting the caller read the
-        interval is the honest version; a filter here would quietly become the expiry policy.
+        What this method deliberately does not offer is a "currently valid" filter, or an expiry filter.
+        ``valid_from`` and ``valid_until`` bound a claim in the world, and Stage 8.7 added ``expires_at`` —
+        when *this system* should stop serving the row — so F-18's second gap is closed and the column a
+        filter would read now exists. The filter still does not, on purpose: deciding which items a reader
+        should see now is an expiry **policy**, and D-055's ruling 4 is that the column is stored and acted
+        on by nothing until ``docs/10`` §3.2's V1–V3 gates finalise at Stage 11. Serving every row and
+        letting the caller read both clocks is the honest version; a ``WHERE expires_at > now()`` here would
+        quietly become that policy, in the store, with no ruling behind it and no way for a reader to see
+        the rows it hid.
         """
         sql = "SELECT * FROM memory_item"
         clauses: list[str] = []
