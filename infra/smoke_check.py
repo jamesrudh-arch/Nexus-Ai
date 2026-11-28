@@ -202,8 +202,13 @@ def check_api() -> None:
         check("no route can place, amend or cancel an order", not forbidden, f"found {forbidden}")
         posts = sorted(p for p, ops in paths.items() if isinstance(ops, dict) and "post" in ops)
         unexpected = sorted(set(posts) - ALLOWED_POST_PATHS)
+        # The name is derived from the allow-list rather than written out, because a report line
+        # that names two paths while five are permitted is a false statement about the system, and
+        # it would keep passing while saying it. This report is published as a CI annotation and
+        # read by a person deciding whether the build can trade; it has to be true when it is green.
         check(
-            "the only mutations are halt and halt/release",
+            "the only mutations are the allowed POST paths: "
+            + ", ".join(sorted(ALLOWED_POST_PATHS)),
             not unexpected,
             f"unexpected POST routes: {unexpected}",
         )

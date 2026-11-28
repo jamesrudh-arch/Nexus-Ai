@@ -189,6 +189,62 @@ services:
       - "8000"
     networks: [nexus-internal]
 
+  # ------------------------------------------------------- paper trading loop (Stage 11, D-059)
+  # The same image as `core`, run as a different process. The loop is separate by design: the API is
+  # request/response, while a real-time loop must keep polling across an API redeploy, and a crash in
+  # either must not take the other down. `command:` replaces the Dockerfile's CMD (there is no
+  # ENTRYPOINT to fight), and the reasoning is in backend/src/nexus/paper/runner.py.
+  #
+  # Opt-in via a profile rather than always up, because it polls a public endpoint on a rate budget
+  # this project shares across every endpoint (P-9/F-8, accumulating) and an operator should choose to
+  # spend it. Start it with `docker compose --profile paper up`.
+  paper-runner:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: nexus-core:0.2.0
+    profiles: [paper, full]
+    <<: *restart-policy
+    logging: *default-logging
+    command: ["python", "-m", "nexus.paper.runner"]
+    environment:
+      NEXUS_ENVIRONMENT: ${NEXUS_ENVIRONMENT:-DISABLED}
+      # The runner refuses to start if the phase gate or this flag would permit a real order, so these
+      # are belt and braces: the check is redundant with the paper package having no send path, and the
+      # redundancy is the point for the one process holding venue symbols and an outbound connection.
+      NEXUS_LIVE_TRADING_ENABLED: "false"
+      NEXUS_LEGAL_REVIEW_COMPLETE: "false"
+      NEXUS_OWNER_LIVE_AUTHORITY_GRANTED: "false"
+      NEXUS_MODEL_ALLOW_PAID_APIS: "false"           # D-019
+      # The same archive root `core` uses, so the quotes this loop observes are the quotes the API can
+      # re-read. The archive is the runner's only durable output: it constructs no store and no audit
+      # log, and its blotter is in-process (F-44), so a dashboard reading the API's /v1/paper routes
+      # does not show this process. Stated here because it is the kind of thing a deployment assumes.
+      NEXUS_ARCHIVE_ROOT: /app/data/archive
+      NEXUS_DATA_SOURCES_ENABLED: "bybit-public,okx-public,binance-vision,dukascopy"
+      NEXUS_PAPER_ENABLED: "true"
+      # okx-public is the one free real-time source whose seeded mapping is at DATA_AVAILABLE. Bybit's
+      # BTCUSDT mapping is only SUPPORTED — below MINIMUM_STATUS_FOR_ARCHIVE — and F-2 records that
+      # bybit v5 answers 403 from hosted runners, so a Bybit default would accept zero quotes and still
+      # report a healthy-looking flat curve. binance-vision and dukascopy are historical archives and
+      # the runner refuses them by name.
+      NEXUS_PAPER_FEED: ${NEXUS_PAPER_FEED:-okx-public:BTC-USDT-SWAP}
+      NEXUS_PAPER_POLL_SECONDS: ${NEXUS_PAPER_POLL_SECONDS:-5.0}
+    volumes:
+      # Only the archive. The runner writes no database, so mounting core-data would advertise a
+      # shared store that does not exist; F-44 is the finding that would change that.
+      - archive-data:/app/data/archive
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    # No healthcheck, and that is a gap stated rather than hidden: the loop exposes no port, so there
+    # is nothing to curl. Its per-cycle logs carry quotes_accepted and the stack's Loki collects them,
+    # so a dead feed is readable in logs; alerting on one would need a heartbeat file. An unbounded run
+    # keeps polling through an outage, which is correct, and the bounded form (`--cycles N`) exits 4
+    # when it observed nothing — that is the form a cron entry or a CI step should use.
+    networks: [nexus-internal]
+
   # ---------------------------------------------------------------- TLS entry point
   caddy:
     image: caddy:2-alpine                      # Caddy (Apache-2) + Let's Encrypt

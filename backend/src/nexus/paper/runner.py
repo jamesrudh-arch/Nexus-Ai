@@ -12,8 +12,15 @@ It is a **separate process from the API**, and that is a deliberate shape rather
   connection is allowed and nothing else.
 * A crash in the loop must not take the audit-serving API down with it, and the reverse.
 
-Both processes read the same settings and write the same store, so the dashboard served by the API
-shows what this runner is doing.
+**What connects this process to the API, stated precisely because the obvious claim is false.** Both
+read the same settings, and both write the same Parquet archive when they are configured with the same
+``archive_root``, so the quotes this runner observes are the quotes the API can re-read. They do **not**
+share a store: this runner constructs no operational store and no audit log, and its blotter lives in an
+``InMemoryPaperLedger``. The API's ``/v1/paper`` routes serve *its own* in-process platform, with its own
+ledger, so a dashboard reading those routes does **not** show what this runner is doing. Two independent
+machines, each honest about its own state, until a persistent ledger behind the existing ``PaperLedger``
+protocol lets them share one — recorded as **F-44**, and the reason this runner prints a full report on
+every cycle and on exit rather than assuming someone else will read it later.
 
 **What it refuses to do.** It checks the phase gate and the live-trading flag at startup and exits if
 either would permit a real order, because a process that has been given venue symbols and an outbound
