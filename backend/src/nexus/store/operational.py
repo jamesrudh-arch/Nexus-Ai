@@ -261,6 +261,16 @@ class OperationalStore(Protocol):
 
     def decisions(self, *, limit: int = 50) -> tuple[dict[str, Any], ...]: ...
 
+    #: F-29. Every other entity this protocol serves declares its single-row getter — ``get_intent``,
+    #: ``get_dossier``, ``get_evidence_ref``, ``get_memory_item`` — and ``decision`` was the one that did
+    #: not, although ``SqliteOperationalStore.get_decision`` has existed since Phase 2. The gap was
+    #: invisible while nothing wrote a decision: it is a writer that needs to ask whether an id is taken,
+    #: and Stage 9's ``record_thesis`` is the first. A fake conforming to this protocol would have passed
+    #: ``mypy`` and raised ``AttributeError`` on that guard, which is F-23's blind spot inverted — there
+    #: the protocol grew a method an implementation lacked, here the implementation had one the protocol
+    #: never declared. Declaring it moves no signature: the method already exists with this exact shape.
+    def get_decision(self, decision_id: str) -> dict[str, Any] | None: ...
+
     def save_dossier(self, payload: Mapping[str, Any], *, audit_ref: str | None = None) -> None: ...
 
     def dossiers(
