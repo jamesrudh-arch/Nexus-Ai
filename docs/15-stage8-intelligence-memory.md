@@ -3780,3 +3780,47 @@ approvable, and it is also the throughput limit.
 Whatever is ruled, three things do not change without a ruling of their own: no expiry **policy** before
 Stage 11's V1–V3 gates; no confidence **band** (F-24) without its own scope; and no wiring of either
 intelligence writer to a route, declined three times and not offered here.
+
+### 14.10 D-056 — the four rulings
+
+All four questions in §14.9 were answered `Recommend`, each against exactly one marked recommendation, and
+are recorded as **D-056**. §14.9 is left as it was put; this section is the ruling. No code changed —
+`git diff 2267eb4 HEAD -- backend/` is empty — and the gate re-ran anyway, because this section quotes what
+it produces: **1,428 passed / 2 skipped / 0 failed**, `ruff check src tests` clean, `ruff format --check`
+unchanged on **93** files, mypy strict clean on **62**.
+
+| # | Question as put | Ruled | What it changes |
+|---|---|---|---|
+| 1 | Is Stage 8.7 approved, and is F-18's gap 2 closed? | **Approved, recorded as D-056**, and **F-18's gap 2 `CLOSED`** — on the **column**, *not* on the TTL | Both 8.7 rows in `docs/07` become `REVIEWED — APPROVED 2026-11-28`. §14.8's **limitation 1 stands as published beside the closure** rather than being retired by it: the column is inert, nothing in `src/` reads it, and a row that should have stopped being served is still served. That is D-053's ruling 1 distinction for `O-012`, re-drawn by D-055 for F-25, applied a **third** time. **F-18's status word stays `NARROWED`**, now with gaps 1, 2 and 3 closed and **gap 4 alone open** with no batch — three of four gaps closed is still not four, and §14.8's limitation 4 said so before the ruling rather than after it |
+| 2 | F-27 — the recorded statement count is not the applied one. Recorded, or given a batch? | **Recorded as F-27, `OPEN`, with no batch** | The inflated numbers **stay pinned where they are**: `schema_migrations` still records `0003 → 4` and `0004 → 15`, `test_the_runner_records_what_it_applied` still asserts both, and `applied_statements()` still carries the finding in its docstring so the next person to touch a migration reads it first. The measured reason the ruling gives is the one §14.5 established: fixing the property moves **no** checksum, but the recorded value is a row written at apply time and never rewritten, so a fix would split production into two populations reporting different counts for the same version and checksum with nothing able to tell which a row carries. F-27 is **not** an `O-` row, on D-054's reasoning re-applied by D-055: recording a finding is not opening an obligation row, so `docs/00` still ends at `O-014`. **The next finding id is F-28** |
+| 3 | Which stage opens next, given the directive to run several at once? | **Stage 9 opens, and F-26's seam is settled inside it as its first deliverable** | Stage 9 is the candidate-thesis / intelligence-dossier stage (`design/build_board52.py:73-87`), and its work is the first code that would write `decision` or `trade_intent` rows — so F-26's question (do those writers gain a store in the seam, or does the trading path document that its parents are checked upstream?) is answered **before** that writer exists rather than after. Answering it first also means Stage 9's own writers get the four-parent treatment from the start instead of inheriting five unguarded `REFERENCES` clauses. **F-26 stays `OPEN` until that choice is made and recorded**; this ruling schedules the decision, it does not make it |
+| 4 | Does the cadence change, given "begin with multiple stages at once … we are way behind on production"? | **Yes — batch the rulings, not the work** | Two batches run concurrently and go to the owner on **one combined board**. What stays per-batch, so nothing becomes unattributable: the gate, the tamper proof, the `docs/07` register rows and the `docs/15` record section. What changes is that the owner rules on two batches at once instead of sequentially, and the work does not stop between them. This is the first ruling in the project's history to authorise concurrency, and it is recorded as a change of cadence rather than a relaxation of evidence: every claim on a combined board is still measured in-tree per batch |
+
+**What ruling 4 does not settle, stated because it is the one gap the ruling leaves.** Q4's option (a) named
+"8.8" as the batch that runs beside Stage 9's first deliverable, and **no document in this repository defines
+8.8's scope** — the option text carried the label without the content, and this record will not retro-fit a
+scope to a ruling that did not state one. What *is* derivable from in-repo pointers, and is therefore what the
+next board puts rather than what it assumes: **F-24** is the one open finding whose subject is Stage 8's own
+tables (a belief carries one confidence number where `docs/10` §3.1 asks for it *"as a band"* and D-035
+approved *"beliefs as bands"*); `migrations/0002_memory.sql`'s header says exactly **one** thing is
+deliberately absent from it *"because no batch has ruled on it"*, and since 8.7 that one thing is the
+confidence band; and F-18's remaining gap 4 is the sufficiency meter, which `docs/12` §1.3 places at
+**stage 10** and not in Stage 8. So 8.8 = F-24 is the derivation, **and the shape of a band still has no
+ruling behind it** (§12.8 recorded that when it opened the finding) — two more columns, one band column, or
+something else is a question for the owner, not a decision a batch may take silently.
+
+**What this ruling does not do**, stated so nobody has to infer it. It does **not** authorise an expiry
+**policy**: no filter, no `is_expired()`-style reader on `memory_item`, nothing acting on the column until
+`docs/10` §3.2's V1–V3 gates finalise at Stage 11. It does **not** authorise a confidence **band** — ruling 4
+schedules two batches, and F-24's shape is a question on the next board rather than a consequence of this one.
+It does **not** wire either intelligence writer to a route, declined three times and not offered in §14.9.
+It does **not** retire any of §14.8's eight limitations, including limitation 1 — the one gap 2's closure
+could most easily have been read to retire. It does **not** make F-26's seam choice, which is Stage 9's first
+deliverable and is still open. It does **not** close F-24, F-26 or F-27, and does **not** close F-18. And it
+does **not** enumerate stages beyond 11: `docs/12` §1.3 names knowledge sufficiency as stage 10 and the three
+verification gates as stage 11, `design/build_board52.py:73-87` defines 9, 10 and 11, and **no document in
+this repository names stages 12 to 23**, so none is invented here.
+
+**Next.** Two batches concurrently, on one combined board, per ruling 4: **8.8 = F-24's confidence band**,
+with the band's *shape* put as a question rather than assumed; and **Stage 9's first deliverable = F-26's
+seam**, settled before any Stage 9 writer is written. The next finding id is **F-28**.

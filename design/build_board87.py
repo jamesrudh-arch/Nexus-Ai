@@ -521,6 +521,64 @@ def decision_table() -> str:
     )
 
 
+
+def ruling_table() -> str:
+    """§13 — what was ruled. Deliberately not the same helper as §12's decision table: §12 asserts the
+    questions as they were put, and a table that rendered both would let a ruling silently rewrite a
+    question. The two are separate functions asserting separate things."""
+    return table(
+        ["#", "Question as put", "Ruled", "What it changes"],
+        [
+            ("1", "Is Stage 8.7 approved, and is F-18&rsquo;s gap 2 closed?",
+             "<b>Approved, recorded as D-056</b>, and <b>F-18&rsquo;s gap 2 "
+             "<span class='ok'>CLOSED</span></b> — on the <b>column</b>, <i>not</i> on the TTL",
+             "Both 8.7 rows in <span class='mono'>docs/07</span> become <span class='mono'>REVIEWED — "
+             "APPROVED 2026-11-28</span>. §11&rsquo;s <b>limitation 1 stands as published beside the "
+             "closure</b> rather than being retired by it: the column is inert, nothing in "
+             "<span class='mono'>src/</span> reads it, and a row that should have stopped being served is "
+             "still served. D-053&rsquo;s ruling 1 distinction for <span class='mono'>O-012</span>, re-drawn "
+             "by D-055 for F-25, applied a <b>third</b> time. <b>F-18&rsquo;s status word stays "
+             "<span class='mono'>NARROWED</span></b>, now with gaps 1, 2 and 3 closed and <b>gap 4 alone "
+             "open</b> with no batch — three of four is still not four, and limitation 4 said so <i>before</i> "
+             "the ruling rather than after it"),
+            ("2", "F-27 — the recorded statement count is not the applied one. Recorded, or given a batch?",
+             "<b>Recorded as F-27, <span class='no'>OPEN</span>, with no batch</b>",
+             "The inflated numbers <b>stay pinned where they are</b>: "
+             "<span class='mono'>schema_migrations</span> still records <span class='mono'>0003 &rarr; 4</span> "
+             "and <span class='mono'>0004 &rarr; 15</span>, "
+             "<span class='mono'>test_the_runner_records_what_it_applied</span> still asserts both, and "
+             "<span class='mono'>applied_statements()</span> still carries the finding in its docstring so the "
+             "next person to touch a migration reads it first. The reason the ruling gives is §6&rsquo;s "
+             "measured one: a fix moves <b>no</b> checksum, but the value is a row written at apply time and "
+             "never rewritten, so it would split production into <b>two populations</b> reporting different "
+             "counts for the same version and checksum. F-27 is <b>not</b> an <span class='mono'>O-</span> "
+             "row, so <span class='mono'>docs/00</span> still ends at <span class='mono'>O-014</span>. "
+             "<b>The next finding id is F-28</b>"),
+            ("3", "Which stage opens next, given the directive to run several at once?",
+             "<b>Stage 9 opens, and F-26&rsquo;s seam is settled inside it as its first deliverable</b>",
+             "Stage 9 is the candidate-thesis / intelligence-dossier stage "
+             "(<span class='mono'>design/build_board52.py:73-87</span>), and its work is the <b>first code "
+             "that would write <span class='mono'>decision</span> or "
+             "<span class='mono'>trade_intent</span> rows</b> — so F-26&rsquo;s question (do those writers "
+             "gain a store in the seam, or does the trading path document that its parents are checked "
+             "upstream?) is answered <b>before</b> that writer exists rather than after. Answering it first "
+             "also means Stage 9&rsquo;s own writers get the four-parent treatment from the start instead of "
+             "inheriting five unguarded <span class='mono'>REFERENCES</span> clauses. <b>F-26 stays "
+             "<span class='no'>OPEN</span> until that choice is made and recorded</b>: this ruling schedules "
+             "the decision, it does not make it"),
+            ("4", "Does the cadence change, given &ldquo;begin with multiple stages at once … we are way "
+                  "behind on production&rdquo;?",
+             "<b>Yes — batch the rulings, not the work</b>",
+             "Two batches run concurrently and go to the owner on <b>one combined board</b>. What stays "
+             "<b>per-batch</b>, so nothing becomes unattributable: the gate, the tamper proof, the "
+             "<span class='mono'>docs/07</span> register rows and the <span class='mono'>docs/15</span> record "
+             "section. What changes is that the owner rules on two batches at once instead of sequentially, and "
+             "the work does not stop between them. <b>The first authorisation of concurrency in this "
+             "project&rsquo;s history</b>, recorded as a change of cadence rather than a relaxation of "
+             "evidence: every claim on a combined board is still measured in-tree, per batch"),
+        ],
+    )
+
 def main() -> pathlib.Path:
     tokens = re.sub(r"@font-face \{[^}]*\}", "", (HERE / "tokens.css").read_text())
 
@@ -808,6 +866,52 @@ def main() -> pathlib.Path:
           "<b>policy</b> before Stage 11&rsquo;s V1&ndash;V3 gates; no confidence <b>band</b> (F-24) without "
           "its own scope; and no wiring of either intelligence writer to a route, declined three times and not "
           "offered here.</p>",
+
+        # -- 13 -----------------------------------------------------------------
+        "<h3>13 &middot; D-056 &mdash; the four rulings"
+        "<span class='tag'>2026-11-28 &middot; docs/15 &sect;14.10</span></h3>"
+        "<p>All four questions in &sect;12 were answered <b><span class='ok'>Recommend</span></b>, each against "
+        "exactly one marked recommendation, and are recorded as <b>D-056</b>. &sect;12 is left as it was put; "
+        "this section is the ruling. <b>No code changed</b> &mdash; <span class='mono'>git diff 2267eb4 HEAD -- "
+        "backend/</span> is empty &mdash; and the gate re-ran anyway, because this section quotes what it "
+        "produces:</p>"
+        + verbatim("captured after the ruling, on an unchanged backend tree", BLOCK_GATE)
+        + "<div class='card'>" + ruling_table() + "</div>"
+        + "<p><b>What ruling 4 does not settle, stated because it is the one gap the ruling leaves.</b> "
+          "Q4&rsquo;s option (a) named &ldquo;8.8&rdquo; as the batch that runs beside Stage 9&rsquo;s first "
+          "deliverable, and <b>no document in this repository defines 8.8&rsquo;s scope</b> &mdash; the option "
+          "text carried the label without the content, and this record will not retro-fit a scope to a ruling "
+          "that did not state one. What <i>is</i> derivable from in-repo pointers, and is therefore what the "
+          "next board <b>puts</b> rather than assumes: <b>F-24</b> is the one open finding whose subject is "
+          "Stage 8&rsquo;s own tables (a belief carries one confidence number where "
+          "<span class='mono'>docs/10</span> &sect;3.1 asks for it <i>&ldquo;as a band&rdquo;</i> and D-035 "
+          "approved <i>&ldquo;beliefs as bands&rdquo;</i>); "
+          "<span class='mono'>migrations/0002_memory.sql</span>&rsquo;s header says exactly <b>one</b> thing is "
+          "deliberately absent from it <i>&ldquo;because no batch has ruled on it&rdquo;</i>, and since 8.7 that "
+          "one thing is the confidence band; and F-18&rsquo;s remaining gap 4 is the sufficiency meter, which "
+          "<span class='mono'>docs/12</span> &sect;1.3 places at <b>stage 10</b> and not in Stage 8. So "
+          "<b>8.8 = F-24</b> is the derivation &mdash; <b>and the shape of a band still has no ruling behind "
+          "it</b> (&sect;12.8 recorded that when it opened the finding), so two more columns, one band column, "
+          "or something else is a question for the owner and not a decision a batch may take silently.</p>"
+        + "<p><b>What this ruling does not do</b>, stated so nobody has to infer it. It does <b>not</b> "
+          "authorise an expiry <b>policy</b>: no filter, no <span class='mono'>is_expired()</span>-style reader "
+          "on <span class='mono'>memory_item</span>, nothing acting on the column until "
+          "<span class='mono'>docs/10</span> &sect;3.2&rsquo;s V1&ndash;V3 gates finalise at Stage 11. It does "
+          "<b>not</b> authorise a confidence <b>band</b> &mdash; ruling 4 schedules two batches, and "
+          "F-24&rsquo;s shape is a question on the next board rather than a consequence of this one. It does "
+          "<b>not</b> wire either intelligence writer to a route, declined three times and not offered in "
+          "&sect;12. It does <b>not</b> retire any of &sect;11&rsquo;s eight limitations, including limitation 1 "
+          "&mdash; the one gap 2&rsquo;s closure could most easily have been read to retire. It does <b>not</b> "
+          "make F-26&rsquo;s seam choice, which is Stage 9&rsquo;s first deliverable and is still open. It does "
+          "<b>not</b> close F-24, F-26 or F-27, and does <b>not</b> close F-18. And it does <b>not</b> "
+          "enumerate stages beyond 11: <span class='mono'>docs/12</span> &sect;1.3 names knowledge sufficiency "
+          "as stage 10 and the three verification gates as stage 11, "
+          "<span class='mono'>design/build_board52.py:73-87</span> defines 9, 10 and 11, and <b>no document in "
+          "this repository names stages 12 to 23</b>, so none is invented here.</p>"
+        + "<p><b>Next.</b> Two batches concurrently, on one combined board, per ruling 4: <b>8.8 = "
+          "F-24&rsquo;s confidence band</b>, with the band&rsquo;s <i>shape</i> put as a question rather than "
+          "assumed; and <b>Stage 9&rsquo;s first deliverable = F-26&rsquo;s seam</b>, settled before any "
+          "Stage 9 writer is written. The next finding id is <b>F-28</b>.</p>",
     ])
 
     html_out = (
@@ -818,7 +922,7 @@ def main() -> pathlib.Path:
         "<div class=\"lede\">Nexus-AI &middot; Stage 8 of 23 &middot; sub-deliverable 8.7 &middot; "
         "ordered by D-055&rsquo;s ruling 4 as <b><span class=\"mono\">expires_at</span> on "
         "<span class=\"mono\">memory_item</span> only</b> &middot; "
-        "<b>BUILT — AWAITING REVIEW</b> &middot; <b>F-27 OPEN</b>, found here, recorded with no batch "
+        "<b>APPROVED 2026-11-28 (D-056)</b> &middot; <b>F-18&rsquo;S GAP 2 CLOSED</b> on the column, not on the TTL &middot; <b>F-27 OPEN</b>, found here, recorded with no batch "
         "&middot; next finding id <b>F-28</b> &middot; F-18 stays <b>NARROWED</b>, gap 4 open &middot; "
         "F-24 and F-26 untouched &middot; next: <b>Stage 9</b>, with F-26&rsquo;s seam settled inside it "
         "(&sect;12 Q3)</div>"
@@ -854,8 +958,11 @@ def main() -> pathlib.Path:
         "fixed, because the count is a row written at apply time and never rewritten, so a fix would split "
         "production into two populations reporting different numbers for the same version and checksum.</div>"
         + body
-        + "<footer><b>Stage 8.7 &mdash; the fourth clock.</b> <b>BUILT — AWAITING REVIEW</b>, four questions "
-          "in &sect;12 &middot; migration <span class=\"mono\">0006_memory_expiry</span>, <b>one</b> statement "
+        + "<footer><b>Stage 8.7 &mdash; the fourth clock.</b> <b>APPROVED 2026-11-28 (D-056)</b>: all four "
+          "questions in &sect;12 answered <b>Recommend</b>, the ruling in &sect;13 &middot; <b>F-18&rsquo;s gap 2 CLOSED</b> on the column and not on the TTL, with limitation 1 published "
+          "beside the closure, and F-18&rsquo;s word still <b>NARROWED</b> &middot; <b>F-27 OPEN</b> "
+          "with no batch &middot; <b>Stage 9 opens</b> with F-26&rsquo;s seam first, and <b>the cadence "
+          "changes</b> to two batches on one combined board &middot; migration <span class=\"mono\">0006_memory_expiry</span>, <b>one</b> statement "
           "<span class=\"mono\">ALTER TABLE memory_item ADD COLUMN expires_at TEXT</span>, checksum "
           "<span class=\"mono\">f54eecd2c3f6c2c6&hellip;</span>, "
           "<span class=\"mono\">requires=\"memory_item\"</span> &middot; <b>0005&rsquo;s checksum unchanged</b> "
