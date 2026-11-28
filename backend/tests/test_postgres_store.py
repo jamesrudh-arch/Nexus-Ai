@@ -936,12 +936,47 @@ class TestWhatTheStatusEndpointPublishes:
         assert store.path == "postgresql://db.internal:5432/nexus"
         assert "Sup3rSecret" not in store.path
 
-    def test_the_live_status_endpoint_names_the_engine_and_leaks_nothing(self, dsn: str) -> None:
+    def test_an_ephemeral_audit_backend_overrides_the_database_url(self, dsn: str) -> None:
+        """`NEXUS_AUDIT_BACKEND=memory` wins over `NEXUS_DATABASE_URL`, and says so on the wire.
+
+        Documented behaviour rather than a defect: `_default_operational_store` refuses to put a
+        durable operational state beside a volatile record of why it changed. It is pinned here because
+        it is the reason the two tests above have to clear the variable — `ci.yml` sets it for the
+        whole workflow, so an app-boot test that does not is a test of the in-memory store. The
+        override is visible rather than silent: the endpoint reports `engine: sqlite` and
+        `ephemeral: true`, and no PostgreSQL connection is attempted.
+        """
+        import os
+
         from fastapi.testclient import TestClient
 
         from nexus.api.app import create_app
         from nexus.core.config import Settings
 
+        previous = os.environ.get("NEXUS_AUDIT_BACKEND")
+        os.environ["NEXUS_AUDIT_BACKEND"] = "memory"
+        try:
+            app = create_app(settings=Settings(_env_file=None, database_url=dsn))
+            with TestClient(app) as client:
+                persistence = client.get("/v1/status").json()["persistence"]
+        finally:
+            if previous is None:
+                os.environ.pop("NEXUS_AUDIT_BACKEND", None)
+            else:
+                os.environ["NEXUS_AUDIT_BACKEND"] = previous
+        assert persistence["engine"] == "sqlite", persistence
+        assert persistence["ephemeral"] is True, persistence
+        assert persistence["path"] is None, "an ephemeral store has no location to publish"
+
+    def test_the_live_status_endpoint_names_the_engine_and_leaks_nothing(
+        self, dsn: str, monkeypatch: Any
+    ) -> None:
+        from fastapi.testclient import TestClient
+
+        from nexus.api.app import create_app
+        from nexus.core.config import Settings
+
+        monkeypatch.delenv("NEXUS_AUDIT_BACKEND", raising=False)
         app = create_app(settings=Settings(_env_file=None, database_url=dsn))
         with TestClient(app) as client:
             persistence = client.get("/v1/status").json()["persistence"]
@@ -960,14 +995,22 @@ class TestTheApiBootsOnPostgres:
     rather than asserting only that the driver works.
     """
 
-    def test_the_app_serves_and_its_chain_verifies(self, dsn: str) -> None:
+    def test_the_app_serves_and_its_chain_verifies(self, dsn: str, monkeypatch: Any) -> None:
         from fastapi.testclient import TestClient
 
         from nexus.api.app import create_app
         from nexus.core.config import Settings
 
+        # ci.yml sets NEXUS_AUDIT_BACKEND=memory for the whole workflow, and _default_operational_store
+        # answers it by building an ephemeral SQLite store and ignoring database_url — deliberately, so
+        # a durable operational state never sits beside a volatile record of why it changed. Without
+        # this line the test passed on the runner while exercising no PostgreSQL at all.
+        monkeypatch.delenv("NEXUS_AUDIT_BACKEND", raising=False)
         app = create_app(settings=Settings(_env_file=None, database_url=dsn))
         with TestClient(app) as client:
+            persistence = client.get("/v1/status").json()["persistence"]
+            assert persistence["engine"] == "postgresql", persistence
+            assert persistence["ephemeral"] is False, persistence
             health = client.get("/healthz")
             assert health.status_code == 200, health.text
             assert health.json()["status"] == "ok"

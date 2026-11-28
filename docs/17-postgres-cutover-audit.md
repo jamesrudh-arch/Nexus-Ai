@@ -82,8 +82,8 @@ proves nothing about one. So `psycopg[binary]>=3.1` and `pgserver>=0.1.4` are pi
 extra, and **F-39** records what that cost: pgserver publishes no Linux arm64 wheel and no sdist, so
 the extra needed an environment marker to stay installable on the production architecture.
 
-**Counts.** `1,586 passed, 2 skipped, 0 failed` for the whole suite; `59` of those are
-`tests/test_postgres_store.py` (50 test functions, 59 collected cases through parametrisation) and
+**Counts.** `1,587 passed, 2 skipped, 0 failed` for the whole suite; `60` of those are
+`tests/test_postgres_store.py` (51 test functions, 60 collected cases through parametrisation) and
 `1,527 passed, 2 skipped` is everything else — measured by running the suite with that one file
 ignored. The 2 skips are pre-existing and unrelated. The baseline at `608f166` was `1,527/2/0`, so
 **no pre-existing test was removed or weakened**: `test_api.py` went 33 → 34 test functions and
@@ -102,7 +102,7 @@ ignored. The 2 skips are pre-existing and unrelated. The baseline at `608f166` w
 | `backend/src/nexus/store/operational.py` | 1,438 | Now `SqlOperationalStore` — **52 methods** shared by both drivers — with three seams (`_prepare_storage`, `_open_connection`, `_apply_migrations`) overridden per driver. `SqliteOperationalStore` is 3 methods. |
 | `backend/src/nexus/audit/log.py` | 246 | The chain, unchanged in behaviour; its `:name` placeholders are what exposed §5.2. |
 | `backend/src/nexus/api/app.py` | 848 | Engine selection by `NEXUS_DATABASE_URL`, fail-closed refusals, and the two fixes in §5.1 and §5.3. |
-| `backend/tests/test_postgres_store.py` | 1,104 | 59 cases against a real server. |
+| `backend/tests/test_postgres_store.py` | 1,153 | 60 cases against a real server. |
 
 L-3 forbids two systems of record for one data class, so this is **one store implementation with a
 driver seam**, not two stores. `isinstance(postgres_store, SqliteOperationalStore)` is `False` and
@@ -270,6 +270,20 @@ four times before the suite was green. Each was caught by execution:
    and deserialises with `dict(row)`, `row_order` reached every entity dict and every HTTP response —
    on PostgreSQL and not on SQLite. It is now projected out of results by name, and a test asserts
    `"row_order" not in dict(row)` while the raw driver still sees the column and its monotonic value.
+5. **Two tests passed on the CI runner while exercising no PostgreSQL at all, and one failed for a
+   reason that was not a defect.** `ci.yml:35` sets `NEXUS_AUDIT_BACKEND=memory` for the whole
+   workflow, and `_default_operational_store` answers that by building an ephemeral SQLite store and
+   ignoring `database_url` — deliberately, and documented in its own docstring. So the app-boot test
+   that asserted `persistence["engine"] == "postgresql"` failed on the runner and passed locally, and
+   the app-boot test beside it passed **on both** while testing the in-memory store. The first push of
+   this batch went red for exactly that, and the runner's log could not be read from here
+   (`results-receiver.actions.githubusercontent.com` is outside this environment's egress allowlist,
+   which is O-011 again in a job O-011's fix never covered), so the Pytest step now republishes its
+   tail as one error annotation, readable through the ordinary REST API on any host. That annotation is
+   how the cause was found. Both tests now clear the variable through `monkeypatch`, assert which
+   store they actually got, and the override itself is pinned by a third test — see §9.5. A test whose
+   meaning depends on an ambient environment variable is the same class of defect as a test that
+   skips: it reports green and proves nothing.
 
 ---
 
@@ -500,13 +514,34 @@ survives or does not, so it is a test and not a manual step.
 | `ruff check src tests` | All checks passed |
 | `ruff format --check src tests` | 98 files already formatted |
 | `mypy` (strict, `src/nexus`) | Success: no issues found in **65** source files |
-| `pytest` | **1,586 passed, 2 skipped, 0 failed** |
+| `pytest` | **1,587 passed, 2 skipped, 0 failed** |
+| `pytest` in CI's exact environment | **1,587 passed, 2 skipped** — re-run with `NEXUS_AUDIT_BACKEND=memory`, `NEXUS_ENVIRONMENT=DISABLED` and `NEXUS_LIVE_TRADING_ENABLED=false` set exactly as `ci.yml:30-35` sets them, because §9.5 makes the environment part of the behaviour under test |
 | CI: phase gate | `live_trading False`, `venue_adapters False`, `real_money_orders_possible False`, `order_capability False` |
 | CI: data adapters | all four `read-only, credential-free`; no credential parameter; no order verb |
 | CI: paid vendors | none referenced in `backend/src` |
 | CI: trading routes | **17 routes, none trading-capable** |
 
 The four CI assertions were run locally from `ci.yml`'s own text rather than paraphrased.
+
+### 9.5 The environment CI runs in is part of the behaviour under test
+
+`ci.yml:30-35` sets three variables for every job: `NEXUS_LIVE_TRADING_ENABLED=false`,
+`NEXUS_ENVIRONMENT=DISABLED` and **`NEXUS_AUDIT_BACKEND=memory`**. The third one changes which store
+the application builds. `_default_operational_store` treats an explicitly ephemeral audit log as a
+request for an ephemeral operational store too, and its docstring gives the reason: *"a durable
+operational state next to a volatile record of why it changed would be worse than either choice
+alone."* So `NEXUS_AUDIT_BACKEND=memory` **overrides `NEXUS_DATABASE_URL`**, and an app booted with a
+PostgreSQL URL under that variable gets `SqliteOperationalStore(":memory:")`.
+
+That is documented product behaviour and it is visible rather than silent — `/v1/status` reports
+`engine: sqlite`, `ephemeral: true` and `path: null` — so it is recorded here as a coupling and pinned
+by `test_an_ephemeral_audit_backend_overrides_the_database_url`, not raised as a finding. What it does
+mean for this audit is narrower and worth stating: **on the CI runner, the app-boot tests do not reach
+PostgreSQL unless they clear the variable themselves.** The 60 parity cases do run against a real
+server there — measured, not assumed, by the runner's own output: 58 of them had passed before the one
+environment-dependent failure stopped the run at `--maxfail=1`. So `pgserver`'s bundled PostgreSQL does
+start on `ubuntu-latest`, which is the fact §10.1 needed and had until then only inferred from a wheel
+tag.
 
 ---
 
@@ -531,7 +566,10 @@ and it is fixed here: the dependency carries an environment marker — Linux req
 can be provided.
 
 **The residue, stated plainly.** CI runs `ubuntu-latest` on x86_64 with Python 3.11, where a matching
-wheel exists, so the parity suite **does** run in CI and that is where it is enforced. On the
+wheel exists, so the parity suite **does** run in CI and that is where it is enforced — **measured on
+the runner rather than inferred from a wheel tag**: 58 of its cases had passed there before an
+unrelated environment-dependent failure stopped the run (§9.5), so the bundled server does start on a
+GitHub-hosted runner. On the
 production VM it will skip, and a skipped parity test is not a passing one. To stop that from being
 silent, CI gained a step that fails the build if this file reports a skip or collects nothing. What
 cannot be recovered is parity evidence on ARM64: no ARM64 Linux PostgreSQL was executed anywhere in
