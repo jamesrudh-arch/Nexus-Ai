@@ -420,6 +420,56 @@ def decision_table() -> str:
     )
 
 
+def ruling_table() -> str:
+    return table(
+        ["#", "Question as put", "Ruled", "What it changes"],
+        [
+            ("1", "Is Stage 8.6 approved, and is F-25 closed?",
+             "<b>Approved, recorded as D-055</b>, and <b>F-25 <span class='mono'>CLOSED</span></b> &mdash; "
+             "on the defect &sect;12.9 named, <i>not</i> on orphans in general",
+             "Both 8.6 rows in <span class='mono'>docs/07</span> move to <span class='mono'>REVIEWED "
+             "&mdash; APPROVED 2026-11-28</span>. &sect;14&rsquo;s <b>limitation 3 stands as published "
+             "beside the closure</b> rather than being retired by it: an orphan is still writable at the "
+             "store layer and still unscanned. That is D-053&rsquo;s ruling 1 distinction for "
+             "<span class='mono'>O-012</span> applied a second time &mdash; close on the defect the finding "
+             "named, and leave the limitation visible next to the closure so a reader who sees "
+             "&ldquo;F-25 closed&rdquo; cannot take &ldquo;orphans impossible&rdquo; with it. The "
+             "alternative, holding F-25 open until <span class='mono'>save_evidence_ref</span> refuses too, "
+             "would make boot recovery depend on a read and put the replay of a chained event at the mercy "
+             "of a parent not yet projected"),
+            ("2", "Should the four-parent gate stay in "
+                  "<span class='mono'>test_evidence_writer.py</span>, or move?",
+             "<b>It stays where it is</b>",
+             "No file moves, so <span class='mono'>tests</span> stays at <b>31</b> files and the gate stays "
+             "beside the refusal it was ordered beside &mdash; removing either one shows up in the same "
+             "file. &sect;14&rsquo;s <b>limitation 6 stays published</b>: the file&rsquo;s name understates "
+             "what it holds, and this ruling accepts that cost rather than paying a 32nd file for thirteen "
+             "tests or putting a behavioural test that builds three stores among "
+             "<span class='mono'>test_repo_hygiene.py</span>&rsquo;s source scans"),
+            ("3", "Are &sect;11&rsquo;s five unguarded trading-path foreign keys a finding now, or a note "
+                  "for Stage 9?",
+             "<b>Recorded now as <span class='mono'>F-26</span>, "
+             "<span class='no'>OPEN</span></b> &mdash; a finding about the <b>seam</b>, not about a defect "
+             "in shipped behaviour",
+             "F-26 joins F-17, F-19, F-22 (<span class='mono'>O-014</span>) and F-24 as an open finding "
+             "with no batch behind it. It is <b>not</b> an <span class='mono'>O-</span> row: D-054 "
+             "established that scheduling a batch is not opening an obligation row, and recording a finding "
+             "is not either &mdash; <span class='mono'>O-014</span> exists for F-22 only because "
+             "D-052&rsquo;s ruling 4 said so in terms. <b>The next finding id is F-27</b>"),
+            ("4", "Does 8.7 still mean <span class='mono'>expires_at</span>, and on which table?",
+             "<b>Yes, unchanged, and on <span class='mono'>memory_item</span> only</b>",
+             "8.7 is ordered and scoped: one nullable <span class='mono'>ADD COLUMN expires_at TEXT</span> "
+             "&mdash; &sect;5.3&rsquo;s executed survey lists it <span class='mono'>OK</span>, so <b>no "
+             "rebuild and no row copied</b>, unlike <span class='mono'>0004</span> &mdash; one writer "
+             "argument, and <b>nothing acting on it</b>, because "
+             "<span class='mono'>docs/10</span> &sect;3.2&rsquo;s V1&ndash;V3 gates are what would consume "
+             "it. <span class='mono'>evidence_ref</span> gains nothing: its freshness is already two "
+             "columns and a <span class='mono'>data_status</span>, and a third clock on the table whose two "
+             "clocks F-14 spent a batch separating would be the wrong kind of company"),
+        ],
+    )
+
+
 def main() -> pathlib.Path:
     tokens = re.sub(r"@font-face \{[^}]*\}", "", (HERE / "tokens.css").read_text())
 
@@ -652,15 +702,90 @@ def main() -> pathlib.Path:
         + "<div class='card'>" + limitation_table() + "</div>",
 
         # -- 15 -----------------------------------------------------------------
-        "<h3>15 &middot; Decision requested &mdash; four questions, each with one marked recommendation"
-        "<span class='tag'>docs/15 &sect;13.8 &middot; D-055</span></h3>"
+        "<h3>15 &middot; Decision requested, and answered &mdash; four questions, each with one marked "
+        "recommendation"
+        "<span class='tag'>docs/15 &sect;13.8 &middot; answered as D-055, &sect;16</span></h3>"
         + "<div class='card'>" + decision_table() + "</div>"
         + "<p>No <span class='mono'>D-0nn</span> row is written in "
           "<span class='mono'>docs/07</span> and no finding is closed in "
           "<span class='mono'>docs/00</span> until the owner rules: <b>approval is never inferred</b>, and "
-          "a stage that is complete is not a stage that is approved. F-25 is <b>fixed in code</b> and its "
-          "closure is <b>requested</b> by question 1; both rows in the register read "
-          "<span class='mono'>BUILT &mdash; AWAITING REVIEW</span>.</p>",
+          "a stage that is complete is not a stage that is approved. F-25 was <b>fixed in code</b> with its "
+          "closure <b>requested</b> by question 1 rather than assumed. <b>Answered 2026-11-28 as "
+          "D-055</b> (&sect;16): all four questions <span class='ok'>Recommend</span>, each against exactly "
+          "one marked recommendation, and both rows in the register now read "
+          "<span class='mono'>REVIEWED &mdash; APPROVED 2026-11-28</span>.</p>",
+
+        # -- 16 -----------------------------------------------------------------
+        "<h3>16 &middot; D-055 &mdash; the four rulings, what F-26 records, and what the ruling does not do"
+        "<span class='tag'>answered 2026-11-28 &middot; docs/15 &sect;13.9</span></h3>"
+        "<p>All four questions in &sect;15 were answered <span class='ok'>Recommend</span>, each against "
+        "exactly one marked recommendation, and are recorded as <b>D-055</b>. &sect;15 is left as it was "
+        "put; this section is the ruling. <b>No code changed</b> &mdash; <span class='mono'>git diff "
+        "f15eb43 HEAD -- backend/</span> is empty &mdash; and the gate re-ran anyway, because this section "
+        "quotes what it produces: <b>1,408 passed / 2 skipped / 0 failed</b>, "
+        "<span class='mono'>ruff check src tests</span> clean, <span class='mono'>ruff format --check</span> "
+        "unchanged on <b>93</b> files, mypy strict clean on <b>62</b>.</p>"
+        + "<div class='card'>" + ruling_table() + "</div>"
+        + "<p><b>F-26, in the terms &sect;11 measured it.</b> Five of the nine declared foreign keys in the "
+          "live schema have no writer that <i>could</i> guard them: "
+          "<span class='mono'>decision.instrument_id</span>, "
+          "<span class='mono'>trade_intent.decision_id</span>, "
+          "<span class='mono'>orders.intent_id</span>, <span class='mono'>fills.order_id</span> and "
+          "<span class='mono'>approval.intent_id</span>. The reason is structural rather than an oversight "
+          "&mdash; <span class='mono'>save_decision</span> takes a "
+          "<span class='mono'>DecisionRecord</span>, <span class='mono'>save_intent</span> a "
+          "<span class='mono'>TradeIntent</span>, <span class='mono'>save_approval</span> an "
+          "<span class='mono'>ApprovalRecord</span>, domain objects with <b>no store in the signature</b>, "
+          "and nothing in <span class='mono'>src/</span> calls any of the three; "
+          "<span class='mono'>orders</span> and <span class='mono'>fills</span> are written only by "
+          "projection. So the guard the three intelligence writers have <b>cannot be added there without "
+          "changing the seam</b>. Beside it, <span class='mono'>DecisionRecord.instrument_id</span> is an "
+          "unvalidated optional string, so a dangling instrument is <b>representable</b> in the domain model "
+          "today &mdash; and not <b>writable</b>, because no code path writes one. Nothing is orphaned "
+          "today, which is why this is a finding about a decision and not a defect in code that runs. "
+          "<b>The decision Stage 9 will have to make</b> is which of two postures the trading path takes: "
+          "either those writers gain a store in the seam, so a parent can be checked before a row is written "
+          "the way <span class='mono'>open_dossier</span>, "
+          "<span class='mono'>record_evidence</span> and "
+          "<span class='mono'>record_memory_item</span> each do; or the trading path accepts that its "
+          "parents are checked <b>upstream</b>, in whatever produces a "
+          "<span class='mono'>DecisionRecord</span>, and says so in a document instead of leaving it to be "
+          "inferred from five unguarded <span class='mono'>REFERENCES</span> clauses. F-26 exists so that "
+          "question is asked <b>before</b> a writer is written, and not after.</p>"
+        + "<p><b>What this ruling does not do</b>, stated so nobody has to infer it. It does <b>not</b> "
+          "close <b>F-18</b>: gap 2 (<span class='mono'>expires_at</span>) is ordered as 8.7 and gap 4 (the "
+          "sufficiency meter) stays open with <b>no batch behind it</b>, declined at D-054 and not offered "
+          "again here. It does <b>not</b> retire any of &sect;14&rsquo;s eight limitations, including "
+          "limitation 3 &mdash; the one F-25&rsquo;s closure could most easily have been read to retire. It "
+          "does <b>not</b> harden the store: "
+          "<span class='mono'>save_evidence_ref</span> still accepts a dangling "
+          "<span class='mono'>dossier_id</span> by design, "
+          "<span class='mono'>save_dossier</span> still accepts an unmapped instrument on the same terms, "
+          "and <span class='mono'>PRAGMA foreign_keys</span> still reads <b>0</b>, because a check in the "
+          "projection target would make boot recovery depend on a read and could fail the replay of an event "
+          "the chain already holds. It does <b>not</b> wire either writer: nothing in "
+          "<span class='mono'>src/</span> calls <span class='mono'>record_memory_item</span> or "
+          "<span class='mono'>record_evidence</span>, no route serves "
+          "<span class='mono'>memory_item</span>, and a belief stays <b>recordable</b> and still not "
+          "<b>readable over HTTP</b>. It does <b>not</b> close &sect;11.12&rsquo;s limitation 1 &mdash; "
+          "<span class='mono'>evidence_ref.retrieved_at</span> still has no caller, offered at D-053, "
+          "offered again at D-054 and declined both times. It does <b>not</b> touch <b>F-22</b> "
+          "(<span class='mono'>O-014</span>), which D-052&rsquo;s ruling 4 recorded precisely so it would "
+          "not be closed by accident, and it does not touch F-17 or F-19. And it does <b>not</b> change a "
+          "single number in this board: the gate, the tamper proof, the inventory and the file counts are "
+          "all quoted here as measured at <span class='mono'>f15eb43</span>.</p>"
+        + "<p><b>Finding ids after this ruling.</b> <b>F-25 "
+          "<span class='ok'>CLOSED</span></b> 2026-11-28 (D-055), on the defect &sect;12.9 named. "
+          "<b>F-26 <span class='no'>OPEN</span></b>, recorded by this ruling, no batch behind it. "
+          "<b>F-24 stays <span class='no'>OPEN</span></b> with no batch behind it, because the shape of a "
+          "band has no ruling: 8.5 delivered the time axis and the confidence axis is still one number where "
+          "<span class='mono'>docs/10</span> &sect;3.1 asks for a band. <b>F-18 is NARROWED</b> &mdash; gaps "
+          "1 and 3 <span class='ok'>CLOSED</span>, gap 2 ordered as 8.7, gap 4 "
+          "<span class='no'>OPEN</span> with no batch. <b>F-22/<span class='mono'>O-014</span> stays "
+          "<span class='no'>OPEN</span></b>. <b>The next finding id is F-27.</b> <b>Next: 8.7 = "
+          "<span class='mono'>expires_at</span> on <span class='mono'>memory_item</span> only</b>, ordered "
+          "by ruling 4 and <b>not started</b> &mdash; no migration, no column and no writer argument exists "
+          "in the tree at <span class='mono'>f15eb43</span>.</p>",
     ])
 
     html_out = (
@@ -670,9 +795,11 @@ def main() -> pathlib.Path:
         "<style>" + tokens + "\n" + fonts_css() + "\n" + CSS + "</style></head><body><div class='wrap'>"
         "<div class=\"lede\">Nexus-AI &middot; Stage 8 of 23 &middot; sub-deliverable 8.6 &middot; "
         "ordered by D-054&rsquo;s ruling 3 as <b>F-25 alone</b> &middot; "
-        "<b>BUILT &mdash; AWAITING REVIEW</b>, approval requested as <b>D-055</b> &middot; F-25 "
-        "<b>fixed in code</b>, closure requested &middot; <b>F-26</b> requested for the trading-path seam "
-        "&middot; next finding id <b>F-26</b></div>"
+        "<b>APPROVED 2026-11-28 (D-055)</b> &middot; <b>F-25 CLOSED</b> on the defect &sect;12.9 "
+        "named, <b>not</b> on orphans in general &middot; <b>F-26 OPEN</b>, recorded against the "
+        "trading-path seam &middot; next finding id <b>F-27</b> &middot; next <b>8.7 = "
+        "<span class=\"mono\">expires_at</span> on <span class=\"mono\">memory_item</span> only</b>, "
+        "ordered and not started</div>"
         "<h1 style=\"font-size:var(--font-size-heading);font-weight:var(--font-weight-semibold);"
         "margin:6px 0 0\">The fourth parent is guarded &mdash; and a gate that names all four, both halves, "
         "from one tuple</h1>"
@@ -721,13 +848,21 @@ def main() -> pathlib.Path:
         "(19,121&nbsp;&rarr;&nbsp;<b>19,382</b>), both baselines re-derived from "
         "<span class=\"mono\">git archive HEAD</span> into a scratch tree. No adapter changed, so no live "
         "endpoint was called and no venue run speaks to this batch &middot; <b>eight</b> limitations "
-        "published in full &middot; next: <b>8.7 = "
-        "<span class=\"mono\">expires_at</span></b> on <span class=\"mono\">memory_item</span> only, "
-        "re-confirmed by question 4 and not authorised</div>"
+        "published in full &middot; <b>APPROVED 2026-11-28 as D-055</b> "
+        "(&sect;16): <b>F-25 CLOSED</b> on the defect, not on orphans; the gate stays; <b>F-26 OPEN</b> "
+        "against the trading-path seam; next finding id <b>F-27</b>; next <b>8.7 = "
+        "<span class=\"mono\">expires_at</span></b> on <span class=\"mono\">memory_item</span> "
+        "<b>only</b>, ordered and not started</div>"
         + body
         + "<footer>Stage 8.6 &middot; <b>F-25 alone</b>, as D-054&rsquo;s ruling 3 ordered &middot; "
-          "<b>BUILT &mdash; AWAITING REVIEW</b>, approval requested as <b>D-055</b> with four questions in "
-          "&sect;15 &middot; <b>three files, +339 / &minus;2</b>, one of them four lines of docstring "
+          "<b>APPROVED 2026-11-28 (D-055)</b>, all four questions in &sect;15 answered "
+          "<b>Recommend</b> and ruled in &sect;16 &middot; <b>F-25 CLOSED</b> on the defect &sect;12.9 "
+          "named and <b>not</b> on orphans in general, so &sect;14&rsquo;s limitation 3 stays published "
+          "beside the closure &middot; <b>F-26 OPEN</b> against the trading-path seam, a finding about the "
+          "seam rather than a defect in shipped behaviour and <b>not</b> an "
+          "<span class=\"mono\">O-</span> row &middot; the gate <b>stays</b> in "
+          "<span class=\"mono\">test_evidence_writer.py</span>, limitation 6 accepted as the cost "
+          "&middot; <b>the next finding id is F-27</b> &middot; <b>three files, +339 / &minus;2</b>, one of them four lines of docstring "
           "&middot; <b>no migration, no column, no route, no schema text</b> &middot; "
           "<span class=\"mono\">record_evidence</span> refuses a "
           "<span class=\"mono\">dossier_id</span> the store has never held, with <b>two branches and two "
@@ -750,8 +885,11 @@ def main() -> pathlib.Path:
           "extended by hand &middot; F-24 still open with no batch, F-18 still narrowed with gaps 2 and 4 "
           "open, <span class=\"mono\">O-014</span>/F-22 untouched &middot; no adapter changed, so no live "
           "run speaks to this batch &middot; next: <b>8.7 = "
-          "<span class=\"mono\">expires_at</span></b> on <span class=\"mono\">memory_item</span> only, "
-          "recommended and not authorised</footer>"
+          "<span class=\"mono\">expires_at</span></b> on <span class=\"mono\">memory_item</span> "
+          "<b>only</b>, ordered by ruling 4 and <b>not started</b> &mdash; one nullable "
+          "<span class=\"mono\">ADD COLUMN</span> with no rebuild, one writer argument, and nothing "
+          "acting on it until <span class=\"mono\">docs/10</span> &sect;3.2&rsquo;s "
+          "V1&ndash;V3 gates consume it</footer>"
           "</div></body></html>"
     )
 

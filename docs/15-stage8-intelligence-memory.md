@@ -13,12 +13,14 @@ re-confirmed by **D-052**'s ruling 2. §11, with the ruling in §11.14 and **F-2
 alternative (wiring `retrieved_at` first), which was declined. §12, with the ruling in §12.14, **F-24** in
 §12.8 and **F-25** in §12.9. **F-18 is narrowed, not closed** — gaps 1 and 3 close, gaps 2 and 4 stay open.
 Nothing calls the writer and no route serves `memory_item`, by ruling.
-**8.6 — F-25 alone: the fourth parent is guarded.** Status: `BUILT — AWAITING REVIEW`. Authorised by
-**D-054**'s ruling 3, which ordered one refusal in `record_evidence` and a gate naming **all four** parents
-rather than three. §13, with all **nine** declared foreign keys inventoried in §13.5. **No migration, no
-column, no route, no schema text** — three files, +339 / −2. Approval requested as **D-055** (§13.8), which
-also asks whether §13.5's five unguarded trading-path keys become **F-26**. **Next after it: 8.7 =
-`expires_at` on `memory_item` only.**
+**8.6 — F-25 alone: the fourth parent is guarded.** Status: `REVIEWED — APPROVED 2026-11-28 (D-055)`.
+Authorised by **D-054**'s ruling 3, which ordered one refusal in `record_evidence` and a gate naming **all
+four** parents rather than three. §13, with all **nine** declared foreign keys inventoried in §13.5. **No
+migration, no column, no route, no schema text** — three files, +339 / −2. **D-055** (§13.9) approves it,
+closes **F-25** on the defect §12.9 named and *not* on orphans in general, keeps the gate in
+`test_evidence_writer.py`, records §13.5's five unguarded trading-path keys as **F-26 `OPEN`** — a finding
+about the seam, not a defect in shipped behaviour — and re-confirms **8.7 = `expires_at` on `memory_item`
+only**, which is ordered and **not started**. **The next finding id is F-27.**
 Date: 2026-11-28.
 
 > **This header was three rulings out of date and is corrected here.** It named only 8.1 and still read
@@ -2751,12 +2753,12 @@ others, and 8.2 wrote the writer before any dossier existed to point at.
 Recorded, not fixed: **F-25**. Fixing it inside this batch would have changed a writer D-052 approved, in a
 batch ruled to be about `memory_item`, and §12.13 question 3 asks whether it should be its own batch.
 
-> **F-25 was closed by Stage 8.6, and this section is left as it was written.** D-054's ruling 3 ordered
-> the fix as its own batch; §13.1 records the refusal that shipped and §13.3 the gate that names all four
-> parents, so the table above now measures **4 guarded and 0 unguarded** rather than 3 and 1. Its fourth
-> row stays true of the commit it was measured at, `4443287`, which is why it is annotated rather than
-> edited — a measurement is a fact about a tree, and rewriting it would make this section a claim about
-> code that no longer exists.
+> **F-25 was closed by Stage 8.6, and its closure was ruled by D-055 (§13.9). This section is left
+> as it was written.** D-054's ruling 3 ordered the fix as its own batch; §13.1 records the refusal
+> that shipped and §13.3 the gate that names all four parents, so the table above now measures **4
+> guarded and 0 unguarded** rather than 3 and 1. Its fourth row stays true of the commit it was
+> measured at, `4443287`, which is why it is annotated rather than edited — a measurement is a fact
+> about a tree, and rewriting it would make this section a claim about code that no longer exists.
 
 ### 12.10 The gate
 
@@ -3158,8 +3160,8 @@ oversight: `save_decision` takes a `DecisionRecord`, `save_intent` a `TradeInten
 `ApprovalRecord` — domain objects, with no store in the seam — and nothing in `src/` calls them, so there is
 no writer to put a guard in. `DecisionRecord.instrument_id` is `str | None` with no validation, so a
 dangling instrument is *representable* today; it is not *writable* by any code path, because no code path
-writes it. Whether that is a finding now or a note for Stage 9 is question 3 of §13.8, and this section
-measures it either way.
+writes it. Whether that is a finding now or a note for Stage 9 was question 3 of §13.8; **D-055 answered
+it as `F-26 OPEN`** (§13.9), and this section is left as measured either way.
 
 ### 13.6 The gate
 
@@ -3260,3 +3262,64 @@ expiry: its freshness is already two columns and a `data_status`, and adding a t
 two clocks F-14 spent a batch separating would be the wrong kind of company. The precedent for the column
 exists in the domain model — `DecisionRecord.expires_at` — and `docs/10` §3.2's V1–V3 gates are what would
 consume it, so the writer should store it and nothing should act on it yet.
+
+---
+
+### 13.9 D-055 — the four rulings
+
+All four questions in §13.8 were answered `Recommend`, each against exactly one marked recommendation, and
+are recorded as **D-055**. §13.8 is left as it was put; this section is the ruling. No code changed —
+`git diff f15eb43 HEAD -- backend/` is empty — and the gate re-ran anyway, because this section quotes what
+it produces: **1,408 passed / 2 skipped / 0 failed**, `ruff check src tests` clean, `ruff format --check`
+unchanged on **93** files, mypy strict clean on **62**.
+
+| # | Question as put | Ruled | What it changes |
+|---|---|---|---|
+| 1 | Is Stage 8.6 approved, and is F-25 closed? | **Approved, recorded as D-055**, and **F-25 `CLOSED`** — on the defect §12.9 named, *not* on orphans in general | Both 8.6 rows in `docs/07` become `REVIEWED — APPROVED 2026-11-28`. §13.7's **limitation 3 stands as published beside the closure** rather than being retired by it: an orphan is still writable at the store layer and still unscanned. That is D-053's ruling 1 distinction for `O-012` applied a second time — close on the defect the finding named, and leave the limitation visible next to the closure so a reader who sees "F-25 closed" cannot take "orphans impossible" with it |
+| 2 | Should the four-parent gate stay in `test_evidence_writer.py`, or move? | **It stays where it is** | No file moves, so `tests` stays at **31** files and the gate stays beside the refusal it was ordered beside — removing either one shows up in the same file. §13.7's **limitation 6 stays published**: the file's name understates what it holds, and this ruling accepts that cost rather than paying a 32nd file or putting a behavioural test that builds three stores among `test_repo_hygiene.py`'s source scans |
+| 3 | Are §13.5's five unguarded trading-path foreign keys a finding now, or a note for Stage 9? | **Recorded now as F-26, `OPEN`** — a finding about the **seam**, not about a defect in shipped behaviour | F-26 joins F-17, F-19, F-22 (`O-014`) and F-24 as an open finding with no batch behind it. It is **not** an `O-` row: D-054 established that scheduling a batch is not opening an obligation row, and recording a finding is not either — `O-014` exists for F-22 only because D-052's ruling 4 said so in terms. **The next finding id is F-27** |
+| 4 | Does 8.7 still mean `expires_at`, and on which table? | **Yes, unchanged, and on `memory_item` only** | 8.7 is ordered and scoped: one nullable `ADD COLUMN expires_at TEXT` (§5.3's executed survey lists it `OK`, so **no rebuild and no row copied**, unlike `0004`), one writer argument, and **nothing acting on it** — `docs/10` §3.2's V1–V3 gates are what would consume it. `evidence_ref` gains nothing: its freshness is already two columns and a `data_status`, and a third clock on the table whose two clocks F-14 spent a batch separating would be the wrong kind of company |
+
+**F-26, in the terms §13.5 measured it.** Five of the nine declared foreign keys in the live schema have no
+writer that *could* guard them: `decision.instrument_id → instrument`,
+`trade_intent.decision_id → decision`, `orders.intent_id → trade_intent`, `fills.order_id → orders` and
+`approval.intent_id → trade_intent`. The reason is structural rather than an oversight — `save_decision`
+takes a `DecisionRecord`, `save_intent` a `TradeIntent`, `save_approval` an `ApprovalRecord`, domain objects
+with **no store in the signature**, and nothing in `src/` calls any of the three; `orders` and `fills` are
+written only by projection (`writeahead.py:178` and `:93`). So the guard the three intelligence writers have
+**cannot be added there without changing the seam**. Beside it, `DecisionRecord.instrument_id` is
+`str | None` with no validation, so a dangling instrument is *representable* in the domain model today.
+Nothing writes those tables and nothing is orphaned today, which is why this is recorded as a finding about
+a decision and not as a defect in code that runs. **The decision Stage 9 will have to make** is which of two
+postures the trading path takes: either those writers gain a store in the seam, so a parent can be checked
+before a row is written the way `open_dossier`, `record_evidence` and `record_memory_item` each do; or the
+trading path accepts that its parents are checked **upstream**, in whatever produces a `DecisionRecord`, and
+says so in a document instead of leaving it to be inferred from five unguarded `REFERENCES` clauses. F-26
+exists so that question is asked before a writer is written, and not after.
+
+**What this ruling does not do**, stated so nobody has to infer it. It does **not** close **F-18**: gap 2
+(`expires_at`) is ordered as 8.7 and gap 4 (the sufficiency meter) stays open with **no batch behind it**,
+declined at D-054 and not offered again here. It does **not** retire any of §13.7's eight limitations,
+including limitation 3 — the one F-25's closure could most easily have been read to retire. It does **not**
+harden the store: `save_evidence_ref` still accepts a dangling `dossier_id` by design, `save_dossier` still
+accepts an unmapped `instrument_id` on the same terms, and `PRAGMA foreign_keys` still reads **0**, because
+a check in the projection target would make boot recovery depend on a read and could fail the replay of an
+event the chain already holds. It does **not** wire either writer: nothing in `src/` calls
+`record_memory_item` or `record_evidence`, no route serves `memory_item`, and a belief stays **recordable**
+and still not **readable over HTTP**. It does **not** close §11.12's limitation 1 — `evidence_ref.retrieved_at`
+still has no caller, offered at D-053, offered again at D-054 and declined both times. It does **not** touch
+**F-22** (`O-014`), which D-052's ruling 4 recorded precisely so it would not be closed by accident, and it
+does not touch F-17 or F-19. And it does **not** change a single number in §13: the gate, the tamper proof,
+the inventory and the file counts are all quoted here as measured at `f15eb43`.
+
+**Finding ids after this ruling.** **F-25 `CLOSED`** 2026-11-28 (D-055), on the defect §12.9 named.
+**F-26 `OPEN`**, recorded by this ruling, no batch behind it. **F-24 stays `OPEN`** with no batch behind it,
+because the shape of a band has no ruling: 8.5 delivered the time axis and the confidence axis is still one
+number where `docs/10` §3.1 asks for a band. **F-18 is `NARROWED`** — gaps 1 and 3 `CLOSED`, gap 2 ordered
+as 8.7, gap 4 `OPEN` with no batch. **F-22/`O-014` stays `OPEN`**. **The next finding id is F-27.**
+
+**Next.** **8.7 = `expires_at` on `memory_item` only**, ordered by ruling 4 and **not started**: no
+migration, no column and no writer argument exists in the tree at `f15eb43`. It is F-18's remaining cheap
+half and the one approved sentence in F-18 that still has no column at all — `docs/10` §3.1's "expiring
+TTLs" — with `DecisionRecord.expires_at` as the precedent for the column's shape and `docs/10` §3.2's V1–V3
+gates as what would eventually consume it. The writer stores it and nothing acts on it.
