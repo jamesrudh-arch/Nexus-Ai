@@ -35,6 +35,14 @@ archive = ["pyarrow>=16.0", "duckdb>=1.0"]
 # Real-time public streams. Optional: REST polling works without it.
 streams = ["websockets>=12.0"]
 dev = [
+  # PostgreSQL parity (F-31). Both are needed for tests/test_postgres_store.py to run rather than
+  # skip, and a skipped test is not a passing one: the six missing commas in migrations/0001_core.sql
+  # survived four stages precisely because nothing executed that file. psycopg is LGPL-3.0-only and
+  # pgserver is Apache-2.0 bundling PostgreSQL under its own permissive licence; psycopg was already
+  # declared as the `postgres` extra before F-31, and the compose stack already carries AGPL-3
+  # (MinIO, Grafana, Loki), so LGPL is not the strongest obligation in the project.
+  "psycopg[binary]>=3.1",
+  "pgserver>=0.1.4",
   "pytest>=8.2",
   "pytest-asyncio>=0.23",
   "ruff>=0.5",

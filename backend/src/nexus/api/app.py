@@ -25,6 +25,7 @@ ever accepted as a query parameter or logged.
 from __future__ import annotations
 
 import hmac
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -703,9 +704,16 @@ def _default_operational_store(cfg: Settings, audit_log: AuditLog) -> Any:
     url = cfg.database_url
     if url.startswith("sqlite:///"):
         return SqliteOperationalStore(url.removeprefix("sqlite:///"), audit=audit_log)
-    # _default_store() already refuses a non-sqlite scheme; this branch is only reachable when an
-    # audit store was injected for a backend this build does not implement. Stay ephemeral rather
-    # than invent a file location for it.
+    dsn = _postgres_dsn(url)
+    if dsn is not None:
+        from nexus.store.postgres import PostgresOperationalStore
+
+        # The audit store opened first, so the schema is already up; bootstrap_schema is idempotent
+        # and finds every version recorded.
+        return PostgresOperationalStore(dsn, audit=audit_log)
+    # _default_store() already refuses a scheme this build does not implement; this branch is only
+    # reachable when an audit store was injected for one. Stay ephemeral rather than invent a file
+    # location for it.
     return SqliteOperationalStore(":memory:", audit=audit_log)
 
 
@@ -738,7 +746,9 @@ def _persistence_status(
         counts = {"error": exc.reason.value}
     path = getattr(op_store, "path", None)
     return {
-        "engine": "sqlite",
+        # Asked of the store rather than assumed: hard-coding "sqlite" here made the endpoint claim
+        # one engine while publishing another's DSN beside it.
+        "engine": getattr(op_store, "engine", "unknown"),
         "role": "system of record for governance + operational state (R-1 / D-042)",
         "time_series": "parquet+zstd archive under the D-024 retention ladder",
         "path": None if path in (None, ":memory:") else str(path),
@@ -750,6 +760,35 @@ def _persistence_status(
         if boot_error is None
         else {"reason": boot_error.reason.value, "detail": boot_error.detail},
     }
+
+
+#: PostgreSQL URL spellings accepted in ``NEXUS_DATABASE_URL``. ``postgres://`` is what several
+#: managed platforms hand out and ``postgresql+psycopg://`` is what this repository's own
+#: ``.env.example`` advertised before the scheme was refused, so both are normalised to the one
+#: spelling psycopg actually parses rather than being passed through to fail.
+_POSTGRES_SCHEMES = ("postgresql+psycopg://", "postgresql://", "postgres://")
+
+
+def _scheme_of(url: str) -> str:
+    """The scheme of a database URL and nothing else.
+
+    A refusal is persisted, surfaced in the UI and readable by anyone who can open a dossier, so its
+    context has to survive contact with a URL that carries a password. ``url.split(":", 1)[0]`` is
+    safe for ``postgresql://user:pw@host/db``, where the scheme always precedes the first colon, and
+    unsafe for the keyword form psycopg also accepts — ``host=db password=secret dbname=nexus`` has no
+    colon at all, so the whole string, password included, becomes the "scheme". Only a real
+    ``scheme://`` prefix is reported; anything else is named as not a URL.
+    """
+    match = re.match(r"^([A-Za-z][A-Za-z0-9+.\-]*)://", url)
+    return match.group(1) if match else "<not-a-url>"
+
+
+def _postgres_dsn(url: str) -> str | None:
+    """psycopg's connection string for a database URL, or ``None`` if it is not a PostgreSQL one."""
+    for scheme in _POSTGRES_SCHEMES:
+        if url.startswith(scheme):
+            return "postgresql://" + url[len(scheme) :]
+    return None
 
 
 def _default_store(cfg: Settings) -> Any:
@@ -776,14 +815,34 @@ def _default_store(cfg: Settings) -> Any:
     url = cfg.database_url
     if url.startswith("sqlite:///"):
         return SqliteAuditStore(url.removeprefix("sqlite:///"))
+    dsn = _postgres_dsn(url)
+    if dsn is not None:
+        # Imported here rather than at module scope so a default install, which has no Postgres
+        # driver, never pays for it and never fails on an import it does not need.
+        from nexus.store.pg import PostgresError
+        from nexus.store.postgres import PostgresAuditStore
+
+        try:
+            return PostgresAuditStore(dsn)
+        except PostgresError as exc:
+            # A missing driver or an unreachable server is a configuration fault, not a runtime
+            # one, and it must not be answered by quietly keeping the chain in memory.
+            raise NexusError(
+                RejectReason.CONFIG_INVALID,
+                f"NEXUS_DATABASE_URL selects PostgreSQL but the audit store could not be opened: "
+                f"{exc}. Refusing to start rather than keeping the audit log in memory, where it "
+                "would be lost on every restart while still reporting healthy.",
+                retryable=False,
+                context={"scheme": _scheme_of(url)},
+            ) from exc
     # Only the scheme goes into the context. A database URL can carry a password, and the refusal
     # is persisted and surfaced in the UI, so nothing past the first colon is safe to keep.
     raise NexusError(
         RejectReason.CONFIG_INVALID,
-        "NEXUS_DATABASE_URL names a scheme this build does not implement; only sqlite:/// is "
-        "supported. Refusing to start rather than keeping the audit log in memory, where it would "
-        "be lost on every restart while still reporting healthy. Set NEXUS_AUDIT_BACKEND=memory "
-        "to choose an ephemeral audit log explicitly.",
+        "NEXUS_DATABASE_URL names a scheme this build does not implement; sqlite:/// and "
+        "postgresql:// are the two it does. Refusing to start rather than keeping the audit log in "
+        "memory, where it would be lost on every restart while still reporting healthy. Set "
+        "NEXUS_AUDIT_BACKEND=memory to choose an ephemeral audit log explicitly.",
         retryable=False,
-        context={"scheme": url.split(":", 1)[0]},
+        context={"scheme": _scheme_of(url)},
     )

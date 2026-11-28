@@ -32,7 +32,9 @@ from nexus.store.operational import (
     OrderRow,
     PersistenceError,
     SqliteOperationalStore,
+    SqlOperationalStore,
 )
+from nexus.store.postgres import PostgresAuditStore, PostgresOperationalStore
 from nexus.store.recovery import (
     BootRecoveryReport,
     BootRefused,
@@ -59,6 +61,9 @@ __all__ = [
     "OrderRow",
     "PersistenceError",
     "RecoveryIncomplete",
+    "PostgresAuditStore",
+    "PostgresOperationalStore",
+    "SqlOperationalStore",
     "SqliteOperationalStore",
     "derive_halt_state",
     "project",

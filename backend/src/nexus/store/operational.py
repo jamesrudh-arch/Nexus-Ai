@@ -39,6 +39,7 @@ from nexus.execution.halt import HaltScope
 from nexus.execution.intent import ApprovalRecord, TradeIntent
 from nexus.execution.orders import OrderState, is_terminal
 from nexus.store.migrations import MigrationReport, MigrationRunner
+from nexus.store.pg import StoreDriverError
 from nexus.store.serialise import decimal_or_none, dumps_canonical, loads_json
 
 __all__ = [
@@ -49,6 +50,12 @@ __all__ = [
     "PersistenceError",
     "SqliteOperationalStore",
 ]
+
+
+#: Both drivers' fault types, so one ``except`` path serves SQLite and PostgreSQL alike. A
+#: PostgreSQL error that escaped raw would bypass the ``PersistenceError`` wrapping every caller
+#: relies on, and with it the redaction that keeps a DSN out of a log line.
+_DRIVER_ERRORS: tuple[type[Exception], ...] = (sqlite3.Error, StoreDriverError)
 
 
 class PersistenceError(NexusError):
@@ -352,8 +359,21 @@ def _str_tuple(value: Any) -> tuple[str, ...]:
     return tuple(str(item) for item in loaded)
 
 
-class SqliteOperationalStore:
-    """SQLite operational store: one writer, durable commits, migrations applied on open."""
+class SqlOperationalStore:
+    """Operational store: one writer, durable commits, migrations applied on open.
+
+    Driver-independent, and deliberately so. Every statement, every deserialiser and all 37
+    ``OperationalStore`` methods live here and are shared by both drivers, because a second copy of
+    1,373 lines is a second thing to drift — the failure mode ``tests/test_schema_fidelity.py`` was
+    written to police after the SQLite schema and ``migrations/*.sql`` diverged in both directions.
+    A subclass supplies only the three seams below and nothing else.
+
+    The three PRAGMAs stay in the base rather than the SQLite subclass: they are this store's
+    durability policy, not a driver detail, and the PostgreSQL adapter maps each one — ``journal_mode``
+    and ``busy_timeout`` to no-ops because a server has a write-ahead log and real row locking
+    whether or not a client asks, ``synchronous=FULL`` to ``synchronous_commit = on``, the one
+    setting that answers the same question.
+    """
 
     def __init__(
         self,
@@ -363,21 +383,42 @@ class SqliteOperationalStore:
         migrate: bool = True,
     ) -> None:
         self._path = str(path)
-        if self._path != ":memory:":
-            Path(self._path).parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self._path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        self._prepare_storage()
+        self._conn = self._open_connection()
         self._lock = threading.RLock()
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=FULL")
             self._conn.execute("PRAGMA busy_timeout=5000")
-        self.migrations: MigrationReport | None = (
-            MigrationRunner(self._conn, audit=audit).run() if migrate else None
-        )
+        self.migrations: MigrationReport | None = self._apply_migrations(audit) if migrate else None
+
+    # -- the three driver seams -------------------------------------------
+
+    def _prepare_storage(self) -> None:
+        """Make the storage this driver needs exist. A server-backed driver has nothing to create."""
+        raise NotImplementedError
+
+    def _open_connection(self) -> Any:
+        """Return a connection exposing the ``sqlite3.Connection`` surface this store uses."""
+        raise NotImplementedError
+
+    def _apply_migrations(self, audit: Any) -> MigrationReport:
+        """Bring the schema up to date and report what that took."""
+        raise NotImplementedError
+
+    #: What this store runs on. Reported by ``/v1/status``, which used to hard-code ``"sqlite"`` and
+    #: so lied about the engine the moment a second driver existed. A subclass that forgets to set it
+    #: reports ``"unknown"`` rather than claiming an engine it did not declare.
+    engine: str = "unknown"
 
     @property
     def path(self) -> str:
+        """Where this store's data lives, in a form that is safe to publish.
+
+        For SQLite that is a filesystem path. For a server-backed store the connection target is a
+        DSN, which can carry a password, and this value reaches an unauthenticated endpoint — so the
+        PostgreSQL store overrides it with a credential-free form.
+        """
         return self._path
 
     # -- transaction plumbing -------------------------------------------
@@ -388,7 +429,7 @@ class SqliteOperationalStore:
             try:
                 yield self._conn
                 self._conn.commit()
-            except sqlite3.Error as exc:
+            except _DRIVER_ERRORS as exc:
                 self._conn.rollback()
                 raise PersistenceError(f"operational write failed: {exc}") from exc
 
@@ -396,7 +437,7 @@ class SqliteOperationalStore:
         with self._lock:
             try:
                 return list(self._conn.execute(sql, tuple(params)).fetchall())
-            except sqlite3.Error as exc:
+            except _DRIVER_ERRORS as exc:
                 raise PersistenceError(f"operational read failed: {exc}") from exc
 
     # -- decisions -------------------------------------------------------
@@ -1371,3 +1412,27 @@ class SqliteOperationalStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+
+class SqliteOperationalStore(SqlOperationalStore):
+    engine = "sqlite"
+
+    """The SQLite driver binding, and the system of record R-1 (D-042) declares.
+
+    The name is load-bearing: 101 references across ``src/`` and ``tests/`` name it, and it is the
+    honest name for this class, which is why the shared implementation above is ``SqlOperationalStore``
+    and not this one renamed. ``isinstance(postgres_store, SqliteOperationalStore)`` is ``False``,
+    as it should be.
+    """
+
+    def _prepare_storage(self) -> None:
+        if self._path != ":memory:":
+            Path(self._path).parent.mkdir(parents=True, exist_ok=True)
+
+    def _open_connection(self) -> Any:
+        conn = sqlite3.connect(self._path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _apply_migrations(self, audit: Any) -> MigrationReport:
+        return MigrationRunner(self._conn, audit=audit).run()

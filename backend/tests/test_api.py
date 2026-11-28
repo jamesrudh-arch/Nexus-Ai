@@ -246,8 +246,10 @@ class TestAuditStoreSelectionFailsClosed:
     @pytest.mark.parametrize(
         "url",
         [
-            "postgresql+psycopg://nexus:pw@db:5432/nexus",  # what .env.example used to advertise
-            "postgres://nexus@db:5432/nexus",
+            # Both PostgreSQL spellings used to sit in this list, and `.env.example` advertised the
+            # first of them until the scheme was refused. F-31 made them supported, so they moved
+            # out rather than being deleted: an unreachable server is still refused at startup, and
+            # the test below that one pins it, including that the DSN does not leak on the way.
             "mysql://nexus@db/nexus",
             "sqlite://relative-without-slash",
             "",
@@ -271,16 +273,14 @@ class TestAuditStoreSelectionFailsClosed:
         from nexus.core.errors import NexusError
 
         monkeypatch.delenv("NEXUS_AUDIT_BACKEND", raising=False)
-        url = "postgresql+psycopg://nexus:Sup3rSecretPassword@db-host:5432/nexus"
+        url = "mysql://nexus:Sup3rSecretPassword@db-host:3306/nexus"
         with pytest.raises(NexusError) as exc:
             self._store(url)
         err = exc.value
         for surface in (err.detail, str(err), repr(err.context), repr(err)):
             assert "Sup3rSecretPassword" not in surface, f"credential leaked into {surface!r}"
             assert "db-host" not in surface, f"hostname leaked into {surface!r}"
-        assert err.context == {"scheme": "postgresql+psycopg"}, (
-            "only the scheme is safe to keep from a database URL"
-        )
+        assert err.context == {"scheme": "mysql"}, "only the scheme is safe to keep from a database URL"
 
     def test_create_app_refuses_to_start_rather_than_serve_without_an_audit_trail(
         self, monkeypatch: Any
@@ -293,10 +293,37 @@ class TestAuditStoreSelectionFailsClosed:
             create_app(
                 settings=Settings(
                     _env_file=None,
-                    database_url="postgresql+psycopg://nexus:pw@db:5432/nexus",
+                    database_url="mysql://nexus:pw@db:3306/nexus",
                 )
             )
         assert exc.value.reason is RejectReason.CONFIG_INVALID
+
+    def test_an_unreachable_postgres_server_is_refused_without_leaking_the_dsn(
+        self, monkeypatch: Any
+    ) -> None:
+        """A supported scheme that cannot be reached is still a startup refusal, not a runtime one.
+
+        F-31 made ``postgresql://`` a scheme this build implements, which removed the cheap
+        guarantee the refusal used to have: an unparseable URL fails before anything is contacted.
+        A URL that parses and points at nothing now reaches a real connection attempt, and psycopg
+        answers with the hostname in the message. So the same two things are pinned on the new path
+        — the failure happens at ``create_app``, and it carries neither the password nor the host.
+        """
+        from nexus.core.errors import NexusError, RejectReason
+
+        monkeypatch.delenv("NEXUS_AUDIT_BACKEND", raising=False)
+        url = "postgresql+psycopg://nexus:Sup3rSecretPassword@db-host:5432/nexus"
+        with pytest.raises(NexusError) as exc:
+            self._store(url)
+        err = exc.value
+        assert err.reason is RejectReason.CONFIG_INVALID
+        assert err.retryable is False, "a server that is not there is not worth retrying unchanged"
+        for surface in (err.detail, str(err), repr(err.context), repr(err)):
+            assert "Sup3rSecretPassword" not in surface, f"credential leaked into {surface!r}"
+            assert "db-host" not in surface, f"hostname leaked into {surface!r}"
+        assert err.context == {"scheme": "postgresql+psycopg"}, (
+            "only the scheme is safe to keep from a database URL"
+        )
 
     def test_the_production_default_is_the_documented_sqlite_path(self) -> None:
         """Pinned here so isolating the suite's cwd cannot silently change the shipped default."""

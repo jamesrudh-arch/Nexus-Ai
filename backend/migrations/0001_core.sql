@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS venue_instrument_mapping (
     fees               JSONB NOT NULL DEFAULT '{}'::jsonb,
     notes              TEXT NOT NULL DEFAULT '',
     certified_at       TIMESTAMPTZ,
-    audit_ref          TEXT
+    audit_ref          TEXT,
     UNIQUE (instrument_id, venue, venue_symbol)
 );
 
@@ -117,7 +117,14 @@ CREATE TABLE IF NOT EXISTS decision (
     intent_id     TEXT,
     risk_check    JSONB NOT NULL DEFAULT '{}'::jsonb,
     expires_at    TIMESTAMPTZ,
-    audit_ref          TEXT
+    audit_ref          TEXT,
+    -- Driver-internal: the insertion-order surrogate SQLite gets for free from `rowid`, which
+    -- has no PostgreSQL equivalent (`ctid` moves under VACUUM, and the primary keys here embed a
+    -- random uuid4 so they are not monotonic). Five queries in store/operational.py order by
+    -- rowid, one of them halt history, which boot recovery derives state from, so the ordering
+    -- has to be faithful rather than merely deterministic. The adapter rewrites `rowid` to this
+    -- column when the catalog says the table has one, and refuses when it does not.
+    row_order            BIGINT GENERATED ALWAYS AS IDENTITY
 );
 CREATE INDEX IF NOT EXISTS ix_decision_created ON decision (created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_decision_state   ON decision (state);
@@ -151,8 +158,8 @@ CREATE TABLE IF NOT EXISTS trade_intent (
     exit_plan       TEXT NOT NULL DEFAULT '',
     idempotency_key TEXT NOT NULL,
     digest          TEXT NOT NULL,               -- SHA-256 of material fields,
-    payload            JSONB NOT NULL DEFAULT '{}'::jsonb
-    audit_ref          TEXT
+    payload            JSONB NOT NULL DEFAULT '{}'::jsonb,
+    audit_ref          TEXT,
     UNIQUE (idempotency_key)
 );
 CREATE INDEX IF NOT EXISTS ix_intent_created ON trade_intent (created_at DESC);
@@ -185,8 +192,15 @@ CREATE TABLE IF NOT EXISTS orders (
     funding_quote   NUMERIC(28, 12) NOT NULL DEFAULT 0,
     reject_reason   TEXT,
     idempotency_key TEXT NOT NULL,
-    audit_ref          TEXT
-    UNIQUE (venue, account_id, idempotency_key)
+    audit_ref          TEXT,
+    UNIQUE (venue, account_id, idempotency_key),
+    -- Driver-internal: the insertion-order surrogate SQLite gets for free from `rowid`, which
+    -- has no PostgreSQL equivalent (`ctid` moves under VACUUM, and the primary keys here embed a
+    -- random uuid4 so they are not monotonic). Five queries in store/operational.py order by
+    -- rowid, one of them halt history, which boot recovery derives state from, so the ordering
+    -- has to be faithful rather than merely deterministic. The adapter rewrites `rowid` to this
+    -- column when the catalog says the table has one, and refuses when it does not.
+    row_order            BIGINT GENERATED ALWAYS AS IDENTITY
 );
 CREATE INDEX IF NOT EXISTS ix_orders_state ON orders (state);
 CREATE INDEX IF NOT EXISTS ix_orders_updated ON orders (updated_at DESC);
@@ -217,9 +231,16 @@ CREATE TABLE IF NOT EXISTS halt_event (
     at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     affected_accounts   TEXT[] NOT NULL DEFAULT '{}',
     affected_instruments TEXT[] NOT NULL DEFAULT '{}',
-    seq                  BIGINT
-    cancel_working_orders BOOLEAN NOT NULL DEFAULT TRUE
-    audit_ref            TEXT
+    seq                  BIGINT,
+    cancel_working_orders BOOLEAN NOT NULL DEFAULT TRUE,
+    audit_ref            TEXT,
+    -- Driver-internal: the insertion-order surrogate SQLite gets for free from `rowid`, which
+    -- has no PostgreSQL equivalent (`ctid` moves under VACUUM, and the primary keys here embed a
+    -- random uuid4 so they are not monotonic). Five queries in store/operational.py order by
+    -- rowid, one of them halt history, which boot recovery derives state from, so the ordering
+    -- has to be faithful rather than merely deterministic. The adapter rewrites `rowid` to this
+    -- column when the catalog says the table has one, and refuses when it does not.
+    row_order            BIGINT GENERATED ALWAYS AS IDENTITY
 );
 
 CREATE TABLE IF NOT EXISTS risk_limit_change (
@@ -257,7 +278,14 @@ CREATE TABLE IF NOT EXISTS execution_result (
     reasons           TEXT[] NOT NULL DEFAULT '{}',
     idempotent_replay BOOLEAN NOT NULL DEFAULT FALSE,
     at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-    audit_ref         TEXT
+    audit_ref         TEXT,
+    -- Driver-internal: the insertion-order surrogate SQLite gets for free from `rowid`, which
+    -- has no PostgreSQL equivalent (`ctid` moves under VACUUM, and the primary keys here embed a
+    -- random uuid4 so they are not monotonic). Five queries in store/operational.py order by
+    -- rowid, one of them halt history, which boot recovery derives state from, so the ordering
+    -- has to be faithful rather than merely deterministic. The adapter rewrites `rowid` to this
+    -- column when the catalog says the table has one, and refuses when it does not.
+    row_order            BIGINT GENERATED ALWAYS AS IDENTITY
 );
 
 -- ---------------------------------------------------------------- projection bookkeeping

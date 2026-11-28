@@ -59,6 +59,21 @@ TYPE_TRANSLATIONS: dict[str, str] = {
     "NUMERIC": "TEXT",
 }
 
+#: Columns one side declares and the other legitimately does not, each with the reason. Same
+#: discipline as ``EXEMPT_TABLES`` and ``TYPE_TRANSLATIONS``: a divergence written down where a
+#: reader can argue with it, and pinned below so the list cannot grow silently.
+EXEMPT_COLUMNS: dict[str, str] = {
+    "row_order": (
+        "PostgreSQL-only, added at F-31: the insertion-order surrogate a server needs because it has "
+        "no rowid. ctid is a physical address that moves under VACUUM, and core.ids.new_id embeds a "
+        "random uuid4, so the primary keys are not monotonic and cannot stand in. Five queries in "
+        "store/operational.py order by rowid and one of them is halt history, which boot recovery "
+        "derives state from, so the ordering has to be faithful rather than merely deterministic. "
+        "store/pg.py rewrites rowid to this column when the catalog declares it and refuses when it "
+        "does not."
+    ),
+}
+
 #: Tables one side has and the other legitimately does not, each with the reason.
 EXEMPT_TABLES: dict[str, str] = {
     # Created by `SqliteAuditStore` from `audit/log.py`, not by a migration, because the audit store is
@@ -204,7 +219,7 @@ class TestSchemaFidelity:
         lt = read_sqlite(live_sqlite(tmp_path))
         problems: list[str] = []
         for name in sorted(set(pg) & set(lt) - set(EXEMPT_TABLES)):
-            missing = sorted(set(pg[name]) - set(lt[name]))
+            missing = sorted(set(pg[name]) - set(lt[name]) - set(EXEMPT_COLUMNS))
             extra = sorted(set(lt[name]) - set(pg[name]))
             if missing:
                 problems.append(f"{name}: only in the target -> {missing}")
@@ -255,6 +270,29 @@ class TestSchemaFidelity:
         assert problems == [], (
             "a type disagreement that is not one of the documented translations:\n" + "\n".join(problems)
         )
+
+    def test_every_exempt_column_is_declared_and_only_where_the_reason_says(self, tmp_path: Path) -> None:
+        """An exemption that stops being needed is a lie about the schema, so it is checked both ways.
+
+        ``row_order`` must exist in the target on exactly the four tables whose queries order by
+        rowid, and must not have spread to any other table. A column exempted but absent would mean
+        the reason no longer describes the schema; one present but unexempted would fail the test
+        above. This is the same discipline as the type map's coverage test.
+        """
+        pg = parse_postgres(_postgres_ddl())
+        lt = read_sqlite(live_sqlite(tmp_path))
+        declared_in = sorted(name for name, cols in pg.items() if "row_order" in cols)
+        assert declared_in == ["decision", "execution_result", "halt_event", "orders"], (
+            f"row_order must sit on exactly the four tables store/operational.py orders by rowid, "
+            f"found on {declared_in}"
+        )
+        for name in declared_in:
+            assert "row_order" not in lt[name], f"{name} grew a row_order in SQLite, where rowid exists"
+        for column, reason in EXEMPT_COLUMNS.items():
+            assert reason.strip(), f"{column} is exempted without a written reason"
+            assert any(column in cols for cols in pg.values()), (
+                f"{column} is exempted but the target no longer declares it; remove the exemption"
+            )
 
     def test_the_translation_map_covers_every_type_the_target_declares(self) -> None:
         """A type the target starts using must be added to the map on purpose, not absorbed silently."""

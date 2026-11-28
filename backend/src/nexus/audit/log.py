@@ -115,19 +115,42 @@ class SqliteAuditStore:
 
     SQLite in WAL mode is the right $0 choice for one owner, one host. The schema
     mirrors the PostgreSQL migration so promotion is a copy, not a rewrite.
+
+    That claim was tested against a real PostgreSQL 16.2 at F-31 and holds for the DDL once six
+    missing commas are restored to ``migrations/0001_core.sql`` — all 17 tables, the append-only
+    function and both triggers apply cleanly. It does not hold for the values: see
+    :mod:`nexus.store.pg`'s note on ``NUMERIC`` before relying on a promoted chain verifying
+    byte-for-byte against a SQLite one.
     """
 
     def __init__(self, path: str | Path) -> None:
-        self._path = Path(path)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(self._path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
+        self._path = self._normalise_path(path)
+        self._prepare_storage()
+        self._conn = self._open_connection()
         self._lock = threading.Lock()
         with self._lock:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=FULL")
-            self._conn.executescript(_SCHEMA)
-            self._conn.commit()
+            self._apply_schema()
+
+    # -- the three driver seams, the same split SqlOperationalStore uses ----
+
+    def _normalise_path(self, value: str | Path) -> Path:
+        """Where the database file lives. A server-backed driver keeps its DSN a string instead."""
+        return Path(value)
+
+    def _prepare_storage(self) -> None:
+        """Create the directory the database file lives in."""
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+
+    def _open_connection(self) -> Any:
+        conn = sqlite3.connect(self._path, check_same_thread=False)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _apply_schema(self) -> None:
+        self._conn.executescript(_SCHEMA)
+        self._conn.commit()
 
     def append(self, record: AuditRecord) -> None:
         row = record.to_row()
