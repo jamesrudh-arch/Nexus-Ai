@@ -42,7 +42,13 @@ dev = [
   # declared as the `postgres` extra before F-31, and the compose stack already carries AGPL-3
   # (MinIO, Grafana, Loki), so LGPL is not the strongest obligation in the project.
   "psycopg[binary]>=3.1",
-  "pgserver>=0.1.4",
+  # Measured, not assumed (F-39): pgserver 0.1.4 publishes 16 files, no sdist, and its only Linux
+  # wheels are manylinux_2_17_x86_64 for cp39-cp312 — its arm64 wheels are macOS. So without a marker
+  # `pip install -e ".[dev]"` fails outright on the Ampere A1 production host (ci.yml:166) and on
+  # Python 3.13+, taking the whole dev environment with it. With it the extra installs everywhere and
+  # the parity suite skips only where no server can be provided — and the CI step below fails the build
+  # on that skip, because a parity test that never contacted a database proves nothing about one.
+  "pgserver>=0.1.4; (platform_system != 'Linux' or platform_machine == 'x86_64') and python_version < '3.13'",
   "pytest>=8.2",
   "pytest-asyncio>=0.23",
   "ruff>=0.5",

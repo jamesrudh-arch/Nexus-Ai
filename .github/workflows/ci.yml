@@ -110,6 +110,28 @@ jobs:
       - name: Pytest
         run: pytest -q --maxfail=1
 
+      # F-39: pgserver has no Linux arm64 wheel and no sdist, so the parity suite can skip on a
+      # machine that cannot provide a server. On this runner it can, and a skip here means the
+      # PostgreSQL seam went untested while the build reported green — which is precisely how six
+      # missing commas in migrations/0001_core.sql survived four stages.
+      - name: Assert the PostgreSQL parity suite ran against a real server
+        run: |
+          set -o pipefail
+          # No extra -q. addopts already carries one, and a second makes it -qq, which suppresses the
+          # summary this step reads: measured locally, `-q -rs` printed no line containing "passed" or
+          # "skipped" at all, so the assertions below matched nothing and the step could never fail. A
+          # gate that cannot fail is worse than no gate.
+          python -m pytest tests/test_postgres_store.py -rs | tee parity.log
+          if grep -qi "skipped" parity.log; then
+            echo "::error::the PostgreSQL parity suite skipped on a runner that can provide a server"
+            exit 1
+          fi
+          if ! grep -qE "[0-9]+ passed" parity.log; then
+            echo "::error::the PostgreSQL parity suite reported no passing tests"
+            exit 1
+          fi
+          echo "parity suite ran against a real server: $(grep -oE '[0-9]+ passed' parity.log)"
+
       - name: Assert live trading is impossible in this phase
         run: python -c "import nexus; g=nexus.PHASE_GATE; assert g['live_trading'] is False and g['venue_adapters'] is False and g['real_money_orders_possible'] is False and g['order_capability'] is False, g; print('phase gate verified:', g)"
 

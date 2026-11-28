@@ -22,11 +22,22 @@
 # Parquet/zstd archive (market time series) the single-node system of record, so TimescaleDB is now
 # an opt-in `postgres` profile and `core` no longer depends on it.
 #
-# backend/migrations/*.sql remain the portable PostgreSQL target, column-for-column compatible with
-# the SQLite schema in backend/src/nexus/store/schema.py. Promotion happens only on a *measured*
-# trigger: T-1 a second writer process, T-2 a benchmarked write ceiling, T-3 a genuine hypertable or
-# pgvector need, T-4 leaving the single VM. Until then, running Postgres alongside SQLite would mean
-# two systems of record for one data class, which law L-3 forbids.
+# backend/migrations/*.sql are the PostgreSQL target, column-for-column compatible with the SQLite
+# schema in backend/src/nexus/store/schema.py, and they are applied by the store at boot
+# (bootstrap_schema) — so the `./backend/migrations:/migrations:ro` mount below is vestigial: the
+# PostgreSQL image executes /docker-entrypoint-initdb.d and never reads /migrations.
+#
+# Promotion happened. R-1 (D-042) gated it on four measured triggers — T-1 a second writer process,
+# T-2 a benchmarked write ceiling, T-3 a genuine hypertable or pgvector need, T-4 leaving the single
+# VM — and the owner ruled T-4 on 2026-11-28 (D-058; the audit is docs/17). T-1…T-3 remain unmeasured
+# and no scale claim is made. L-3 is satisfied by construction rather than by absence: there is ONE
+# store implementation with three driver seams, not two systems of record, and NEXUS_DATABASE_URL
+# selects which engine it opens. SQLite stays the default because a server is not $0 (D-019).
+#
+# Two things to know before pointing this at a real server. Promotion is a fresh start and NOT a
+# migration — nothing carries an existing SQLite database across (docs/17 F-37). And PostgreSQL
+# enforces nine foreign keys that SQLite declares but does not enforce, so a write SQLite accepts can
+# be refused here (docs/17 F-35, Q-1).
 
 name: nexus
 
@@ -43,7 +54,7 @@ services:
   # ---------------------------------------------------------------- system of record
   db:
     image: timescale/timescaledb:latest-pg16   # PostgreSQL 16 + TimescaleDB (Apache-2)
-    profiles: [postgres, full]                 # opt-in: nothing reads it yet (R-1 / D-042)
+    profiles: [postgres, full]                 # opt-in; read when NEXUS_DATABASE_URL points here (D-058)
     <<: *restart-policy
     logging: *default-logging
     environment:

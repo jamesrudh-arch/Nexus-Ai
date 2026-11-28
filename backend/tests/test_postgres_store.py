@@ -39,6 +39,7 @@ from nexus.store.pg import (
     Row,
     numeric_to_text,
     public_dsn,
+    reads_only,
     to_pyformat,
 )
 from nexus.store.postgres import (
@@ -999,6 +1000,84 @@ class TestTheApiBootsOnPostgres:
             assert reopened.counts()["decision"] >= 1
         finally:
             reopened.close()
+
+
+class TestTransactionShape:
+    """A read must not leave a transaction open, and a write must not have one ended under it.
+
+    ``sqlite3`` defers ``BEGIN`` until a write, so ``in_transaction`` is False after any number of
+    SELECTs and the store never had to end a read transaction. PostgreSQL opens one on the first
+    statement and holds it until commit. Left alone, an API process that had served one read and then
+    gone quiet sat ``idle in transaction`` — measured, before the fix, as 2 of the 3 client backends
+    one live process held — which pins a snapshot so dead tuples cannot be vacuumed, and waits for
+    the provider's ``idle_in_transaction_session_timeout`` to terminate a connection this store never
+    re-opens.
+    """
+
+    def _status(self, conn: PostgresConnection) -> str:
+        return conn._conn.info.transaction_status.name
+
+    def test_reads_leave_nothing_open(self, conn: PostgresConnection) -> None:
+        _insert_minimal(conn, "instrument", {"instrument_id": "INS-TXN"})
+        assert self._status(conn) == "IDLE", "the insert helper commits, so this starts clean"
+        conn.execute("SELECT count(*) FROM instrument").fetchone()
+        conn.execute("SELECT * FROM instrument WHERE instrument_id = ?", ("INS-TXN",)).fetchall()
+        assert self._status(conn) == "IDLE", "a read must end its own transaction"
+
+    def test_a_write_holds_its_transaction_until_the_store_ends_it(self, conn: PostgresConnection) -> None:
+        names, values = _minimal_row(conn, "instrument", {"instrument_id": "INS-W"})
+        conn.execute(
+            f"INSERT INTO instrument ({', '.join(names)}) VALUES ({', '.join(['?'] * len(names))})",  # noqa: S608
+            values,
+        )
+        assert self._status(conn) == "INTRANS", "an uncommitted write must still be in a transaction"
+        conn.rollback()
+        assert self._status(conn) == "IDLE"
+        assert conn.execute("SELECT count(*) FROM instrument").fetchone()[0] == 0, "and undone"
+
+    def test_a_read_inside_a_write_unit_does_not_end_it(self, conn: PostgresConnection) -> None:
+        """The property the whole fix rests on: atomicity of a multi-statement write.
+
+        ``save_decision`` is four statements, not one. If a read between them ended the transaction,
+        the write would be half-applied — the worst possible outcome and the reason ``reads_only``
+        errs towards calling a statement a write.
+        """
+        names, values = _minimal_row(conn, "instrument", {"instrument_id": "INS-MID"})
+        conn.execute(
+            f"INSERT INTO instrument ({', '.join(names)}) VALUES ({', '.join(['?'] * len(names))})",  # noqa: S608
+            values,
+        )
+        seen = conn.execute("SELECT count(*) FROM instrument").fetchone()[0]
+        assert seen == 1, "the read must see the uncommitted write beside it"
+        assert self._status(conn) == "INTRANS", "and must not have ended the transaction"
+        conn.commit()
+
+    def test_the_rows_survive_the_release(self, conn: PostgresConnection) -> None:
+        """libpq transfers the whole result on execute, so ending the transaction cannot lose rows."""
+        for i in range(5):
+            _insert_minimal(conn, "instrument", {"instrument_id": f"INS-ROWS-{i}"})
+        cursor = conn.execute("SELECT instrument_id FROM instrument ORDER BY instrument_id")
+        assert self._status(conn) == "IDLE", "already released by the time the caller fetches"
+        fetched = [row[0] for row in cursor.fetchall()]
+        assert fetched == [f"INS-ROWS-{i}" for i in range(5)]
+        # sqlite3's shape: a sequence of 7-item tuples, not psycopg's Column objects.
+        assert [d[0] for d in cursor.description] == ["instrument_id"]
+
+    def test_the_classifier_errs_towards_calling_a_statement_a_write(self) -> None:
+        assert reads_only("SELECT * FROM decision")
+        assert reads_only("  select 1")
+        assert reads_only("SHOW server_version")
+        assert reads_only("EXPLAIN SELECT 1")
+        # A data-modifying CTE starts with a read keyword and writes.
+        assert not reads_only("WITH gone AS (DELETE FROM decision RETURNING *) SELECT * FROM gone")
+        # SET is what the PRAGMA synchronous=FULL mapping produces; rolling one back undoes it.
+        assert not reads_only("SET synchronous_commit = on")
+        assert not reads_only("INSERT OR REPLACE INTO decision (decision_id) VALUES (?)")
+        assert not reads_only("UPDATE decision SET verb = ?")
+        # Conservative by design: a literal that mentions a write keyword keeps the transaction open,
+        # which costs nothing and cannot lose a write.
+        assert not reads_only("SELECT * FROM decision WHERE rationale = 'delete everything'")
+        assert not reads_only("")
 
 
 class TestStatementCounting:

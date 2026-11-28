@@ -257,6 +257,33 @@ def public_dsn(url: str) -> str:
     return " ".join(kept) or url
 
 
+#: Statements that only read, so the transaction they open can be ended immediately.
+_READ_ONLY_HEADS = frozenset({"SELECT", "SHOW", "EXPLAIN", "WITH", "VALUES"})
+
+#: Anything that could change the database or the session. A match anywhere in the statement makes it
+#: a write, which is the safe direction to be wrong in: calling a write a read would end a transaction
+#: that a later statement in the same unit of work still needs, while calling a read a write only
+#: leaves the transaction open the way it is today.
+_WRITE_WORDS = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|GRANT|REVOKE|SET|CALL|COPY|VACUUM|ANALYZE)\b",
+    re.IGNORECASE,
+)
+
+
+def reads_only(sql: str) -> bool:
+    """Whether a statement only reads, decided on its first word and then on its whole text.
+
+    The first word alone is not enough: ``WITH x AS (DELETE FROM t RETURNING *)`` starts with a read
+    keyword and writes, so the body is scanned too. ``SET`` counts as a write deliberately — it is what
+    the ``PRAGMA synchronous=FULL`` mapping produces, and rolling a ``SET`` back undoes it.
+    """
+    stripped = sql.lstrip()
+    if not stripped:
+        return False
+    head = stripped.split(None, 1)[0].upper().rstrip(";(")
+    return head in _READ_ONLY_HEADS and not _WRITE_WORDS.search(sql)
+
+
 def numeric_to_text(value: Decimal) -> str:
     """The shortest exact decimal string, which is what SQLite's TEXT column would have held.
 
@@ -396,6 +423,9 @@ class PostgresConnection:
         self._primary: dict[str, list[str]] = {}
         self._unique: dict[str, list[list[str]]] = {}
         self._lock = threading.RLock()
+        # Statements executed since the last commit or rollback that could have written. Zero means
+        # the open transaction is read-only, and so means it can be ended without losing anything.
+        self._writes = 0
 
     @property
     def dsn(self) -> str:
@@ -664,6 +694,21 @@ class PostgresConnection:
             cursor = self._conn.execute(text, bound if bound else None)
         except _DriverFault as exc:
             raise PostgresError(_redact(str(exc))) from exc
+        if reads_only(text):
+            if self._writes == 0:
+                # sqlite3 defers BEGIN until a write, so the store it was written against has never
+                # had to end a read transaction: `in_transaction` is False after any number of
+                # SELECTs. PostgreSQL opens one on the first statement and keeps it open until
+                # commit, so without this an API process that has served one read and then gone quiet
+                # sits `idle in transaction` indefinitely — holding a snapshot that stops dead tuples
+                # being vacuumed, and waiting for the provider's idle_in_transaction_session_timeout
+                # to terminate a connection this store never re-opens. The rows are already
+                # client-side (libpq transfers the whole result on execute), so ending the transaction
+                # here cannot lose any of them; measured element-for-element identical to the same
+                # query left inside its transaction.
+                self._conn.rollback()
+        else:
+            self._writes += 1
         described = [d.name for d in cursor.description] if cursor.description else []
         keep = [i for i, name in enumerate(described) if name not in _DRIVER_INTERNAL_COLUMNS]
         names = [described[i] for i in keep]
@@ -691,9 +736,11 @@ class PostgresConnection:
 
     def commit(self) -> None:
         self._conn.commit()
+        self._writes = 0
 
     def rollback(self) -> None:
         self._conn.rollback()
+        self._writes = 0
 
     def close(self) -> None:
         self._conn.close()
