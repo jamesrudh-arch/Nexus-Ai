@@ -9,9 +9,11 @@ only. §10, with the ruling in §10.9 and **F-22** in §10.10.
 re-confirmed by **D-052**'s ruling 2. §11, with the ruling in §11.14 and **F-23** in §11.7. **F-14 and
 `O-012` are `CLOSED`.**
 **8.5 — stage 10's `memory_item` writer, F-18's three columns and `evidence_ref.contradicts`.** Status:
-`BUILT — AWAITING REVIEW`. Authorised by **D-052**'s ruling 3, re-ordered by **D-053**'s ruling 4 against the
-alternative (wiring `retrieved_at` first), which was declined. §12, with **F-24** in §12.8 and **F-25** in
-§12.9. Nothing calls the writer and no route serves `memory_item`.
+`APPROVED` (**D-054**). Authorised by **D-052**'s ruling 3, re-ordered by **D-053**'s ruling 4 against the
+alternative (wiring `retrieved_at` first), which was declined. §12, with the ruling in §12.14, **F-24** in
+§12.8 and **F-25** in §12.9. **F-18 is narrowed, not closed** — gaps 1 and 3 close, gaps 2 and 4 stay open.
+Nothing calls the writer and no route serves `memory_item`, by ruling. **Next: 8.6 = F-25 alone, then
+8.7 = `expires_at`.**
 Date: 2026-11-27.
 
 > **This header was three rulings out of date and is corrected here.** It named only 8.1 and still read
@@ -2849,8 +2851,12 @@ Two of the twenty are worth naming separately, because they are the ones a revie
    intelligence tables are empty in production — but it is a change to what an approved batch stored, and
    it is disclosed here in the same place §10.3 disclosed F-21's.
 9. **Column order diverges between the two DDLs** (§12.1). Safe today because every `INSERT` names its
-   columns and no `SELECT *` exists; an `INSERT` without a column list would break it, and nothing in the
-   suite refuses one being added.
+   columns and every `SELECT *` read converts with `dict(row)` and is then indexed **by name**.
+   **Corrected at D-054** (§12.14): this limitation first said "no `SELECT *` exists", which §12.1 two
+   sections above contradicts by naming the reads that use it — measured, `src/` holds **23** `SELECT *`
+   sites, **21** of them in `store/operational.py` and 2 in `audit/log.py`, against **14** `dict(row)`
+   conversions, and `INSERT INTO <table> VALUES` with no column list returns **0**. An `INSERT` without a
+   column list would still break the divergence, and nothing in the suite refuses one being added.
 10. **`new_id`'s docstring lists neither `MEM` nor `EV`.** The prefixes work — `core/ids.py` does not
     validate them — but the docstring is the only place a reader would look for the vocabulary, and it lags
     by two writers.
@@ -2899,3 +2905,80 @@ invented here would be a number in front of a judgement, which is limitation 4 o
 `sufficiency` is still a string. The alternative worth naming is wiring `retrieved_at` (§11.12's limitation
 1), which is smaller and would make 8.4's number durable, but it writes evidence rows for data nobody has
 decided to collect — the step ruling 3 declined and ruling 4 declined again.
+
+---
+
+### 12.14 D-054 — the four rulings
+
+All four questions in §12.13 were answered `Recommend`, each against exactly one marked recommendation, and
+are recorded as **D-054**. §12.13 is left as it was put; this section is the ruling. No code changed —
+`git diff 4443287 HEAD -- backend/` is empty — and the gate re-ran anyway, because this section quotes what
+it produces: **1,394 passed / 2 skipped / 0 failed**, `ruff check src tests` clean, `ruff format --check`
+unchanged on **93** files, mypy strict clean on **62**.
+
+| # | Question as put | Ruled | What it changes |
+|---|---|---|---|
+| 1 | Is Stage 8.5 approved, and how is F-18's partial closure recorded? | **Approved, recorded as D-054**, with F-24 (§12.8) and F-25 (§12.9) disclosed as opened here and F-18 **narrowed rather than closed** | Both 8.5 rows in `docs/07` move to `REVIEWED — APPROVED 2026-11-27` and the Stage 8 header reads 8.5 `APPROVED`. F-18 keeps **two of its four gaps open in the same row**: the first (validity interval and change conditions) and the third (the `evidence_ref` contradiction link) close here, the second (`expires_at`) and the fourth (the sufficiency meter) do not. Closing F-18 outright was offered and **not** taken, for the reason §12.13 gave: it would retire a finding whose expiry and sufficiency halves have no column and no batch behind them, which is the error D-053's ruling 1 avoided when it closed `O-012` on the defect F-14 named — four adapters recording nothing about arrival — and not on the system |
+| 2 | Should a confidence outside `[0, 1]`, including a negative one, be refused? | **No — it stays unbounded**, the test that pins `-0.5` storing stays, and the absence stays published as limitation 6 | Nothing changes in `confidence_text`. The only bounds it enforces are the portable target's `NUMERIC(6,5)` — one digit before the point, five after — and the sign is not one of them. `[0, 1]` would need three rulings the code cannot make: what `1` means, whether `9.99999` (accepted today, and the target's own ceiling) is a defect, and whether a belief can legitimately carry a negative confidence as a statement of disconfirmation. Inventing it here would put a number in front of a judgement, which is what §10.1 declined to do for `sufficiency`. Deferring the bound to F-24's band ruling was also offered and **not** taken, so the range stays a published limitation rather than a queued one |
+| 3 | Should F-25 be its own batch, or folded into the next one? | **Its own small batch: 8.6 = F-25 alone** | One refusal in `record_evidence` plus a test that **all four** parent references this codebase guards are guarded — `dossier.instrument_id`, `evidence_ref.contradicts`, `evidence_ref.dossier_id` and `memory_item`'s `evidence_ids` — rather than three of them, so the fourth cannot go missing again without a red gate. The shape is 8.4's: one attributable change per batch, which is what makes a regression attributable, the reason D-052's ruling 2 gave for scoping 8.4 to F-14 alone. Folding it into 8.7 was declined on the record — cheaper in commits, worse in attribution, and it is how a refusal ends up shipping beside an unrelated change nobody re-reads |
+| 4 | What comes after that? | **`expires_at`, as 8.7** — not the sufficiency meter, and not wiring `retrieved_at` | F-18's remaining cheap half: §5.3's executed survey already established that a nullable `ADD COLUMN` needs no rebuild, so it is one migration statement, one writer argument and one refusal, and `docs/10` §3.1's "expiring TTLs" is the one approved sentence in F-18 that still has no column at all after this batch. The sufficiency meter waits on stage 10 defining it and stage 11 finalising V1–V3 (`docs/10` §3.2), because a meter invented here would be a number in front of a judgement — §10.6's limitation 4, and the reason `sufficiency` is still a string. Wiring `retrieved_at` was offered a third time and declined a third time, on D-053's ruling 4's reason: it writes evidence rows for data nobody has decided to collect |
+
+**What this ruling does not do**, stated so nobody has to infer it. It does **not** close F-18: two of its
+four gaps stay open in the same row, and a reader who sees "8.5 approved" without seeing "narrowed" would
+take the expiry and sufficiency halves as delivered. It does **not** bound a confidence, so limitation 6
+stands as published and `'-0.5'` still stores. It does **not** wire the writer: nothing in `src/` calls
+`record_memory_item` and no route serves `memory_item`, which `test_nothing_in_src_calls_it_yet` asserts and
+which stays true after this ruling — a belief is **recordable** and still not **readable over HTTP**. It does
+**not** close §11.12's limitation 1 either: `evidence_ref.retrieved_at` still has no caller, offered at
+D-053 and offered again here, declined both times. It does **not** touch **F-22** (`O-014`), which D-052's
+ruling 4 recorded precisely so it would not be closed by accident, and it does not touch F-17 or F-19. And
+it does **not** retire any of §12.12's twelve limitations, including the two it had the chance to: limitation
+5 (`subject` is still not validated against the instrument master, the defect F-16 named for dossiers) and
+limitation 12 (a confidence is still stored in the caller's own spelling, so `'0.72'` and `'0.720000'` are
+different stored strings for one number). Limitation 9 is **corrected** by this section rather than retired
+by it — see below.
+
+**Finding ids.** **F-24** stays `OPEN` with no batch behind it, because the shape of a band has no ruling:
+the time axis is delivered and the confidence axis is not, and two more columns are nobody's decision yet.
+**F-25** stays `OPEN` and is ordered fixed as **8.6**. **F-18** is `NARROWED` — gaps 1 and 3 `CLOSED`, gaps
+2 and 4 `OPEN`. **`O-014`/F-22** stays `OPEN`. **The next finding id is F-26.** **No ledger row is opened by
+this ruling.** F-24 and F-25 stay findings in §12.8 and §12.9 rather than becoming `O-` rows in `docs/00`,
+because scheduling a batch is not opening an obligation row: D-053's ruling 4 ordered 8.5 and opened no `O-`
+row, and F-17 and F-19 are open findings with none either. `O-014` exists for F-22 only because D-052's
+ruling 4 said so in terms, and a row opened without a ruling saying so would break the register's first law —
+the owner rules, then the row is opened.
+
+**Two corrections, both disclosed rather than left standing.** Neither reached a pushed commit as an error
+about the code, and both were errors about the record.
+
+1. **§12.12's limitation 9 said "no `SELECT *` exists".** It does not, and §12.1 — two sections above it,
+   in the same batch's own text — says the opposite by name: the reads *do* use `SELECT *`
+   (`dossiers`, `evidence_refs`, `memory_items`, `get_memory_item` and more) and are safe because every one
+   converts with `dict(row)` and is indexed **by name**. Measured here: **23** `SELECT *` sites in `src/`,
+   **21** of them in `store/operational.py` and 2 in `audit/log.py`, against **14** `dict(row)` conversions;
+   and `INSERT INTO <table> VALUES` with no column list returns **0** anywhere in `src/nexus`, so the
+   divergence really is position-independent. The limitation now states the checked claim. An **absence**
+   claim was doing the work of a **safety** argument, and the safety argument is the one that survives
+   measurement — which is §10.4's defect class again: a sentence written from what a grep was expected to
+   return rather than from what it returned.
+2. **The board's per-file gate table carried one wrong baseline.** `test_evidence_writer.py` collected **42**
+   tests at `c0bfaea`, not the 44 the draft beside it claimed. The other five were right — `test_intelligence_routes.py`
+   **39**, `test_schema_fidelity.py` **35**, `test_dossier_writer.py` **87** unchanged (one test replaced, not
+   added), `test_repo_hygiene.py` **88** unchanged, `test_migrations.py` **15** unchanged. They were caught by
+   measuring rather than reading: the baselines were re-derived from `git archive HEAD` into a scratch tree
+   and collected there with `PYTHONPATH` pointed at *that* tree's `src`, so the numbers are the pre-8.5 ones
+   and not this batch's. §10.4 exists because sixteen numbers published in 8.4 were stale; this one would have
+   been the seventeenth. The arithmetic it feeds is unchanged and now checks both ways: **+100** tests
+   (77 + 12 + 5 + 6) against **+76** test functions (55 + 10 + 5 + 6), the difference being parametrisation.
+
+**The live run this commit triggers, and why its numbers are not read.** This commit changes documents and
+design files only, and §10.8's rule stands: a run's numbers are not quoted from a tree no reader can
+attribute. `venue-verification`'s `pull_request` filter is evaluated against this PR's whole diff versus
+base, which it has matched since Stage 7.1, so a documents-only push still spends a live reading of four
+public venues — the mechanism §11.9 corrected the record on, and the regress §11.14 predicted arriving a
+third time. 8.5 changed **no adapter**, so no run speaks to this batch at all and §12.12's limitation 11 is
+not waiting on one. The property is stated instead of the count, exactly as §11.14 stated it: **every push to
+this PR produces another live reading of the same adapter code until an adapter changes** — and neither 8.6
+(F-25's refusal) nor 8.7 (`expires_at`) changes one.
+
+---

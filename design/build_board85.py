@@ -520,6 +520,67 @@ def decision_table() -> str:
     )
 
 
+def ruling_table() -> str:
+    return table(
+        ["#", "Question as put", "Ruled", "What it changes"],
+        [
+            ("1", "Is Stage 8.5 approved, and how is F-18&rsquo;s partial closure recorded?",
+             "<b>Approved, recorded as D-054</b>, with F-24 (&sect;14) and F-25 (&sect;15) disclosed as "
+             "opened here and F-18 <b>narrowed rather than closed</b>",
+             "Both 8.5 rows in <span class='mono'>docs/07</span> move to <span class='mono'>REVIEWED "
+             "&mdash; APPROVED 2026-11-27</span> and the Stage 8 header reads 8.5 "
+             "<span class='mono'>APPROVED</span>. F-18 keeps <b>two of its four gaps open in the same "
+             "row</b>: the first (interval and change conditions) and the third (the contradiction link) "
+             "close, the second (<span class='mono'>expires_at</span>) and the fourth (the sufficiency "
+             "meter) do not. Closing it outright was offered and <b>not</b> taken &mdash; it would retire "
+             "a finding whose expiry and sufficiency halves have no column and no batch behind them, the "
+             "error D-053&rsquo;s ruling 1 avoided by closing <span class='mono'>O-012</span> on the "
+             "defect F-14 named, four adapters recording nothing about arrival, and not on the system"),
+            ("2", "Should a confidence outside <span class='mono'>[0, 1]</span>, including a negative "
+                  "one, be refused?",
+             "<b>No &mdash; it stays unbounded</b>, the test that pins <span class='mono'>-0.5</span> "
+             "storing stays, and the absence stays published as limitation 6",
+             "Nothing changes in <span class='mono'>confidence_text</span>: the only bounds it enforces "
+             "are the portable target&rsquo;s <span class='mono'>NUMERIC(6,5)</span>, one digit before "
+             "the point and five after, and the sign is not one of them. "
+             "<span class='mono'>[0, 1]</span> would need three rulings the code cannot make &mdash; what "
+             "<span class='mono'>1</span> means, whether <span class='mono'>9.99999</span> (accepted "
+             "today, and the target&rsquo;s own ceiling) is a defect, and whether a belief can carry a "
+             "negative confidence as a statement of disconfirmation &mdash; and inventing it would put a "
+             "number in front of a judgement, which is what &sect;10.1 declined to do for "
+             "<span class='mono'>sufficiency</span>. Deferring the bound to F-24&rsquo;s band ruling was "
+             "also offered and <b>not</b> taken, so the range stays a published limitation rather than a "
+             "queued one"),
+            ("3", "Should F-25 be its own batch, or folded into the next one?",
+             "<b>Its own small batch: 8.6 = F-25 alone</b>",
+             "One refusal in <span class='mono'>record_evidence</span>, plus a test that <b>all four</b> "
+             "parent references this codebase guards are guarded &mdash; "
+             "<span class='mono'>dossier.instrument_id</span>, "
+             "<span class='mono'>evidence_ref.contradicts</span>, "
+             "<span class='mono'>evidence_ref.dossier_id</span> and "
+             "<span class='mono'>memory_item</span>&rsquo;s <span class='mono'>evidence_ids</span> "
+             "&mdash; rather than three of them, so the fourth cannot go missing again without a red "
+             "gate. The shape is 8.4&rsquo;s: one attributable change per batch is what makes a "
+             "regression attributable, the reason D-052&rsquo;s ruling 2 scoped 8.4 to F-14 alone. "
+             "Folding it into 8.7 was declined on the record &mdash; cheaper in commits, worse in "
+             "attribution, and it is how a refusal ships beside an unrelated change nobody re-reads"),
+            ("4", "What comes after that?",
+             "<b><span class='mono'>expires_at</span>, as 8.7</b> &mdash; not the sufficiency meter, and "
+             "not wiring <span class='mono'>retrieved_at</span>",
+             "F-18&rsquo;s remaining cheap half: &sect;2&rsquo;s executed survey already established that "
+             "a nullable <span class='mono'>ADD COLUMN</span> needs no rebuild, so it is one migration "
+             "statement, one writer argument and one refusal, and "
+             "<span class='mono'>docs/10</span> &sect;3.1&rsquo;s &ldquo;expiring TTLs&rdquo; is the one "
+             "approved sentence in F-18 that still has no column at all after this batch. The meter "
+             "waits on stage 10 defining it and stage 11 finalising V1&ndash;V3, because a meter invented "
+             "here would be a number in front of a judgement &mdash; &sect;10.6&rsquo;s limitation 4, and "
+             "the reason <span class='mono'>sufficiency</span> is still a string. Wiring "
+             "<span class='mono'>retrieved_at</span> was offered a third time and declined a third time, "
+             "on D-053&rsquo;s ruling 4&rsquo;s reason: it writes evidence rows for data nobody has "
+             "decided to collect"),
+        ],
+    )
+
 def main() -> pathlib.Path:
     tokens = re.sub(r"@font-face \{[^}]*\}", "", (HERE / "tokens.css").read_text())
 
@@ -1075,14 +1136,108 @@ record_memory_item(*, audit, store, body, kind="OBSERVATION", scope="GLOBAL", su
         + "<div class='card'>" + limitation_table() + "</div>",
 
         # -- 19 -----------------------------------------------------------------
-        "<h3>19 &middot; Decision requested &mdash; four questions, each with one marked recommendation"
-        "<span class='tag'>docs/15 &sect;12.13 &middot; D-054</span></h3>"
+        "<h3>19 &middot; Decision requested, and answered &mdash; four questions, each with one marked "
+        "recommendation"
+        "<span class='tag'>docs/15 &sect;12.13 &middot; answered as D-054, &sect;20</span></h3>"
         + "<div class='card'>" + decision_table() + "</div>"
         + "<p>No <span class='mono'>D-0nn</span> row is written in "
           "<span class='mono'>docs/07</span> and no finding is closed in "
           "<span class='mono'>docs/00</span> until the owner rules: <b>approval is never inferred</b>, and "
-          "a stage that is complete is not a stage that is approved. Both rows in the register read "
-          "<span class='mono'>BUILT &mdash; AWAITING REVIEW</span>.</p>",
+          "a stage that is complete is not a stage that is approved. <b>Answered 2026-11-27 as "
+          "D-054</b> (&sect;20): all four questions <span class='ok'>Recommend</span>, each against "
+          "exactly one marked recommendation, and both rows in the register now read "
+          "<span class='mono'>REVIEWED &mdash; APPROVED 2026-11-27</span>.</p>",
+        # -- 20 -----------------------------------------------------------------
+        "<h3>20 &middot; D-054 &mdash; the four rulings, what they do not do, and two corrections"
+        "<span class='tag'>answered 2026-11-27 &middot; docs/15 &sect;12.14</span></h3>"
+        "<p>All four questions in &sect;19 were answered <span class='ok'>Recommend</span>, each against "
+        "exactly one marked recommendation, and are recorded as <b>D-054</b>. &sect;19 is left as it was "
+        "put; this section is the ruling. <b>No code changed</b> &mdash; <span class='mono'>git diff "
+        "4443287 HEAD -- backend/</span> is empty &mdash; and the gate re-ran anyway, because this "
+        "section quotes what it produces: <b>1,394 passed / 2 skipped / 0 failed</b>, "
+        "<span class='mono'>ruff check src tests</span> clean, <span class='mono'>ruff format "
+        "--check</span> unchanged on <b>93</b> files, mypy strict clean on <b>62</b>.</p>"
+        + "<div class='card'>" + ruling_table() + "</div>"
+        + "<p><b>What this ruling does not do</b>, stated so nobody has to infer it. It does <b>not</b> "
+          "close F-18: two of its four gaps stay open in the same row, and a reader who sees "
+          "&ldquo;8.5 approved&rdquo; without seeing &ldquo;narrowed&rdquo; would take the expiry and "
+          "sufficiency halves as delivered. It does <b>not</b> bound a confidence, so limitation 6 stands "
+          "as published and <span class='mono'>&lsquo;-0.5&rsquo;</span> still stores. It does <b>not</b> "
+          "wire the writer: nothing in <span class='mono'>src/</span> calls "
+          "<span class='mono'>record_memory_item</span> and no route serves "
+          "<span class='mono'>memory_item</span>, which "
+          "<span class='mono'>test_nothing_in_src_calls_it_yet</span> asserts and which stays true after "
+          "this ruling &mdash; a belief is <b>recordable</b> and still not <b>readable over HTTP</b>. It "
+          "does <b>not</b> close &sect;11.12&rsquo;s limitation 1 either: "
+          "<span class='mono'>evidence_ref.retrieved_at</span> still has no caller, offered at D-053 and "
+          "offered again here, declined both times. It does <b>not</b> touch <b>F-22</b> "
+          "(<span class='mono'>O-014</span>), which D-052&rsquo;s ruling 4 recorded precisely so it would "
+          "not be closed by accident, and it does not touch F-17 or F-19. And it does <b>not</b> retire "
+          "any of &sect;18&rsquo;s twelve limitations, including the two it had the chance to: limitation "
+          "5 (<span class='mono'>subject</span> is still not validated against the instrument master, the "
+          "defect F-16 named for dossiers) and limitation 12 (a confidence is still stored in the "
+          "caller&rsquo;s own spelling, so <span class='mono'>&lsquo;0.72&rsquo;</span> and "
+          "<span class='mono'>&lsquo;0.720000&rsquo;</span> are different stored strings for one "
+          "number).</p>"
+        + "<p><b>Finding ids.</b> <b>F-24</b> stays <span class='no'>OPEN</span> with no batch behind it, "
+          "because the shape of a band has no ruling: the time axis is delivered and the confidence axis "
+          "is not, and two more columns are nobody&rsquo;s decision yet. <b>F-25</b> stays "
+          "<span class='no'>OPEN</span> and is ordered fixed as <b>8.6</b>. <b>F-18</b> is "
+          "<b>NARROWED</b> &mdash; gaps 1 and 3 closed, gaps 2 and 4 open. <b>O-014/F-22</b> stays open. "
+          "<b>The next finding id is F-26.</b> <b>No ledger row is opened by this ruling</b>: F-24 and "
+          "F-25 stay findings in &sect;14 and &sect;15 rather than becoming "
+          "<span class='mono'>O-</span> rows in <span class='mono'>docs/00</span>, because scheduling a "
+          "batch is not opening an obligation row &mdash; D-053&rsquo;s ruling 4 ordered 8.5 and opened "
+          "no row, and F-17 and F-19 are open findings with none either. "
+          "<span class='mono'>O-014</span> exists for F-22 only because D-052&rsquo;s ruling 4 said so "
+          "in terms, and a row opened without a ruling saying so would break the register&rsquo;s first "
+          "law: the owner rules, then the row is opened.</p>"
+        + "<p><b>Two corrections, both disclosed rather than left standing.</b> Neither reached a pushed "
+          "commit as an error about the code, and both were errors about the record. <b>(1)</b> "
+          "&sect;18&rsquo;s limitation 9 said &ldquo;no <span class='mono'>SELECT *</span> "
+          "exists&rdquo;. It does not, and &sect;3 of this board &mdash; from the same batch&rsquo;s own "
+          "text &mdash; says the opposite by name: the reads <i>do</i> use "
+          "<span class='mono'>SELECT *</span> and are safe because every one converts with "
+          "<span class='mono'>dict(row)</span> and is indexed <b>by name</b>. Measured: <b>23</b> "
+          "<span class='mono'>SELECT *</span> sites in <span class='mono'>src/</span>, <b>21</b> of them "
+          "in <span class='mono'>store/operational.py</span> and 2 in "
+          "<span class='mono'>audit/log.py</span>, against <b>14</b> "
+          "<span class='mono'>dict(row)</span> conversions; and "
+          "<span class='mono'>INSERT INTO &lt;table&gt; VALUES</span> with no column list returns "
+          "<b>0</b> anywhere in <span class='mono'>src/nexus</span>, so the divergence really is "
+          "position-independent. An <b>absence</b> claim was doing the work of a <b>safety</b> argument, "
+          "and the safety argument is the one that survives measurement &mdash; &sect;10.4&rsquo;s defect "
+          "class again: a sentence written from what a grep was expected to return rather than from what "
+          "it returned. <b>(2)</b> &sect;16&rsquo;s per-file gate table carried one wrong baseline: "
+          "<span class='mono'>test_evidence_writer.py</span> collected <b>42</b> tests at "
+          "<span class='mono'>c0bfaea</span>, not the 44 the draft beside it claimed. The other five were "
+          "right &mdash; <span class='mono'>test_intelligence_routes.py</span> <b>39</b>, "
+          "<span class='mono'>test_schema_fidelity.py</span> <b>35</b>, "
+          "<span class='mono'>test_dossier_writer.py</span> <b>87</b> unchanged (one test replaced, not "
+          "added), <span class='mono'>test_repo_hygiene.py</span> <b>88</b> unchanged, "
+          "<span class='mono'>test_migrations.py</span> <b>15</b> unchanged. They were caught by "
+          "measuring rather than reading: the baselines were re-derived from <span class='mono'>git "
+          "archive HEAD</span> into a scratch tree and collected there with "
+          "<span class='mono'>PYTHONPATH</span> pointed at <i>that</i> tree&rsquo;s "
+          "<span class='mono'>src</span>, so the numbers are the pre-8.5 ones and not this batch&rsquo;s. "
+          "&sect;10.4 exists because sixteen numbers published in 8.4 were stale; this one would have been "
+          "the seventeenth. The arithmetic it feeds is unchanged and now checks both ways: <b>+100</b> "
+          "tests (77 + 12 + 5 + 6) against <b>+76</b> test functions (55 + 10 + 5 + 6), the difference "
+          "being parametrisation.</p>"
+        + "<p><b>The live run this commit triggers, and why its numbers are not read.</b> This commit "
+          "changes documents and design files only, and &sect;10.8&rsquo;s rule stands: a run&rsquo;s "
+          "numbers are not quoted from a tree no reader can attribute. "
+          "<span class='mono'>venue-verification</span>&rsquo;s "
+          "<span class='mono'>pull_request</span> filter is evaluated against this PR&rsquo;s whole diff "
+          "versus base, which it has matched since Stage 7.1, so a documents-only push still spends a "
+          "live reading of four public venues &mdash; the mechanism &sect;11.9 corrected the record on, "
+          "and the regress &sect;11.14 predicted, arriving a third time. 8.5 changed <b>no adapter</b>, so "
+          "no run speaks to this batch at all and limitation 11 is not waiting on one. The property is "
+          "stated instead of the count, exactly as &sect;11.14 stated it: <b>every push to this PR "
+          "produces another live reading of the same adapter code until an adapter changes</b> &mdash; "
+          "and neither 8.6 (F-25&rsquo;s refusal) nor 8.7 "
+          "(<span class='mono'>expires_at</span>) changes one.</p>",
+
     ])
 
     html_out = (
@@ -1092,8 +1247,10 @@ record_memory_item(*, audit, store, body, kind="OBSERVATION", scope="GLOBAL", su
         "<style>" + tokens + "\n" + fonts_css() + "\n" + CSS + "</style></head><body><div class='wrap'>"
         "<div class=\"lede\">Nexus-AI &middot; Stage 8 of 23 &middot; sub-deliverable 8.5 &middot; "
         "ordered by D-052&rsquo;s ruling 3, re-ordered by D-053&rsquo;s ruling 4 &middot; "
-        "<b>BUILT &mdash; AWAITING REVIEW</b>, approval requested as <b>D-054</b> &middot; opens "
-        "<b>F-24</b> and <b>F-25</b> &middot; next finding id <b>F-26</b></div>"
+        "<b>APPROVED 2026-11-27 (D-054)</b> &middot; all four questions in &sect;19 answered "
+        "<span class='ok'>Recommend</span>, the ruling in &sect;20 &middot; <b>F-24</b> open with no "
+        "batch behind it, <b>F-25</b> open and ordered as <b>8.6</b> &middot; <b>8.7 = "
+        "<span class='mono'>expires_at</span></b> &middot; next finding id <b>F-26</b></div>"
         "<h1 style=\"font-size:var(--font-size-heading);font-weight:var(--font-weight-semibold);"
         "margin:6px 0 0\"><span class='mono'>memory_item</span> gets a writer, F-18&rsquo;s three columns "
         "land, a contradiction becomes recordable &mdash; and a belief still carries exactly one "
@@ -1135,8 +1292,9 @@ record_memory_item(*, audit, store, body, kind="OBSERVATION", scope="GLOBAL", su
         + body
         + "<footer>Stage 8.5 &middot; stage 10&rsquo;s <span class=\"mono\">memory_item</span> writer "
           "&middot; ordered by D-052&rsquo;s ruling 3, re-ordered by D-053&rsquo;s ruling 4 which declined "
-          "wiring <span class=\"mono\">retrieved_at</span> first &middot; <b>BUILT &mdash; AWAITING "
-          "REVIEW</b>, approval requested as <b>D-054</b> with four questions in &sect;19 &middot; opens "
+          "wiring <span class=\"mono\">retrieved_at</span> first &middot; <b>APPROVED 2026-11-27 "
+          "(D-054)</b>, all four questions in &sect;19 answered <b>Recommend</b> and ruled in &sect;20 "
+          "&middot; opens "
           "<b>F-24</b> (no confidence band) and <b>F-25</b> (a dangling "
           "<span class=\"mono\">dossier_id</span> is refused by nothing), both recorded rather than fixed, "
           "next finding id <b>F-26</b> &middot; <b>F-18 narrowed, not closed</b>: gaps 1 and 3 close, gaps "
@@ -1197,7 +1355,10 @@ record_memory_item(*, audit, store, body, kind="OBSERVATION", scope="GLOBAL", su
           "<span class=\"mono\">MIGRATIONS</span>, not restored by hand &middot; <b>twelve</b> limitations "
           "published in full &middot; no adapter changed, so no live endpoint was called and no venue run "
           "speaks to this batch &middot; next: <b>8.6 = F-25 alone</b> and <b>8.7 = "
-          "<span class=\"mono\">expires_at</span></b>, both recommended and neither authorised</footer>"
+          "<span class=\"mono\">expires_at</span></b>, both ruled at D-054 and neither started "
+          "&middot; a confidence stays <b>unbounded</b>, limitation 6 published beside it and the "
+          "<span class='mono'>-0.5</span> test kept &middot; no ledger row opened by the ruling: F-24 and "
+          "F-25 stay findings, because scheduling a batch is not opening an obligation row</footer>"
           "</div></body></html>"
     )
 
