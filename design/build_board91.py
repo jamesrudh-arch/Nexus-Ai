@@ -614,6 +614,64 @@ def ruling_table() -> str:
     )
 
 
+def decision_table() -> str:
+    """What was **ruled**, on 2026-11-28. A separate function from `ruling_table()` above on purpose: that
+    one asserts the four questions as put, this one asserts the four answers, and one helper serving both
+    would let a ruling silently rewrite the question it answered — the reason `build_board87.py` keeps the
+    same two apart."""
+    return table(
+        ["#", "ruled", "what it changes", "what it does <b>not</b> settle"],
+        [
+            ("1", "<b>(a) approve the verb and state boundary as built</b>",
+             "The four permitted verbs and six permitted states, and the three and six refused, are now "
+             "<b>owner-approved</b> rather than derived. No code changes. §9 limitation 5 is annotated, not "
+             "rewritten.",
+             "<b>F-26&rsquo;s label.</b> §3.2 stated the case for <span class='mono'>CORRECTED</span> and "
+             "said the label was the owner&rsquo;s; question 1 asked about the boundary and <b>no option "
+             "carried the label</b>, so it is not applied and <b>F-26 stays "
+             "<span class='mono'>OPEN</span> and unlabelled</b>. Nor does approval <b>enforce</b> the "
+             "boundary: <span class='mono'>verb</span> and <span class='mono'>state</span> remain free "
+             "<span class='mono'>TEXT</span> with no <span class='mono'>CHECK</span> in either DDL, so it "
+             "lives in <span class='mono'>record_thesis</span> alone and a caller reaching "
+             "<span class='mono'>save_decision_payload</span> directly can still write "
+             "<span class='mono'>verb=ACCEPT</span>."),
+            ("2", "<b>(a) two columns &mdash; <span class='mono'>confidence_low</span> + "
+                  "<span class='mono'>confidence_high</span></b>",
+             "<b>8.8 is authorised to build</b> and its shape is settled, so batch B stops being "
+             "measured-and-blocked. It carries a migration. D-054&rsquo;s unbounded confidence and Stage "
+             "8.5&rsquo;s ordering precedent are <b>applied, not re-asked</b>: both bounds stay unbounded, "
+             "and high below low is refused including equality.",
+             "<b>What becomes of <span class='mono'>confidence</span> itself</b> &mdash; the cost this "
+             "option named and the owner accepted with it. Redundant and left unwritten, the midpoint "
+             "derived from the two endpoints, or a third independent claim. <b>Only the first and third are "
+             "reversible</b>: a midpoint stored beside its inputs can disagree with them, and rows already "
+             "written would carry the old meaning. So 8.8 asks it rather than deciding it."),
+            ("3", "<b>(a) leave both descriptions standing</b>",
+             "The 18-field <span class='mono'>DecisionRecord</span> and the 19-column row both stand, and "
+             "the divergence is recorded beside F-28 as §9&rsquo;s cost 4.",
+             "<b>F-28 stays <span class='mono'>OPEN</span> with no batch.</b> The pinned refusal at "
+             "<span class='mono'>test_core_guarantees.py:498</span> stands, so "
+             "<span class='mono'>to_audit_payload()</span> keeps withholding "
+             "<span class='mono'>rationale</span> and keeps its zero call sites. A reader does not exist "
+             "yet, and choosing now would have been choosing for it."),
+            ("4", "<b>(a) stage 10 &mdash; knowledge sufficiency</b>",
+             "The next two batches are <b>stage 10 and 8.8</b> against <b>one combined board</b>: ruling "
+             "4&rsquo;s cadence applied for the first time to two batches that both have work in them. "
+             "Stage 10 is three recorded items in one &mdash; the stage map&rsquo;s step 2, F-18&rsquo;s gap "
+             "4, and two of the nine <span class='mono'>DOSSIER_VIEW_GAPS</span> D-051 deferred to it by "
+             "name.",
+             "<b>F-30&rsquo;s column is not authorised</b>, and that is a consequence worth stating plainly: "
+             "option (d) was &ldquo;F-30&rsquo;s column first, if question 2 wants a migration anyway&rdquo;, "
+             "ruling 2 <b>does</b> want one, and ruling 4 chose (a). So production takes <b>two</b> "
+             "irreversible steps rather than one and <b>F-30 stays "
+             "<span class='mono'>OPEN</span> with no batch</b>. Also not authorised: F-27&rsquo;s fix "
+             "(D-056 ruling 2 stands) and the expiry reader (<span class='mono'>docs/15</span> §14.8 "
+             "limitation 1 stands). And <b>stage 10&rsquo;s own scope is defined by no document</b> &mdash; "
+             "no meter, no bar, no vocabulary of what sufficiency is sufficient <i>for</i>."),
+        ],
+    )
+
+
 def main() -> pathlib.Path:
     stage_map = (
         'P2 = [\n'
@@ -1066,7 +1124,34 @@ def main() -> pathlib.Path:
         "<span class='mono'>ruling_table()</span> and <span class='mono'>decision_table()</span> apart.</p>"
         "<div class='card'>" + ruling_table() + "</div></section>")
 
-    add("<footer class='page-foot'><p>Stage 9.1 &middot; batch A of two, on one combined board per D-056 "
+    # ---- 13 ----
+    add("<section><h2>13 &middot; D-057 &mdash; the four rulings, and what each does not settle</h2>"
+        "<p><b>Date: 2026-11-28. All four questions in §12 answered "
+        "<span class='ok'>Recommend</span></b>, so all four recommendations are the rulings. §12 above is "
+        "left exactly as put and this section is added beside it, because a board whose questions are edited "
+        "after the answers arrive is a board nobody can audit &mdash; which is why "
+        "<span class='mono'>decision_table()</span> and <span class='mono'>ruling_table()</span> are "
+        "different functions in the generator.</p>"
+        "<div class='card'>" + decision_table() + "</div>"
+        "<h3>13.1 &middot; What D-057 does not do</h3>"
+        "<p>It closes no finding except by confirming what 9.1 already closed in code: <b>F-29 "
+        "<span class='mono'>CLOSED</span></b>, the protocol 36&nbsp;&rarr;&nbsp;37. <b>F-24</b> moves from an "
+        "un-ruled shape to a ruled one and stays <span class='mono'>OPEN</span> until 8.8 builds it. "
+        "<b>F-26</b>, <b>F-27</b>, <b>F-28</b> and <b>F-30</b> all stay <span class='mono'>OPEN</span> with "
+        "no batch. <b>F-18</b> stays <span class='mono'>NARROWED</span> with gap 4 alone open and now "
+        "scheduled, gap 4 <i>being</i> stage 10&rsquo;s meter. It opens no "
+        "<span class='mono'>O-</span> row, on D-054&rsquo;s reasoning re-applied by D-056 to F-26 and F-27 "
+        "&mdash; <span class='mono'>docs/00</span> still holds fourteen, "
+        "<span class='mono'>O-001</span>&hellip;<span class='mono'>O-014</span>. It retires none of §9&rsquo;s "
+        "eight limitations and annotates one. It names no stage beyond 11. <b>The next finding id stays "
+        "F-31</b>, because a ruling that finds nothing invents nothing.</p>"
+        "<p><b>Next:</b> two batches concurrently under ruling 4 &mdash; <b>8.8</b>, the band as "
+        "<span class='mono'>confidence_low</span> + <span class='mono'>confidence_high</span> with a "
+        "migration and §12&rsquo;s third question on its own board, and <b>stage 10</b>, knowledge "
+        "sufficiency, opening with the derivation §13 says it needs. One combined board.</p></section>")
+
+    add("<footer class='page-foot'><p>Stage 9.1 &middot; <b class='ok'>APPROVED 2026-11-28 (D-057)</b> "
+        "&middot; batch A of two, on one combined board per D-056 "
         "ruling 4 &middot; F-26&rsquo;s seam <b>answered</b> and due <span class='mono'>CORRECTED</span>, "
         "still <span class='mono'>OPEN</span> &middot; F-28 and F-30 <b>found and recorded</b>, no batch "
         "&middot; F-29 <b>found and closed</b>, the protocol 36&nbsp;&rarr;&nbsp;37 &middot; "
@@ -1081,7 +1166,12 @@ def main() -> pathlib.Path:
         "&middot; two of this batch&rsquo;s own measurements are corrected on the board rather than quietly "
         "replaced &mdash; the &ldquo;no structural fakes&rdquo; claim in §3.3 and the "
         "&ldquo;no expiry reader exists&rdquo; claim in §6.3 &middot; batch B measured in §11 and <b>not "
-        "built</b>, because two of its three shapes are migrations &middot; next finding id "
+        "built</b>, because two of its three shapes are migrations &middot; <b>D-057 then ruled all four "
+        "questions <span class='ok'>Recommend</span></b>: the boundary approved as built but <b>F-26 stays "
+        "open and unlabelled</b>, the band is <b>two columns</b> so <b>8.8 is authorised</b>, both "
+        "descriptions of a decision stand so <b>F-28 stays open</b>, and <b>stage 10</b> runs next beside "
+        "8.8 &middot; <b>F-30&rsquo;s column is not authorised</b>, so production takes two irreversible "
+        "steps rather than one &middot; next finding id "
         "<b>F-31</b></p></footer>")
 
     add("</div></body></html>")

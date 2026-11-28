@@ -555,3 +555,99 @@ delivered and measured; batch B's is measured and blocked on its question. Batch
    also F-18's gap 4 and two of the nine dossier-view gaps, so one batch closes three recorded items;
    with the expiry reader (§8 limitation 1, D-056 ruling 1's standing limitation) as the alternative if
    the owner would rather make an inert column do something than add a meter.
+
+---
+
+## 12. D-057 — the four rulings, and what each one does not settle
+
+**Date: 2026-11-28. All four questions in §11 answered `Recommend`, so all four recommendations are the
+rulings.** Recorded here rather than retro-fitted into §11: §11 asserts the questions *as put* and stays
+unedited, and this section asserts what was ruled, for the reason `build_board87.py` keeps
+`ruling_table()` and `decision_table()` apart — one table serving both would let a ruling silently rewrite
+the question it answered.
+
+| # | the question as put (§11) | ruled | what it changes |
+|---|---|---|---|
+| 1 | Is the verb and state boundary right? | **(a) approve as built** | The four permitted verbs and six permitted states, and the three and six refused, are now **owner-approved** rather than derived. No code changes. §8 limitation 5 is annotated below. |
+| 2 | Which shape is F-24's confidence band? | **(a) two columns, `confidence_low` + `confidence_high`** | **8.8 is authorised to build**, and its shape is settled, so batch B stops being measured-and-blocked. It carries a migration. |
+| 3 | What becomes of `DecisionRecord`? | **(a) leave both** | The 18-field dataclass and the 19-column row both stand. **F-28 stays `OPEN`, no batch**, with the divergence recorded beside it (§6.2 cost 4). |
+| 4 | What runs next under ruling 4's cadence? | **(a) stage 10 — knowledge sufficiency** | The next two batches are **stage 10 and 8.8**, against **one combined board**, which is D-056 ruling 4's cadence applied for the first time to two batches that both have work in them. |
+
+### 12.1 What ruling 1 does not settle — F-26's label, and the schema
+
+**F-26 stays `OPEN` and unlabelled.** §2.6 stated the case for **CORRECTED** and said the label was the
+owner's to apply; §11's question 1 asked about the verb and state boundary and **not** about the label, and
+no option carried it. So the ruling does not apply it, and this section does not either: recording the case
+for a label is not applying one, on D-056 §14.10's rule that where an option's label carried no scope the
+derivation is recorded rather than a scope retro-fitted to the ruling. F-26's next appearance is as a
+question, not as a row.
+
+**Approving the boundary does not enforce it in the schema.** `decision.verb` and `decision.state` remain
+free `TEXT` with no `CHECK` in either DDL, and ruling 1 did not ask for one. So the boundary lives in
+`record_thesis` alone, and a caller that reaches `store.save_decision_payload(payload)` directly — which is
+what `project()` does, and what `test_thesis_writer.py`'s last test does by hand — can still write
+`verb=ACCEPT`. That is the same posture as `dossier.stance`, whose vocabulary `open_dossier` validates and
+the schema does not, and it is published here rather than left to be inferred from an approval.
+
+§8 limitation 5, annotated and not rewritten: the sets are no longer merely *a derivation from five
+sources*, because ruling 1 approved them; the half that stands is that **no document quotes them**, so a
+reader looking for the boundary in `docs/03` or `docs/10` will not find it — it is in this document, in
+`thesis.py`'s `THESIS_VERBS`/`GATED_VERBS`/`THESIS_STATES`/`GATED_STATES`, and in the tests that pin all
+four.
+
+### 12.2 What ruling 2 does not settle — the third question its own option named
+
+Option (a)'s cost was stated in the option and accepted with it: two columns, and *"`confidence` becomes
+either redundant or the midpoint — a third question nobody has asked."* **Choosing the shape is not
+choosing what happens to the existing column**, so 8.8 must ask it rather than decide it, on the same
+§14.10 rule. The three readings are not equivalent and only one is reversible:
+
+| what `confidence` becomes | consequence | reversible? |
+|---|---|---|
+| redundant — left nullable and unwritten | a column that stays empty forever, which is what F-27 and §14.8 limitation 1 both warn a reader cannot distinguish from a dropped one | yes, by writing it later |
+| the midpoint — derived from the two endpoints on write | every existing row's meaning changes, and a *derived* value stored beside its inputs can disagree with them | **no** — rows already written carry the old meaning |
+| a third, independent claim — the point estimate beside the band | three numbers where §3.1 asked for one band, and nothing says which a reader should trust | yes |
+
+Also settled by ruling 2 and not re-asked, because D-054 and Stage 8.5 already ruled them: **both bounds
+stay unbounded** — no `0..1` rule, only `NUMERIC(6,5)`'s own magnitude ceiling and scale — and **the
+ordering is enforced**, `confidence_high` below `confidence_low` refused including equality, on 8.5's
+`valid_until <= valid_from` precedent. §10.2's measurement stands as the reason (a) was recommended: a
+width is a magnitude and inherits the one-digit ceiling, so `-9.9 … 9.9` is expressible as two endpoints
+and not as a width of `19.8`.
+
+### 12.3 What ruling 4 does not settle
+
+- **F-27's fix stays declined.** Option (c) was not chosen, so D-056's ruling 2 stands unchanged: the
+  inflated counts remain pinned at `0003 → 4` and `0004 → 15`, because a fix moves no checksum but the
+  count is a row written at apply time and never rewritten.
+- **The expiry reader is not authorised.** Option (b) was not chosen, so `docs/15` §14.8 limitation 1
+  stands exactly as D-056's ruling 1 left it standing: `memory_item.expires_at` is inert, nothing in
+  `src/` reads it, and an item expired 400 days ago is still served.
+- **F-30's column is not authorised, and this is a consequence worth stating plainly.** Question 4's option
+  (d) was *"F-30's column first, if question 2 wants a migration anyway"* — one batch carrying both
+  migrations so production takes a single irreversible step. Ruling 2 **does** want a migration, and ruling
+  4 chose (a) and **not** (d). So the band's migration does not carry `decision.uncertainty`, and
+  production will take **two** irreversible steps rather than one. **F-30 stays `OPEN` with no batch**, and
+  the reason-code substitute of §4.5 stays a substitute: a thesis still cannot state what is unresolved in
+  a column, only label it.
+- **Stage 10's own scope is not defined by any document.** The stage map names it *"Knowledge sufficiency ·
+  stage 10 · does the dossier meet the sufficiency bar for this instrument/session?"* and `docs/15` §6's L-E
+  says sufficiency *"stays a string until stage 10 defines the meter"*. No document defines the meter, the
+  bar, or the vocabulary of what it is sufficient *for*. So stage 10 opens with a derivation and a question
+  of its own, recorded now rather than invented later — which is F-18's gap 4 and two of the nine
+  `DOSSIER_VIEW_GAPS` D-051 deferred to it by name, and one more (`disposition with reason code`) whose
+  remedy §10.4 notes is now reachable but not built.
+
+### 12.4 What D-057 does not do
+
+It closes no finding except by confirming what 9.1 already closed in code: **F-29 `CLOSED`**, the protocol
+36 → 37. **F-24** moves from un-ruled shape to ruled shape and stays `OPEN` until 8.8 builds it.
+**F-26**, **F-27**, **F-28** and **F-30** all stay `OPEN` with no batch. **F-18** stays `NARROWED` with gap
+4 alone open, now scheduled — gap 4 *is* stage 10's meter. It opens no `O-` row, on D-054's reasoning
+re-applied by D-056 to F-26 and F-27: recording a ruling is not opening an obligation, and `docs/00` still
+holds `O-001`…`O-014`. It retires none of §8's eight limitations, and annotates one (§12.1). It names no
+stage beyond 11. **The next finding id stays F-31**, because a ruling that finds nothing invents nothing.
+
+**Next:** two batches concurrently, per ruling 4 — **8.8**, the band as `confidence_low` +
+`confidence_high` with a migration and question §12.2's third question on its board, and **stage 10**,
+knowledge sufficiency, opening with the derivation §12.3 says it needs. One combined board.
