@@ -210,8 +210,22 @@ class TestAppWiring:
         assert "/v1/status" in body["paths"]
 
     def test_no_trading_endpoints_exist(self, client: TestClient) -> None:
+        """No route outside the paper namespace can place, amend or cancel an order.
+
+        ``/v1/paper/*`` is exempt from the *word* check, because a simulated blotter genuinely is a
+        list of orders — of orders that cannot be sent. The exemption is paid for in this same test
+        rather than in a comment: the namespace has to state, from the running app, that it holds no
+        adapter and can place nothing live. Renaming the routes to dodge the substring check would
+        have passed the old assertion while proving less than this does.
+        """
         paths = set(client.get("/openapi.json").json()["paths"])
-        assert not any("order" in p or "trade" in p or "position" in p for p in paths)
+        live_paths = {p for p in paths if not p.startswith("/v1/paper")}
+        assert not any("order" in p or "trade" in p or "position" in p for p in live_paths)
+        paper = client.get("/v1/paper").json()
+        assert paper["can_place_live_orders"] is False
+        assert paper["simulated"] is True
+        assert paper["is_venue_adapter"] is False
+        assert paper["adapter_count"] == 0
 
 
 class TestAuditStoreSelectionFailsClosed:

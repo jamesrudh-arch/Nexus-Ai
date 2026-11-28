@@ -1,0 +1,20 @@
+# Dependencies and build output. Neither is source, and both are reproducible from package.json.
+node_modules/
+.next/
+out/
+build/
+next-env.d.ts.bak
+
+# Local environment. The dashboard holds no secret — the backend URL is not one — but a local
+# override must never be committed over someone else's.
+.env
+.env.local
+.env*.local
+
+# TypeScript's incremental cache
+*.tsbuildinfo
+
+# Debug and coverage noise
+npm-debug.log*
+yarn-error.log*
+coverage/

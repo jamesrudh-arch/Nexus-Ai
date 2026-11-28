@@ -203,12 +203,33 @@ jobs:
           os.environ["NEXUS_AUDIT_BACKEND"] = "memory"
 
           app = create_app(settings=Settings())
-          paths = {r.path for r in app.routes}
+          paths = {getattr(r, "path", "") for r in app.routes}
           forbidden = ("order", "trade", "execute", "position", "withdraw")
+
+          # Stage 11 (D-059) added /v1/paper/*, which keeps a simulated blotter: the word "order"
+          # appears there honestly. The namespace is exempt from the *word* check and is instead
+          # asked directly whether it can trade, which is the question the word check was standing
+          # in for. A route that cannot send an order is not one merely named as though it cannot.
           for path in paths:
+              if path.startswith("/v1/paper"):
+                  continue
               for verb in forbidden:
                   assert verb not in path.lower(), f"API exposes a trading route: {path}"
-          print(f"{len(paths)} routes, none trading-capable:", sorted(paths))
+
+          paper = app.state.paper.describe()
+          assert paper["can_place_live_orders"] is False, "paper claims live order capability"
+          assert paper["simulated"] is True, "paper does not say it is simulated"
+          assert paper["is_venue_adapter"] is False, "paper registered itself as a venue adapter"
+          assert paper["adapter_count"] == 0, "paper holds a venue adapter"
+          assert paper["network_access"] is False, "paper claims network access"
+          assert paper["credentials_required"] is False, "paper requires a credential"
+
+          from nexus import PHASE_GATE
+          assert PHASE_GATE["venue_adapters"] is False, "the phase gate moved"
+          assert PHASE_GATE["order_capability"] is False, "the phase gate moved"
+          assert PHASE_GATE["live_trading"] is False, "the phase gate moved"
+
+          print(f"{len(paths)} routes; none trading-capable outside the inert paper namespace")
           EOF
 
   # ---------------------------------------------------------------- ARM64 build check

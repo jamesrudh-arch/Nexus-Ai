@@ -172,6 +172,13 @@ class PipelineReport:
 
 PublishFn = Callable[[str, dict[str, Any]], Awaitable[None] | None]
 
+#: Called with the records a pass accepted, after they are archived and before they are published.
+#: `publish` carries summaries — a count and a list of venues — which is the right payload for an
+#: event bus and useless to a consumer that needs the numbers themselves. This is the hook for that
+#: consumer: the paper trading loop analyses quotes as they are accepted, and it cannot analyse a
+#: count.
+RecordObserver = Callable[[str, Sequence[Any]], Awaitable[None] | None]
+
 
 class IngestionPipeline:
     """Binds a registry, an archive and (optionally) an event bus into one ingest path."""
@@ -182,6 +189,7 @@ class IngestionPipeline:
         registry: InstrumentRegistry,
         archive: ParquetArchive | None = None,
         publish: PublishFn | None = None,
+        on_records: RecordObserver | None = None,
         minimum_status: VenueStatus = MINIMUM_STATUS_FOR_ARCHIVE,
         now_fn: Callable[[], datetime] = utc_now,
         max_rejection_rate: float = 0.25,
@@ -189,6 +197,7 @@ class IngestionPipeline:
         self._registry = registry
         self._archive = archive
         self._publish = publish
+        self._on_records = on_records
         self._minimum_status = minimum_status
         self._now_fn = now_fn
         # Above this rejection rate the pass is flagged DEGRADED rather than reported as a
@@ -410,6 +419,21 @@ class IngestionPipeline:
         if quotes:
             results["quotes"] = self._archive.write_quotes(list(quotes))
         report.archive_writes = [r.to_dict() for r in results.values()]
+
+        # Hand the accepted records to an observer *after* the archive writes and *before* the
+        # events, which keeps rule 4 intact: a consumer can never see a record the archive does not
+        # have. An observer that fails is recorded and the pass continues — a downstream consumer
+        # being broken is worth reporting, but it is not a reason to declare that ingestion failed,
+        # and marking the pass PIPELINE_FAULT would misattribute the fault to the feed.
+        if self._on_records is not None:
+            for kind, records in (("bars", bars), ("ticks", ticks), ("quotes", quotes)):
+                if not records:
+                    continue
+                try:
+                    await _maybe_await(self._on_records(kind, list(records)))
+                except Exception as exc:  # noqa: BLE001 - an observer must not sink the pass
+                    detail = f"{type(exc).__name__}: {str(exc)[:160]}"
+                    report.errors.append(f"RECORD_OBSERVER_FAULT({kind}): {detail}")
 
         if emit_events and self._publish is not None:
             if bars:

@@ -123,13 +123,28 @@ class TestPhaseGateStillClosed:
     def test_no_order_or_trade_endpoint_exists(self, client: TestClient) -> None:
         """The structural guarantee: there is nothing to call, so nothing can be called."""
         paths = set(client.get("/openapi.json").json()["paths"])
+        # Absolute, and not namespace-exempt: these five must never exist under any prefix.
         forbidden = {"/v1/orders", "/v1/trades", "/v1/positions", "/v1/intents", "/v1/execute"}
         assert not (paths & forbidden)
         for path in paths:
+            if path.startswith("/v1/paper"):
+                # Stage 11 (D-059): the paper platform keeps a simulated blotter, so the word
+                # "order" appears honestly. What must not appear is the capability, and that is
+                # asserted below against the running app rather than against the spelling.
+                continue
             lowered = path.lower()
             assert "order" not in lowered
             assert "trade" not in lowered
             assert "execute" not in lowered
+        paper = client.get("/v1/paper").json()
+        assert paper["can_place_live_orders"] is False
+        assert paper["network_access"] is False
+        assert paper["credentials_required"] is False
+        assert paper["engine"]["environment"] == "PAPER"
+        for sub_path in ("account", "orders", "fills", "positions", "analysis"):
+            body = client.get(f"/v1/paper/{sub_path}").json()
+            assert body["simulated"] is True, sub_path
+            assert body["environment"] == "PAPER", sub_path
 
     def test_instrument_master_counts_are_reported(self, client: TestClient) -> None:
         body = client.get("/v1/status").json()["instrument_master"]

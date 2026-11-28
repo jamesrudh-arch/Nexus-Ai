@@ -45,8 +45,22 @@ EXPECTED_UID = 1001
 # Paths that must not exist while the system cannot trade. Checked as substrings, so a route
 # added later under a new prefix is still caught.
 FORBIDDEN_ROUTE_WORDS = ("order", "trade", "trading", "execute", "position", "withdraw", "transfer")
-# The only mutations this build is allowed to expose: the emergency halt and its release.
-ALLOWED_POST_PATHS = {"/v1/halt", "/v1/halt/release"}
+# The paper trading platform (Stage 11, D-059) is the one namespace exempt from the lexical ban,
+# because a simulated blotter genuinely is a list of orders — of orders that cannot be sent. Naming
+# its routes /v1/paper/blotter and /v1/paper/holdings would have satisfied the substring check while
+# proving nothing, so the exemption is paired with the semantic checks in
+# `check_the_paper_namespace_is_inert`: those ask the running process whether it can place an order,
+# and fail if it says anything other than no.
+PAPER_NAMESPACE = "/v1/paper"
+# The only mutations this build is allowed to expose: the emergency halt and its release, plus
+# starting, stopping and resetting the simulation. None of the three can transmit anything.
+ALLOWED_POST_PATHS = {
+    "/v1/halt",
+    "/v1/halt/release",
+    f"{PAPER_NAMESPACE}/start",
+    f"{PAPER_NAMESPACE}/stop",
+    f"{PAPER_NAMESPACE}/reset",
+}
 
 _results: list[tuple[bool, str, str]] = []
 
@@ -179,7 +193,12 @@ def check_api() -> None:
     if check("openapi is served", status == 200 and isinstance(spec, dict), f"got {status}"):
         paths = spec.get("paths") or {}
         check("openapi declares routes", bool(paths), "no paths at all — the check went vacuous")
-        forbidden = sorted(p for p in paths if any(word in p.lower() for word in FORBIDDEN_ROUTE_WORDS))
+        forbidden = sorted(
+            p
+            for p in paths
+            if not p.startswith(PAPER_NAMESPACE)
+            and any(word in p.lower() for word in FORBIDDEN_ROUTE_WORDS)
+        )
         check("no route can place, amend or cancel an order", not forbidden, f"found {forbidden}")
         posts = sorted(p for p, ops in paths.items() if isinstance(ops, dict) and "post" in ops)
         unexpected = sorted(set(posts) - ALLOWED_POST_PATHS)
@@ -188,6 +207,70 @@ def check_api() -> None:
             not unexpected,
             f"unexpected POST routes: {unexpected}",
         )
+
+    check_the_paper_namespace_is_inert()
+
+
+def check_the_paper_namespace_is_inert() -> None:
+    """Ask the running process whether the paper platform can trade, and believe only "no".
+
+    The lexical route ban above cannot tell a simulated blotter from a real one, and the exemption
+    for ``/v1/paper`` would be a hole in the gate on its own. So the exemption is earned here, by
+    questioning the process that is actually serving: its own description of its capability, and the
+    labelling on every body it returns. A build that could send an order would have to lie in three
+    separate responses to pass, and the phase-gate checks above would have to lie with it.
+    """
+    status, body = get(f"{PAPER_NAMESPACE}")
+    if status == 404:
+        # The platform can be switched off entirely (NEXUS_PAPER_ENABLED=false), in which case the
+        # routes are still served and say so; a genuine 404 means a build without Stage 11 at all,
+        # and there is nothing here to check.
+        record(True, "paper namespace absent — nothing to check", "")
+        return
+    if not check("the paper namespace describes itself", status == 200, f"got {status}"):
+        return
+    if not isinstance(body, dict):
+        check("the paper namespace describes itself", False, f"body was {type(body).__name__}")
+        return
+    check("paper says it cannot place live orders", body.get("can_place_live_orders") is False, str(body.get("can_place_live_orders")))
+    check("paper says it is simulated", body.get("simulated") is True, str(body.get("simulated")))
+    check("paper says it is not a venue adapter", body.get("is_venue_adapter") is False, str(body.get("is_venue_adapter")))
+    check("paper holds no venue adapter", body.get("adapter_count") == 0, str(body.get("adapter_count")))
+    check("paper needs no network access", body.get("network_access") is False, str(body.get("network_access")))
+    check("paper needs no credential", body.get("credentials_required") is False, str(body.get("credentials_required")))
+    engine = body.get("engine")
+    check(
+        "the paper engine reports PAPER as its environment",
+        isinstance(engine, dict) and engine.get("environment") == "PAPER",
+        str(engine.get("environment") if isinstance(engine, dict) else engine),
+    )
+
+    for path in ("account", "orders", "fills", "positions", "analysis"):
+        status, payload = get(f"{PAPER_NAMESPACE}/{path}")
+        labelled = (
+            status == 200
+            and isinstance(payload, dict)
+            and payload.get("simulated") is True
+            and payload.get("environment") == "PAPER"
+        )
+        check(
+            f"every /v1/paper/{path} body is labelled simulated",
+            labelled,
+            f"status {status}, simulated={payload.get('simulated') if isinstance(payload, dict) else None}",
+        )
+
+    status, payload = get("/v1/status")
+    if status == 200 and isinstance(payload, dict):
+        paper = payload.get("paper")
+        check(
+            "status publishes paper beside live_authority, and they disagree in the right way",
+            isinstance(paper, dict)
+            and paper.get("can_place_live_orders") is False
+            and isinstance(payload.get("live_authority"), dict)
+            and payload["live_authority"].get("status") == "DENIED",
+            f"paper={paper}",
+        )
+
 
     # Two live probes. A route can be missing from openapi.json and still be served, so the
     # absence is tested by asking for it, not only by reading the spec.

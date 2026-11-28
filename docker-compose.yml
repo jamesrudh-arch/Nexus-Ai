@@ -167,6 +167,11 @@ services:
       # Public, unauthenticated market-data sources only. No venue credential is mounted.
       NEXUS_DATA_SOURCES_ENABLED: "bybit-public,okx-public,binance-vision,dukascopy"
     volumes:
+      # Named volumes, not the container filesystem. `archive_root` defaults to ./data/archive and
+      # the Parquet archive is the system of record R-1 reconciles against, so it gets its own
+      # volume mounted *inside* core-data: on an ephemeral filesystem a redeploy would discard every
+      # archived bar, and a restart would recover its audit chain from PostgreSQL and its market
+      # history from nothing. core-data holds the rest (the SQLite default database among it).
       - core-data:/app/data
       # The tick/bar archive is the system's memory and the only series it can prove is
       # complete. Separate volume so it can be backed up and sized on its own.

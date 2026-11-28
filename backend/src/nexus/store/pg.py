@@ -55,9 +55,11 @@ the gap cannot widen unnoticed.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import threading
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -103,6 +105,13 @@ class StoreDriverError(Exception):
 class PostgresError(StoreDriverError):
     """A fault raised by PostgreSQL, or by this adapter refusing to guess."""
 
+
+#: How a dropped connection is recovered. Managed PostgreSQL (Supabase, RDS, Cloud SQL) fails over,
+#: and a serverless plan suspends an idle database; both close the one connection this process holds.
+#: Without a re-open the *next* statement fails and every statement after it fails too, so the
+#: process stays broken until an operator restarts it — the failure outlives its cause.
+_RECONNECT_ATTEMPTS = 3
+_RECONNECT_DELAY_SECONDS = 0.25
 
 #: Statements the store issues as SQLite PRAGMAs, and what PostgreSQL does about each. A PRAGMA not
 #: listed is refused rather than dropped, so a new one cannot be silently ignored.
@@ -411,6 +420,7 @@ class PostgresConnection:
                 "system of record than the one the configuration named."
             )
         self._dsn = dsn
+        self._autocommit = autocommit
         try:
             self._conn = _psycopg.connect(dsn, autocommit=autocommit)
         except _DriverFault as exc:
@@ -693,7 +703,7 @@ class PostgresConnection:
             # passed, so a statement with none is sent exactly as written.
             cursor = self._conn.execute(text, bound if bound else None)
         except _DriverFault as exc:
-            raise PostgresError(_redact(str(exc))) from exc
+            raise self._fault(exc) from exc
         if reads_only(text):
             if self._writes == 0:
                 # sqlite3 defers BEGIN until a write, so the store it was written against has never
@@ -731,19 +741,83 @@ class PostgresConnection:
             # that no longer exists.
             self._types, self._primary, self._unique = {}, {}, {}
         except _DriverFault as exc:
-            self._conn.rollback()
-            raise PostgresError(_redact(str(exc))) from exc
+            # Rolling back a connection the server already dropped would raise a second fault over
+            # the first one, hiding the real cause. `_fault` recovers the connection instead.
+            if not self._closed:
+                self._conn.rollback()
+            raise self._fault(exc) from exc
+
+    # -- recovering a dropped connection ---------------------------------
+
+    @property
+    def _closed(self) -> bool:
+        """Whether the underlying connection is gone.
+
+        ``psycopg.Connection.closed`` is ``0`` while it is usable and non-zero once the server has
+        dropped it. ``getattr`` keeps this honest for the stub driver used when the extra is absent.
+        """
+        return bool(getattr(self._conn, "closed", 0))
+
+    def _reopen(self) -> bool:
+        """Try to establish a fresh connection after the last one died.
+
+        Returns whether one is now usable. A re-open *never* re-runs the statement that failed: the
+        fault may have arrived while the server was acknowledging a commit, in which case the write
+        is already durable and running it again would double it. Recovering the connection and
+        reporting the operation as failed is the only answer that cannot invent a second side
+        effect. The caller therefore sees a ``PersistenceError``, which the store already marks
+        retryable, and the *next* request succeeds instead of the process staying broken.
+        """
+        if _psycopg is None:
+            return False
+        for attempt in range(_RECONNECT_ATTEMPTS):
+            if attempt:
+                time.sleep(_RECONNECT_DELAY_SECONDS * attempt)
+            try:
+                self._conn = _psycopg.connect(self._dsn, autocommit=self._autocommit)
+            except _DriverFault:
+                continue
+            # The catalog caches belong to a connection that no longer exists. `_load_catalog`
+            # re-reads them lazily when `self._types` is empty, so a fresh connection cannot serve a
+            # stale shape after a provider restart — or miss a migration another process applied.
+            self._types.clear()
+            self._primary.clear()
+            self._unique.clear()
+            self._writes = 0
+            return True
+        return False
+
+    def _fault(self, exc: Exception, *, operation: str = "") -> PostgresError:
+        """Turn a driver fault into this module's error, recovering the connection if it died."""
+        detail = _redact(str(exc))
+        if self._closed and self._reopen():
+            return PostgresError(
+                f"{operation}failed because the PostgreSQL connection was dropped; it has been "
+                f"re-opened for the next operation, but this one did not complete: {detail}"
+            )
+        return PostgresError(f"{operation}failed: {detail}" if operation else detail)
 
     def commit(self) -> None:
-        self._conn.commit()
+        try:
+            self._conn.commit()
+        except _DriverFault as exc:
+            # A commit that cannot be acknowledged is the one case where the write may already be
+            # durable. `_writes` is left as it is: only a successful re-open clears it.
+            raise self._fault(exc, operation="commit ") from exc
         self._writes = 0
 
     def rollback(self) -> None:
-        self._conn.rollback()
+        try:
+            self._conn.rollback()
+        except _DriverFault as exc:
+            raise self._fault(exc, operation="rollback ") from exc
         self._writes = 0
 
     def close(self) -> None:
-        self._conn.close()
+        # Closing a connection the server already dropped is not worth raising over: the caller asked
+        # for it to be unusable, and it is.
+        with contextlib.suppress(_DriverFault):
+            self._conn.close()
 
     def cursor(self) -> Any:
         return self._conn.cursor()

@@ -192,6 +192,19 @@ def create_app(
     app.state.recovery = recovery
     app.state.boot_error = boot_error
 
+    # Stage 11: the paper trading platform (D-059). Built here so it shares the one halt manager —
+    # an operator who stops the system stops the rehearsal too — and the one audit log, so a
+    # simulated trade is recorded in the same chain as everything else and cannot be quietly edited
+    # out of history. It has no network client and no credential, and it is not registered with the
+    # execution gateway, so PHASE_GATE's `venue_adapters` and `order_capability` stay False.
+    from nexus.api.paper import build_paper_platform, register_paper_routes
+
+    # `events=None`: create_app wires no event bus, so the platform publishes to the audit log only.
+    # Saying so beats a lookup that guesses at a name.
+    paper_platform = build_paper_platform(cfg, halt=halt_manager, audit=audit_log, events=None)
+    app.state.paper = paper_platform
+    register_paper_routes(app, paper_platform)
+
     @app.middleware("http")
     async def _count_requests(request: Request, call_next: RequestResponseEndpoint) -> Response:
         response: Response = await call_next(request)
@@ -245,6 +258,17 @@ def create_app(
             "time_utc": iso_utc(utc_now()),
             "halt": halt_manager.state.to_dict(),
             "live_authority": authority.to_dict(),
+            # Published beside live_authority on purpose: the two answers look similar and mean
+            # opposite things, and a dashboard that showed one without the other would invite the
+            # reader to confuse a rehearsal with an authorisation.
+            "paper": {
+                "enabled": paper_platform.enabled,
+                "simulated": True,
+                "environment": "PAPER",
+                "can_place_live_orders": False,
+                "is_venue_adapter": False,
+                "stats": paper_platform.loop.stats().to_dict(),
+            },
             "risk_limits_provisional": True,  # O-002: exact numbers pending Risk Policy
             "cost_constraint": "D-019 zero-cost: free tools/APIs/data only",
             "alert_channels": {

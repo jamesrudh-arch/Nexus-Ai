@@ -175,8 +175,15 @@ USER nexus
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -fsS http://127.0.0.1:8000/healthz || exit 1
+    CMD-SHELL curl -fsS "http://127.0.0.1:${PORT:-8000}/healthz" || exit 1
 
-# Bound to 0.0.0.0 inside the container network only; Caddy is the public entry point and
-# the compose file does not publish this port to the host.
-CMD ["uvicorn", "nexus.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+# Bound to 0.0.0.0 inside the container network only; Caddy is the public entry point and the
+# compose file does not publish this port to the host.
+#
+# Shell form, not exec form, because the port has to come from the environment: a PaaS (Railway,
+# Render, Fly, Cloud Run) injects $PORT and routes to *that* port, so a container hardcoded to 8000
+# boots healthy and then never receives a request. `${PORT:-8000}` keeps 8000 as the documented
+# default for compose and local runs, where nothing injects a port. The healthcheck above expands
+# the same variable for the same reason: probing the wrong port reports an unhealthy service that is
+# actually serving, or a healthy one that is not.
+CMD uvicorn nexus.api.app:create_app --factory --host 0.0.0.0 --port "${PORT:-8000}"

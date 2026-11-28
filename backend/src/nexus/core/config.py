@@ -9,6 +9,7 @@ Security rules (Section 13.3, D-019):
 
 from __future__ import annotations
 
+from decimal import Decimal
 from functools import lru_cache
 from typing import Literal
 
@@ -147,6 +148,50 @@ class Settings(BaseSettings):
     #: Free, public, unauthenticated data sources. Comma-separated; empty disables ingestion.
     #: None of these can place an order, and none is given a credential (D-026).
     data_sources_enabled: str = "bybit-public,okx-public,binance-vision,dukascopy"
+
+    # ---- Stage 11: the paper trading platform (D-059) ----
+    # Every one of these configures a *simulation*. None of them can bring a live order closer to
+    # existing: the paper package holds no socket, no HTTP client and no credential, and it never
+    # consults LiveAuthority. `paper_enabled` turns the rehearsal off; it cannot turn trading on.
+    paper_enabled: bool = True
+    paper_account_id: str = "PAPER-MAIN"
+    paper_currency: str = "USD"
+    #: Simulated starting capital. A round number by design: the point is the *shape* of the result,
+    #: and a starting balance chosen to make a curve look good is the first way a simulation lies.
+    paper_starting_cash: Decimal = Field(default=Decimal("100000"), gt=0)
+    # Execution costs. Defaults are adverse on purpose — see nexus.paper.fill_model.
+    paper_slippage_bps: Decimal = Field(default=Decimal("2"), ge=0)
+    paper_commission_bps: Decimal = Field(default=Decimal("5"), ge=0)
+    paper_minimum_commission: Decimal = Field(default=Decimal("0.10"), ge=0)
+    paper_latency_ms: int = Field(default=120, ge=0)
+    paper_max_quote_age_seconds: Decimal = Field(default=Decimal("30"), gt=0)
+    paper_respect_displayed_size: bool = True
+    paper_refuse_delayed_data: bool = True
+    # Sizing and exposure limits.
+    paper_risk_fraction: Decimal = Field(default=Decimal("0.02"), gt=0, le=1)
+    paper_max_position_notional: Decimal = Field(default=Decimal("25000"), gt=0)
+    paper_max_open_positions: int = Field(default=8, ge=1)
+    # The real-time loop.
+    paper_min_analysis_interval_seconds: Decimal = Field(default=Decimal("1"), ge=0)
+    paper_post_trade_cooldown_seconds: Decimal = Field(default=Decimal("60"), ge=0)
+    paper_stream_interval_seconds: float = Field(default=1.0, gt=0)
+    # D-057's confidence band, applied to the reference analyzer.
+    paper_confidence_low: Decimal = Field(default=Decimal("0.35"), ge=0, le=1)
+    paper_confidence_high: Decimal = Field(default=Decimal("0.70"), ge=0, le=1)
+    paper_momentum_threshold_bps: Decimal = Field(default=Decimal("15"), ge=0)
+    paper_minimum_history: int = Field(default=12, ge=2)
+    paper_analysis_window: int = Field(default=20, ge=2)
+    #: Instruments the loop will act on. Empty means "everything observed", which is the right
+    #: default for a rehearsal and the wrong one for a production feed.
+    paper_watchlist: str = ""
+    #: What the runner polls: "source:SYMBOL,SYMBOL;source:SYMBOL". Real-time sources only — a
+    #: historical archive cannot serve a live quote, and feeding one to a real-time loop would
+    #: produce analysis of a market that has already moved (the runner refuses it by name).
+    #: The default is OKX's seeded mapping, which is at DATA_AVAILABLE. Bybit's BTCUSDT mapping is
+    #: only SUPPORTED — below the pipeline's archive floor — so a Bybit default would accept nothing
+    #: and report a flat, healthy-looking curve. See `paper/runner.py:_DEFAULT_FEED`.
+    paper_feed: str = "okx-public:BTC-USDT-SWAP"
+    paper_poll_seconds: float = Field(default=5.0, gt=0)
 
     risk: RiskLimits = Field(default_factory=RiskLimits)
     data_quality: DataQualityLimits = Field(default_factory=DataQualityLimits)
