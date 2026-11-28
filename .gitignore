@@ -1,0 +1,74 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+
+# Secrets — NEVER commit (Section 13.3, D-019 secrets flow)
+#
+# Directory patterns here are ANCHORED with a leading slash on purpose. An unanchored
+# `secrets/` or `data/` matches at ANY depth, which silently excluded the source packages
+# `backend/src/nexus/secrets/` and `backend/src/nexus/data/` from the repository: six modules
+# the code imports were missing from a pushed commit, so a fresh clone could not import the
+# package. The test suite did not catch it because it ran against the working tree, not the
+# repository. `backend/tests/test_repo_hygiene.py` now guards this.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+/secrets/
+/sops/
+/age-keys/
+*.age
+
+# Data / artifacts (kept out of git; 200 GB free-tier cap, Feasibility §10.6 Z-04)
+# Anchored for the same reason as above. Runtime data lives at the repo root or under
+# backend/data, never inside backend/src.
+/data/
+/backend/data/
+*.duckdb
+*.sqlite
+*.sqlite3
+*.parquet
+*.zst
+/backups/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# ---------------------------------------------------------------- source tree is never an
+# artifact. Last match wins in .gitignore, so these negations sit at the end and guarantee no
+# pattern above can ever swallow a module again. (`__pycache__/` directories stay excluded:
+# git never descends into an excluded directory, so files inside cannot be re-included.)
+!backend/src/
+!backend/src/**
+!backend/migrations/
+!backend/migrations/**
+
+# ...but compiled artifacts inside the source tree stay out. These MUST come after the
+# negations above: the last matching pattern wins, and a negation that re-includes a
+# `__pycache__/` directory lets git descend into it and re-include every `.pyc` inside.
+backend/src/**/__pycache__/
+backend/src/**/*.py[cod]
+backend/src/**/*.egg-info/
+backend/migrations/**/__pycache__/

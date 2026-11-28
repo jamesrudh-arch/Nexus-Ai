@@ -1,0 +1,35 @@
+@import "./tokens.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Screen-reader-only text, for the words that make a colour or a glyph unambiguous.
+ *
+ * Tailwind ships an `sr-only` utility, but this one is declared here so the tokens file stays the
+ * only stylesheet that has to be read to understand the visual language, and so the class survives a
+ * Tailwind upgrade that renames it.
+ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* Dense data screens scroll; the page itself should not. */
+html,
+body {
+  height: 100%;
+}
+
+::selection {
+  background: var(--cyan);
+  color: var(--bg-canvas);
+}

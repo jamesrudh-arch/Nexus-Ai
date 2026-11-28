@@ -1,0 +1,117 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nexus-core"
+version = "0.2.0"
+description = "NEXUS Autonomous Financial Intelligence System — core foundation + market data (Phase 3)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "LicenseRef-Proprietary"
+authors = [{ name = "NEXUS" }]
+
+# D-019: every dependency is free/open-source. No paid SDK, no licensed service client.
+dependencies = [
+  "pydantic>=2.7,<3",
+  "pydantic-settings>=2.2,<3",
+  "fastapi>=0.111,<1",
+  "uvicorn[standard]>=0.30,<1",
+  "sqlalchemy>=2.0,<3",
+  "structlog>=24.1",
+  "prometheus-client>=0.20",
+  "pyotp>=2.9",
+  "cryptography>=42.0",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+# Optional production extras — still $0 / OSS. Absent in dev: code degrades to local fallbacks.
+postgres = ["psycopg[binary]>=3.1"]
+nats = ["nats-py>=2.7"]
+# Phase 3 archive: Parquet (Apache-2.0) + in-place analytical reads (MIT). No server
+# process, which is what a single 12 GB free-tier VM can actually afford.
+archive = ["pyarrow>=16.0", "duckdb>=1.0"]
+# Real-time public streams. Optional: REST polling works without it.
+streams = ["websockets>=12.0"]
+dev = [
+  # PostgreSQL parity (F-31). Both are needed for tests/test_postgres_store.py to run rather than
+  # skip, and a skipped test is not a passing one: the six missing commas in migrations/0001_core.sql
+  # survived four stages precisely because nothing executed that file. psycopg is LGPL-3.0-only and
+  # pgserver is Apache-2.0 bundling PostgreSQL under its own permissive licence; psycopg was already
+  # declared as the `postgres` extra before F-31, and the compose stack already carries AGPL-3
+  # (MinIO, Grafana, Loki), so LGPL is not the strongest obligation in the project.
+  "psycopg[binary]>=3.1",
+  # Measured, not assumed (F-39): pgserver 0.1.4 publishes 16 files, no sdist, and its only Linux
+  # wheels are manylinux_2_17_x86_64 for cp39-cp312 — its arm64 wheels are macOS. So without a marker
+  # `pip install -e ".[dev]"` fails outright on the Ampere A1 production host (ci.yml:166) and on
+  # Python 3.13+, taking the whole dev environment with it. With it the extra installs everywhere and
+  # the parity suite skips only where no server can be provided — and the CI step below fails the build
+  # on that skip, because a parity test that never contacted a database proves nothing about one.
+  "pgserver>=0.1.4; (platform_system != 'Linux' or platform_machine == 'x86_64') and python_version < '3.13'",
+  "pytest>=8.2",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.5",
+  "mypy>=1.10",
+  "pyarrow>=16.0",
+  "duckdb>=1.0",
+  "websockets>=12.0",
+  # NatsEventBus bridges a synchronous call site into nats-py's asyncio client. The bridge is
+  # tested against an injected fake, but the assumption it rests on -- that `nats.connect` is a
+  # coroutine function -- can only be pinned against the real library. Without it here the test
+  # that guards defect 37 would skip in CI, and a skipped guard is not a guard.
+  "nats-py>=2.7",
+  # Declared explicitly even though uvicorn[standard] already pulls it in: the repository
+  # hygiene tests parse ci.yml and docker-compose.yml, so a transitive dependency is not a
+  # safe thing to rely on for a test that guards the build itself.
+  "pyyaml>=6.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# --strict-markers is on, so this has to be declared or collection fails outright.
+markers = [
+  "live: contacts real public endpoints (O-009/O-010); skipped at module level unless NEXUS_LIVE_VERIFY=1 on a host with egress, which the venue-verification workflow sets",
+]
+filterwarnings = ["error::DeprecationWarning:nexus.*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "S", "A", "C4", "SIM", "RET", "ARG", "PTH", "TD", "ERA"]
+ignore = [
+  "S101",  # asserts are used in tests
+  "TD003", # long-form TODO links not required
+  "B008",  # FastAPI Depends() in defaults
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "ARG001"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src/nexus"]
+
+# nats-py is an optional production transport (D-019: free/OSS). It ships no stubs and is
+# not installed in dev, where the in-memory bus is used instead.
+[[tool.mypy.overrides]]
+module = ["nats", "nats.*"]
+ignore_missing_imports = true
+follow_untyped_imports = true
+
+# pyarrow ships .pyi stubs but no py.typed marker, so mypy refuses to see them. Both it and
+# duckdb are optional archive extras; the store fails closed if either is missing at runtime.
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*", "duckdb", "duckdb.*", "websockets", "websockets.*"]
+ignore_missing_imports = true
+follow_untyped_imports = true

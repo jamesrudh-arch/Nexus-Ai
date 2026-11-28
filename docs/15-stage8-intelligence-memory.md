@@ -1,0 +1,3826 @@
+# Stage 8 — Intelligence Memory: what exists, what is schema-only, and what a writer must satisfy
+
+**Sub-deliverable 8.1 — research.** Status: `APPROVED` (**D-050**). Authorised by **D-049** (research only;
+no production code). Date: 2026-11-26.
+**Sub-deliverable 8.2 — L-A + L-B + L-C.** Status: `APPROVED` (**D-051**). Authorised by **D-050**. §9.
+**Sub-deliverable 8.3 — L-D + L-E.** Status: `APPROVED` (**D-052**). Authorised by **D-051** as L-D + L-E
+only. §10, with the ruling in §10.9 and **F-22** in §10.10.
+**8.4 — F-14's expensive half, and nothing else.** Status: `APPROVED` (**D-053**). Authorised by **D-051**,
+re-confirmed by **D-052**'s ruling 2. §11, with the ruling in §11.14 and **F-23** in §11.7. **F-14 and
+`O-012` are `CLOSED`.**
+**8.5 — stage 10's `memory_item` writer, F-18's three columns and `evidence_ref.contradicts`.** Status:
+`APPROVED` (**D-054**). Authorised by **D-052**'s ruling 3, re-ordered by **D-053**'s ruling 4 against the
+alternative (wiring `retrieved_at` first), which was declined. §12, with the ruling in §12.14, **F-24** in
+§12.8 and **F-25** in §12.9. **F-18 is narrowed, not closed** — gaps 1 and 3 close, gaps 2 and 4 stay open.
+Nothing calls the writer and no route serves `memory_item`, by ruling.
+**8.6 — F-25 alone: the fourth parent is guarded.** Status: `REVIEWED — APPROVED 2026-11-28 (D-055)`.
+Authorised by **D-054**'s ruling 3, which ordered one refusal in `record_evidence` and a gate naming **all
+four** parents rather than three. §13, with all **nine** declared foreign keys inventoried in §13.5. **No
+migration, no column, no route, no schema text** — three files, +339 / −2. **D-055** (§13.9) approves it,
+closes **F-25** on the defect §12.9 named and *not* on orphans in general, keeps the gate in
+`test_evidence_writer.py`, records §13.5's five unguarded trading-path keys as **F-26 `OPEN`** — a finding
+about the seam, not a defect in shipped behaviour — and re-confirms **8.7 = `expires_at` on `memory_item`
+only**, which is ordered and **not started**. **The next finding id is F-27.**
+Date: 2026-11-28.
+
+> **This header was three rulings out of date and is corrected here.** It named only 8.1 and still read
+> `DELIVERED, AWAITING REVIEW` after D-050, D-051 and D-052 had each been recorded further down the same
+> file. A status header that lags the record it heads is the same defect class as a stale count: it is the
+> first thing a reader trusts and the least thing anybody re-measures.
+
+> **It went stale again, by one ruling, and is corrected a second time.** At the start of 8.5 this header
+> still read `8.4 … AUTHORISED, NOT STARTED` although §11.14 further down the same file records D-053
+> approving it on 2026-11-27, and it named no 8.5 at all. The blockquote above had already named the defect
+> class, which is the part worth recording: a correction that is not *gated* goes stale the same way the text
+> it corrected did, one batch later, for the same reason. Nothing asserts this header against the rulings
+> below it — unlike a count, which `test_schema_fidelity.py` and the derived-set tests do assert — so it is
+> re-read by hand at the start of every batch or it is wrong.
+
+> **8.1 changed no production code.** The owner's ruling was explicit: read the code and the approved
+> design, inventory what exists against what is schema-only, and produce findings, $0 levers and a
+> proposed scope for 8.2. Nothing in `backend/` was modified, so no new CI surface was added and the
+> gate is unchanged from Stage 7's closure. Every claim below was produced by a command or a read that
+> is named beside it, and the ones that could be executed were executed.
+
+---
+
+## 1. Why Stage 8 has no name, and what this batch does about it
+
+`docs/07` carried "STAGE 8 — KNOWLEDGE GRAPH" for two commits. **No document in this repository says
+that.** It was invented, and it has been retracted (`f006d1f`). What the record does establish is the
+chain Stage 8 sits in:
+
+| Source | What it fixes |
+|---|---|
+| `docs/13` §2.4, §2.5 | the intelligence-memory tables `dossier`, `evidence_ref`, `memory_item` are **schema only**; "writers arrive with stages 8–10" |
+| `docs/12` §1.3 (P-2) | the decision chain: candidate with ABSTAIN default → **knowledge sufficiency (stage 10, planned)** → **three verification gates (stage 11, planned)** → immutable digest-bound intent → `LiveAuthority` → deterministic sizing → environment routing |
+| `design/build_board52.py:73` | "intelligence dossier (**stage 9**) · evidence set + uncertainty · ABSTAIN is the default record" |
+| `docs/03` §7, §8 and `docs/10` §3.1 | the Intelligence Centre screen and the evidence graph it must serve — **approved at Stage 3.3, D-035** |
+
+So Stage 8 is the first of the three stages that give those tables writers, and it sits *before* the
+dossier stage and two stages before sufficiency is defined. Its scope is the owner's to set. This
+document does not set it; it establishes what is there to build on, what is missing, and what any
+builder would have to satisfy — then proposes a scope in §8 for the owner to rule on.
+
+**Finding ids.** This document continues the numbering from `docs/14` (F-15 onward) rather than
+restarting at F-1, for a reason recorded as **F-19** in §3: F-1…F-7 already mean different things in
+`docs/13` and `docs/14`, and neither says its ids are scoped to itself. Restarting would give "F-4" a
+third meaning.
+
+---
+
+## 2. The inventory, verified
+
+What follows was established by reading the source and, where a claim could be executed, executing it.
+The command that produced each row is named in §2.4.
+
+### 2.1 What exists and works
+
+| Piece | Where | State |
+|---|---|---|
+| `DecisionRecord`, `DecisionVerb` (ACCEPT/REJECT/WAIT/REDUCE/EXIT/ESCALATE/ABSTAIN), `DecisionState` (12 states) | `domain/decision.py:17-67` | **Built**, matches the `docs/03` §7 vocabulary exactly |
+| Persistence for decisions | `store/operational.py:366-414` (`save_decision`, `save_decision_payload`, `decisions`, `get_decision`) | **Built**, audit-first, `INSERT OR REPLACE` |
+| The three memory tables | `store/schema.py:267-313` (SQLite, applied) and `migrations/0002_memory.sql` (Postgres target) | **Schema only** — no writer, as `docs/13` records |
+| `counts()` includes all three | `store/operational.py:931-951` | **Built** — the tables are observable today at `/v1/status → persistence.counts`, all zero |
+| Audit hash chain, append-only | `audit/chain.py`, `audit/log.py`, triggers in `schema.py:316-333` | **Built**; `assert_no_secrets` guards every payload |
+| Projection bookkeeping | `op_projection` table, `mark_projected`, `projected_refs` | **Built** — the operational store is already modelled as a projection of the audit chain |
+| Write-ahead replay | `store/writeahead.py:75-87` | **Built** for 7 event types, including `instrument.registered` |
+| `LiveAuthority`, sizing, routing | `risk/authority.py`, `risk/engine.py` | **Built** — steps 5–7 of the P-2 chain |
+
+### 2.2 What is absent
+
+> Two rows below are overtaken by §9 and one number in them is wrong. `intelligence` now exists as a
+> package (§9.5), and `evidence_ref` now has a writer (§9.5). The package count reads 15 because `ls`
+> counted `__pycache__`; the tracked count was **14** (`git ls-files 'backend/src/nexus/*/__init__.py'`).
+> Left as published because it is the inventory D-050 was ruled on.
+
+| Absent thing | How it was established |
+|---|---|
+| **Any candidate or thesis generation.** No `intelligence`, `research` or `memory` package exists | `ls src/nexus/` → 15 packages: api, archive, audit, core, data, domain, events, execution, ingestion, instruments, observability, risk, secrets, store |
+| **Any construction of `DecisionRecord` in production code** | `grep -rn "DecisionRecord(" src/` → **zero hits**; the only constructions are in `tests/test_core_guarantees.py` and `tests/test_store_persistence.py` |
+| **Any real value in `evidence_refs`** | `grep -rn "evidence_refs=" src/ tests/` → one hit, `tests/test_store_persistence.py:71`, with the literals `("EV-1", "EV-2")` |
+| **Any "evidence graph"** | `grep -rn "evidence graph\|evidence_graph" src/` → one hit, and it is the *comment* on `decision.py:62`: "source ids from the evidence graph". There is no graph |
+| **Any route serving decisions, dossiers, memory or evidence** | The 11 routes are `/healthz`, `/metrics`, `/readyz`, `/v1/audit/verify`, `/v1/data/coverage`, `/v1/halt`, `/v1/halt/release`, `/v1/instruments`, `/v1/instruments/coverage`, `/v1/instruments/{id}/session`, `/v1/status`. All operational. *(Superseded by Stage 8.3: the count is 13, and `GET /v1/intelligence/dossiers` with `GET /v1/intelligence/dossiers/{dossier_id}` serve the `dossier` table — see §10. This row is left as the 8.1 inventory it is.)* |
+| **Any emitter of `instrument.registered`** | `writeahead.py:81` can *replay* it; nothing in `src/` ever produces it |
+
+### 2.3 What the seeded master does and does not reach
+
+Stage 7.3 seeded the instrument registry with 3 instruments. That seed reaches the **registry** and the
+API's coverage routes. It does **not** reach the store:
+
+```
+GET /v1/status   →  instrument_master.count      = 3        (the in-memory registry, seeded by L-C)
+                 →  persistence.counts.instrument = 0       (SQLite, "system of record" per docs/13 R-1)
+                 →  persistence.counts.dossier    = 0
+                 →  persistence.counts.evidence_ref = 0
+                 →  persistence.counts.memory_item  = 0
+```
+
+Identical under both backends — `NEXUS_AUDIT_BACKEND=memory` (ephemeral) and `sqlite` (durable,
+`./data/nexus.db`). So the system of record has never heard of any instrument, while the coverage routes
+report three.
+
+### 2.4 Commands that produced this section
+
+```
+ls src/nexus/                                        # 2.2 package inventory
+grep -rn "DecisionRecord(" src/ tests/               # 2.2 no production construction
+grep -rn "evidence_refs=" src/ tests/                # 2.2 one test, literal placeholders
+grep -rn "save_instrument" src/                      # 2.2 only caller is writeahead replay
+grep -n 'version="' src/nexus/store/schema.py        # 3 migrations applied from schema.py
+ls backend/migrations/                               # 2 .sql files, no 0003
+NEXUS_AUDIT_BACKEND=memory|sqlite python …/status    # 2.3 counts, both backends
+```
+
+---
+
+## 3. Findings
+
+### F-15 — the applied SQLite schema is not the mirror its Postgres counterpart claims
+
+> **Corrected in §9.1.** Executing the fix in Stage 8.2 required diffing every table and every column,
+> and the systematic diff showed this finding was **partly wrong**: two of the six divergences below are
+> uniform house conventions rather than drift, one table count is off by one, and the drift that is real
+> is larger and runs in both directions. The load-bearing part — `dossier.instrument_id` carrying no
+> `REFERENCES` at all — is correct and is what migration 0004 fixed. The text below is left as published
+> because it is what D-050 was ruled on.
+
+`migrations/0002_memory.sql` opens: *"Mirror of migration 0002_memory in `nexus/store/schema.py`
+(SQLite), which is the one applied today."* The mirror is not faithful. Six divergences, found by
+parsing both DDLs and diffing per column:
+
+| Table | Column | Postgres target | Applied SQLite | Consequence |
+|---|---|---|---|---|
+| `dossier` | `instrument_id` | `TEXT REFERENCES instrument (instrument_id)` | `TEXT` — **no REFERENCES at all** | the link from a dossier to the instrument it is about is **undeclared**, so it cannot be enforced even in principle |
+| `dossier` | `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT now()` | `TEXT NOT NULL` | insert omitting it fails in SQLite, succeeds in Postgres |
+| `dossier` | `updated_at` | `TIMESTAMPTZ NOT NULL DEFAULT now()` | `TEXT NOT NULL` | same |
+| `evidence_ref` | `retrieved_at` | `TIMESTAMPTZ NOT NULL DEFAULT now()` | `TEXT NOT NULL` | same — and this is the column F-14 needs |
+| `memory_item` | `created_at` | `TIMESTAMPTZ NOT NULL DEFAULT now()` | `TEXT NOT NULL` | same |
+| `memory_item` | `confidence` | `NUMERIC(6, 5)` | `TEXT` | see below |
+
+The `TIMESTAMPTZ`→`TEXT` and `JSONB`→`TEXT` translations are legitimate: SQLite has no such types. The
+six above are not translations, they are omissions.
+
+**`docs/13` §2.5 already records that foreign keys are "declared but not enforced", and gives the reason:
+`PRAGMA foreign_keys` is off because recovery re-projects in chain order, which is not always
+parent-first.** That limitation is real and deliberate, and this finding does not dispute it. But it does
+not cover `dossier.instrument_id`: that column is not *declared*, so turning the pragma on would not
+restore it. Executed proof that the two behave differently under the **same** pragma:
+
+```
+PRAGMA foreign_keys = ON
+  dossier      -> instrument_id that never existed : ACCEPTED          (nothing to enforce)
+  evidence_ref -> dossier_id   that never existed : rejected, FOREIGN KEY constraint failed
+```
+
+So `docs/13`'s sentence is inaccurate for one column, and the inaccuracy matters precisely where Stage 8
+will write.
+
+**On `confidence`, the divergence is behavioural and the obvious fix is not sufficient.** The migration
+states its own law — *"Confidence uses NUMERIC, never FLOAT"* — and the applied schema uses neither.
+Executed against the real applied DDL:
+
+```
+TEXT-affinity column, ORDER BY confidence  ->  ['', '0.5', '99999999', 'not-a-number']
+                                                '99999999' sorts ABOVE '0.5'
+accepts '' and 'not-a-number'              ->  both ACCEPTED
+```
+
+Declaring `NUMERIC(6,5)` in SQLite **fixes the ordering and not the acceptance** — affinity is a
+conversion preference, not a constraint, so it converts what it can and stores junk as-is:
+
+```
+NUMERIC(6,5) column, ORDER BY  ->  [0.5, 0.5, 99999999, '', 'not-a-number']   (numerics correct, junk last)
+NUMERIC(6,5) column, INSERT 'not-a-number'  ->  ACCEPTED, typeof() = text
+```
+
+Postgres' `NUMERIC(6,5)` would reject both strings outright. So the two schemas do not merely store
+confidence differently, they **disagree about what a confidence is allowed to be**, and the SQLite fix
+requires a `CHECK` constraint or validation in the writer — not a type change.
+
+**Nothing detects any of this.** No test reads `migrations/*.sql`; the runner applies
+`schema.MIGRATIONS` (`store/migrations.py:111`, `:229`), so the `.sql` files are executed by neither the
+app nor the suite. `grep -rn "0002_memory\|migrations" tests/` finds tests that assert migration
+*names*, *checksums* and *ordering* — never column definitions.
+
+### F-16 — the instrument master is in the registry and the API, but not in the system of record
+
+`/v1/status` reports `instrument_master.count = 3` and `persistence.counts.instrument = 0`, under both
+the ephemeral and the durable backend (§2.3). The cause is not a missing call but a missing emitter:
+`save_instrument` has exactly one caller, `writeahead.py:82`, which replays an `instrument.registered`
+audit event — and nothing in `src/` ever emits one. Stage 7.3's seed writes thirteen entries into the
+registry's own in-memory change log, not into the audit chain.
+
+Two consequences for Stage 8, and they compound:
+
+1. `dossier.instrument_id` has no candidate parent rows, so **every dossier written today would reference
+   an instrument the system of record has never heard of**.
+2. Because of F-15, that reference is undeclared, so **it would be accepted silently** rather than
+   rejected.
+
+This is the single most important scoping fact in this document: the intelligence layer's first table
+points at a parent that does not exist, through a constraint that does not exist.
+
+### F-17 — nothing in the product ever creates a decision
+
+`DecisionRecord` is never constructed in `src/` (§2.2). Its `evidence_refs` and `counter_evidence_refs`
+fields are persisted faithfully, default to `ABSTAIN`, and have only ever held the literals `"EV-1"` and
+`"EV-2"` in one test. No route serves decisions. So the P-2 chain is built from step 5 onward
+(`LiveAuthority`, sizing, routing) and **steps 1–4 are absent**: candidate, sufficiency, verification
+gates, decision.
+
+That is consistent with `docs/12` — sufficiency is stage 10 and the gates are stage 11 — but it means
+Stage 8 is not extending a decision layer, it is **creating the thing that produces decisions**. The
+`ABSTAIN` default is already correct in the data model (`DecisionVerb.ABSTAIN` is the dataclass default,
+`dossier.stance` defaults to `'ABSTAIN'` with the comment *"ABSTAIN is the default, not a fallback"*,
+and `save_decision_payload` defaults a missing verb to `"ABSTAIN"`), so the honesty posture Stage 8
+inherits is sound. What is missing is anything that could ever move off it.
+
+### F-18 — the approved design requires four things neither schema can hold
+
+Stage 3.3 was approved at **D-035**, so these are obligations, not aspirations:
+
+| Required by | Requirement | `dossier` / `evidence_ref` / `memory_item` |
+|---|---|---|
+| `docs/03` §7; `docs/10` §3.1 | beliefs with "confidence, **validity interval**, **change conditions**"; `docs/10` adds *"a point estimate without them is a defect"* | `memory_item` has `confidence` and **neither** of the other two |
+| `docs/10` §3.1 | memory with "**expiring TTLs**" | no expiry column anywhere. `superseded_by` models correction, not expiry. `DecisionRecord.expires_at` exists but memory has no equivalent |
+| `docs/03` §8; `docs/10` §3.1 | evidence graph with "**contradictions highlighted and linked**" | `evidence_ref` has **no column linking one row to another it contradicts**. `counter_evidence_refs` exists on the *decision*, not on the evidence |
+| `docs/10` §3.1 | "**knowledge-sufficiency meter with stated basis and what it is sufficient *for***" | `dossier.sufficiency` is a single `TEXT` defaulting to `'INSUFFICIENT'` — no basis, no target |
+
+All four could be pushed into the unenforced `payload JSONB`/`TEXT` column, which is how a schema starts
+lying: the field exists, the meaning does not. Note that three of the four are **cheap to add properly**
+(§5.3) and only the fourth needs Stage 10's definition before it can be more than a string.
+
+### F-19 — finding ids already collide across stages, and nothing says so
+
+`docs/13` uses F-1…F-7 and `docs/14` uses F-1…F-14. They are different findings: `docs/13`'s **F-4** is
+*"the Postgres path is part-paid, not free"*; `docs/14`'s **F-4** is *venue vocabulary*. Neither document
+states that its ids are scoped to itself, and `docs/07`'s register cites bare ids. So "F-4" is ambiguous
+in this repository today, and Stage 8 would have made it three ways.
+
+Recorded rather than rewritten: renumbering two approved stages would falsify their citations. This
+document continues from **F-15**, which creates no new collision, and the historical ambiguity is stated
+here so a reader who meets a bare "F-4" knows to ask which stage.
+
+---
+
+## 4. The design obligations Stage 8 must honour
+
+Beyond F-18, the approved design fixes behaviour that a first writer can get wrong quietly:
+
+* **`docs/03` §7: "No hidden chain-of-thought. Auditable evidence + structured findings + concise
+  rationale only."** A dossier that stores a model's reasoning prose in `payload` would violate this.
+  The schema's `summary` / `stance` / `uncertainty` split is the right shape and should be used as
+  designed rather than bypassed.
+* **`docs/10` §3.2: three verification stages per candidate — V1 evidence & data sufficiency, V2 risk &
+  mandate compliance, V3 execution safety; "definitions finalise at Stage 11, chrome reserved"; any FAIL
+  ends the candidate with a reason code; confidence never overrides a failed stage.** Stage 8 must not
+  define V1–V3, but it must not make them undefinable either: a dossier that records sufficiency as a
+  bare enum leaves nowhere for V1's outcome to live.
+* **`docs/12` §1.3: "no gate can be satisfied by a confidence value"** (law A-02+A-08). So
+  `memory_item.confidence` and `DecisionRecord.confidence` may inform ranking but must never satisfy a
+  gate — which is an argument for keeping confidence strictly ordered and typed (F-15) *and* for never
+  letting it be the only thing a gate reads.
+* **`docs/10` §3.1: "every line links to its run record"** for tasks and tool activity, and *"quant result
+  with run id"* in the dossier view. The evidence row's `locator` + `checksum` + `audit_ref` are the
+  mechanism; a writer that leaves `locator` empty (it defaults to `''`) produces an untraceable claim.
+
+---
+
+## 5. What any writer must satisfy
+
+These are constraints discovered by reading and executing, not preferences. They bound 8.2's cost.
+
+### 5.1 The audit contract
+
+Every one of the three tables carries `audit_ref`, and the existing writers show the required shape
+(`operational.py:372-408`):
+
+1. validate the identity column is present and raise `PersistenceError` if not;
+2. `assert_no_secrets(payload)` — the guard that raises `SecretMaterialDetected`;
+3. write inside `self._transaction()`, defaulting `state`/`verb`/`stance` to their ABSTAIN-side values;
+4. `self._mark(conn, audit_ref, entity_type, entity_id)` so the row is booked into `op_projection`.
+
+The operational store uses `INSERT OR REPLACE`, so it is a **projection**, not the record; the audit
+chain is the record and is append-only by trigger. A Stage 8 writer inherits that split and must not
+treat a re-save as an edit — `memory_item.superseded_by` exists precisely because *"memory is
+superseded, never edited in place"*.
+
+### 5.2 Migrations are forward-only and checksummed
+
+`store/migrations.py:194-199` refuses a version whose checksum changed after it was applied. So **no
+column in `0002_memory` can be edited**; any fix is a new `0004_*` migration plus a matching `.sql` file.
+Note also that the migration *boundaries* already differ: `schema.py` has `0001_operational`,
+`0002_memory`, `0003_audit_append_only`, while `migrations/` has `0001_core.sql` and `0002_memory.sql`
+with **no 0003** — the append-only triggers live in `0001_core.sql:26-38` instead. The triggers
+themselves do mirror faithfully (same names, same two operations), so this is a boundary difference and
+not a missing feature; but a Postgres deploy following the `.sql` files would have a different migration
+history from the one `tests/test_boot_recovery.py:341` asserts.
+
+### 5.3 What SQLite's `ALTER TABLE` permits — executed, not assumed
+
+| Operation | Result |
+|---|---|
+| `ADD COLUMN expires_at TEXT` | **OK** |
+| `ADD COLUMN supersedes TEXT REFERENCES memory_item (memory_id)` | **OK**, and `PRAGMA foreign_key_list` confirms the FK is registered |
+| `ALTER COLUMN confidence TYPE NUMERIC(6,5)` | **refused** — `near "ALTER": syntax error` |
+| `ADD CONSTRAINT … FOREIGN KEY (instrument_id) REFERENCES …` | **refused** — `near "CONSTRAINT": syntax error` |
+| create-new → copy → drop → rename | **OK** |
+
+So the cost of the two halves of F-15/F-18 is very different, and this is what makes the sequencing in
+§8 a real choice rather than a preference:
+
+* **Cheap, no rebuild:** adding `valid_from`, `valid_until`, `change_conditions`, `expires_at` to
+  `memory_item`, and a `contradicts` FK column to `evidence_ref` — three of F-18's four gaps.
+* **Requires a table rebuild inside a forward-only migration:** `memory_item.confidence` TEXT →
+  NUMERIC(6,5) with a `CHECK`, and `dossier.instrument_id` gaining its `REFERENCES` — F-15(a) and (c).
+
+---
+
+## 6. $0 levers for 8.2
+
+No new dependency, no new service, no cost. Each is independently testable offline.
+
+| Lever | What it does | Why it is ordered here |
+|---|---|---|
+| **L-A** — schema fidelity | migration `0004_memory_fidelity` rebuilding `memory_item` (confidence `NUMERIC(6,5)` + `CHECK`) and `dossier` (its `REFERENCES` restored), plus a **fidelity test** that parses both DDLs and asserts agreement on column names, nullability, defaults and FK declarations | This is the guard that would have caught F-15. Without it the two schemas keep drifting and every later lever is written against a shape that may not survive a Postgres deploy |
+| **L-B** — project the master | emit `instrument.registered` audit events for the seeded master so the store's `instrument` table matches `instrument_master.count`, making `persistence.counts.instrument` 3 rather than 0 | F-16: a dossier's parent rows must exist before dossiers do. The replay path is already built, so this is an emitter, not a mechanism |
+| **L-C** — first writer | `evidence_ref` only: record one piece of evidence against a dossier, populating `observed_at` and `retrieved_at` **separately**, plus `data_status`, `locator`, `checksum`, `audit_ref` | It is the leaf table, its FK is already enforced, and it needs no new columns. It is also where **F-14 gets its home**: the schema already separates observation from retrieval, so a writer that fills both correctly stops the venue-time defect propagating into the evidence graph |
+| **L-D** — first route | `/v1/intelligence/dossiers`, read-only, serving what exists and rendering empty honestly | The Intelligence Centre chrome has been reserved since D-035 with nothing behind it. A route that returns an honest empty is worth more than a route that does not exist |
+| **L-E** — dossier writer | create a dossier with `stance=ABSTAIN` and sufficiency carried **with its basis and its target** as pinned payload keys | Last because it depends on L-A (its FK), L-B (its parent rows) and L-C (its evidence). Its sufficiency must stay a string until Stage 10 defines the meter — but it must be a string that says what it is sufficient *for* |
+
+---
+
+## 7. Limitations of this research
+
+1. **Nothing here was executed against Postgres.** No Postgres server or driver exists in this sandbox
+   (`docs/13` §2.5 records the same). Every statement about Postgres behaviour is a property of the
+   declared types, not a measurement — including the claim that `NUMERIC(6,5)` would reject
+   `'not-a-number'`.
+2. **The absence claims are grep-shaped.** "No production code constructs a `DecisionRecord`" is true of
+   the literal `DecisionRecord(`; a factory function or `**kwargs` splat built elsewhere could evade that
+   pattern. The supporting evidence is stronger than the grep alone — no route serves decisions, and
+   `persistence.counts.decision` is 0 on a booted app — but the grep by itself would not prove it.
+3. **`payload` was not inventoried.** All three tables carry a `payload` column that nothing writes, so
+   there is no established key vocabulary to conform to. L-E proposes pinning one; until then, any claim
+   about "the payload contract" would be invented.
+4. **No design was produced.** 8.1 is an inventory and a constraint list. It does not propose a schema
+   for beliefs, a contradiction model, or a sufficiency semantics — the first two need F-18's columns and
+   the third is Stage 10's by `docs/12` §1.3.
+5. **The run-29 fold-in belongs to Stage 7, not Stage 8.** It is recorded in `docs/14` §4.1 in this same
+   commit because the owner ruled that it should ride with this batch rather than generate a commit of
+   its own; it is not evidence about intelligence memory.
+
+---
+
+## 8. Decision requested
+
+**Recommendation: authorise 8.2 as L-A + L-B + L-C, and defer L-D and L-E to 8.3.**
+
+The reasoning is dependency, not caution. F-16 and F-15 together mean that a dossier written today would
+point at an instrument the system of record has never heard of, through a constraint that does not exist,
+and would store its confidence in a column that cannot be ordered numerically. Writing the dossier first
+would therefore build the intelligence layer on a schema that cannot hold what the approved design
+requires — and every row written before L-A would have to be migrated afterward.
+
+L-A + L-B are the ground; L-C is the first writer that can stand on it, and it is the one that gives
+F-14 a home, because `evidence_ref` already separates `observed_at` from `retrieved_at` and the adapters
+collapse them. L-D and L-E are worth doing but are better done against a schema that will not change
+underneath them.
+
+Four questions, in dependency order:
+
+1. **Is batch 8.1 approved?** Its findings F-15…F-19 and levers L-A…L-E are the base 8.2 would stand on.
+   Stage 7.1 was left unratified for a day and needed D-047 to fix it; this one is asked up front.
+2. **Does F-15 get fixed by a rebuild migration (L-A), or is the divergence accepted and documented?**
+   A rebuild touches two tables inside a forward-only migration and must keep the audit chain intact.
+   Accepting it instead means the Postgres target and the applied schema stay different, and that
+   difference should then be stated in `docs/13` §2.5 rather than left in a comment that claims to be a
+   mirror. **Recommendation: fix it, and add the fidelity test** — the test is what makes the fix stay
+   fixed.
+3. **Should F-14 be fixed before or alongside L-C?** L-C can populate `evidence_ref.retrieved_at` from
+   the local clock and `observed_at` from the venue, which makes the evidence graph correct *without*
+   changing what `observed_at` means in the four adapters. That is the cheap half. The expensive half —
+   giving the adapters a real receipt time — is still unauthorised. **Recommendation: do the cheap half
+   in L-C and keep F-14 open**, so no writer imports the defect, and re-ask the adapter change on its own
+   merits.
+4. **Should finding ids be scoped explicitly from here on?** F-19 records that F-1…F-7 are already
+   ambiguous between two approved documents. Options: continue global numbering (what this document
+   does), or prefix per stage (`S8-F-1`) from Stage 8 onward and leave the historical ids alone.
+   **Recommendation: continue global numbering** — a prefix scheme introduced halfway creates a second
+   convention to remember, and the collision is now recorded where a reader will find it.
+
+---
+
+## 9. Stage 8.2 delivered (D-050): the schemas converge, the master projects, evidence has a writer
+
+Batch **L-A + L-B + L-C**. L-D (`/v1/intelligence/dossiers`) and L-E (the dossier writer) are deferred to
+8.3 by the same ruling. This is the first batch to change `backend/` since `9e70ed3`.
+
+`git diff --stat`: **17 files changed, 2,236 insertions(+), 23 deletions(-)**. Source **14,162** LOC,
+tests **14,760** LOC. Three new source files, three new test files, one new package.
+
+### 9.0 What was ruled, and what was not
+
+D-050 answered four questions, each answered `Recommend` against exactly one marked recommendation:
+
+1. **Stage 8.1 is approved** — recorded as D-050, asked up front rather than assumed from a later
+   `Proceed`, because Stage 7.1 was left unratified for a day and needed D-047 to fix it.
+2. **8.2 = L-A + L-B + L-C**, with L-D and L-E deferred to 8.3.
+3. **F-15 = rebuild migration plus a fidelity test** — the test is what makes the fix stay fixed.
+4. **F-14 = the cheap half inside L-C**, with F-14 itself left open and re-asked on its own merits.
+
+**Not ruled.** §8's fourth question — whether finding ids should be scoped per stage from Stage 8 onward —
+was not among the four asked, so it is still open and is re-asked in §9.8. F-20 below continues the global
+numbering this document already uses; if the owner prefers a prefix scheme, F-20 is the first id that
+would move and the only one.
+
+### 9.1 Correction: F-15 as published in §3 was partly wrong
+
+§3 was written from one hand-picked pair of tables (`dossier` in both DDLs). Fixing the finding required
+parsing both DDLs and diffing **every table and every column**, and the systematic diff disagreed with
+§3 in three ways. The published text is unchanged above; this is the correction.
+
+**(a) Two of the six "divergences" are house conventions, not drift.**
+
+- The four lost `DEFAULT now()` clauses: every timestamp column in the applied schema is `TEXT NOT NULL`
+  with no default, because the writers stamp them with `iso_utc(utc_now())`. Nothing in `src/` relies on a
+  database default. Presenting these as drift implied a defect where there is a convention.
+- `confidence TEXT` against `NUMERIC(6,5)`: **26 numeric columns across 8 tables** are TEXT in the applied
+  schema, because SQLite's NUMERIC affinity stores a REAL — a float — and the house rule is that Decimals
+  travel as strings. §3 said 19 across 8 tables. **The 19 reproduces exactly** and is the count before 0004
+  created `venue_instrument_mapping`, whose seven `NUMERIC(28,12)` columns join the others: 19 + 7 = 26.
+  **The table count did not reproduce**: those 19 columns sat across **7** tables, not 8.
+
+**(b) The real drift is larger than §3 said, and it runs in both directions.** §3 described SQLite losing
+columns the target had. The diff found the target losing columns the application really writes.
+
+| Direction | What was missing | Consequence |
+|---|---|---|
+| absent from SQLite | `venue_instrument_mapping` — the entire table, declared in the target since `0001_core.sql` | the four venue mappings Stage 7.3 seeded had nowhere to be projected; F-16 was unfixable without L-A |
+| absent from the target | `halt_event.cancel_working_orders` | a field `/v1/status` really serves would not exist after a promotion |
+| absent from the target | `halt_event.seq`; `audit_ref` on `approval`, `decision`, `fills`, `orders`, `trade_intent`, `halt_event`, `venue_instrument_mapping`; `instrument.payload`; `trade_intent.payload` | 11 columns across 8 tables, every one written by `store/operational.py` today |
+| absent from the target | `schema_migrations`, and now `schema_migration_skips` | a PostgreSQL deploy following the `.sql` files could not record which migrations it had applied, so it could not refuse a changed checksum |
+
+**(c) Two apparent divergences are not divergences at all**, and §3 should have said so. `audit_log` is
+created by `SqliteAuditStore` in `src/nexus/audit/log.py`, not by a migration, because migration
+`0003_audit_append_only` *requires* it to exist already. `schema_migrations` comes from
+`SCHEMA_MIGRATIONS_DDL`, which the runner executes before applying anything.
+
+**What survives, and is the load-bearing part:** `dossier.instrument_id` carried no `REFERENCES` at all,
+so `docs/13` §2.5's "foreign keys declared but not enforced" could not reach it — it was never declared.
+Migration 0004 declares it and `TestDossierForeignKey` pins both halves: enforced when the pragma is on,
+and still *not* enforced by default (§9.7).
+
+**The lesson, recorded because it cost a batch to learn.** A divergence finding written from one
+hand-picked table pair is a guess about the whole schema. §3 diffed two tables and reported six
+divergences; the full diff found eleven columns and three tables of drift in the direction §3 never
+looked, and reclassified two of its six as conventions.
+
+### 9.2 L-A — migration 0004, and the test that keeps the fix fixed
+
+**Deviation from the approved option, disclosed.** The recommendation D-050 accepted said
+`confidence NUMERIC(6,5)` plus a `CHECK`. Writing it that way and then executing it showed the type change
+is wrong:
+
+| Probe, executed | Result |
+|---|---|
+| `CREATE TABLE t (c NUMERIC(6,5))`, insert `'0.5'`, read `typeof(c)` | **`real`** — a float, in what would be the only float-backed numeric column in the applied schema |
+| `TEXT` with `CHECK (confidence IS NULL OR CAST(confidence AS REAL) <> 0.0)` | accepts `'0.5'`, `'0.12345'`, `'1'`, `'0'`, `'0.00000'`, `'1e-9'`, NULL; rejects `'not-a-number'`, `''`, `'abc123'` |
+| the same CHECK, adversarially | **leaks `'0.5abc'` and `'1e-9'`** — `CAST` is permissive, so a CHECK is necessary and not sufficient |
+| `TEXT` with `ORDER BY CAST(confidence AS REAL)` over `0.5, 0.05, 0.9, 0.12345` | orders `0.05, 0.12345, 0.5, 0.9` |
+| `ORDER BY confidence` (no `CAST`) over the same four values | **the same order** — see the correction below |
+| the CHECK against `'12'`, `'-0.5'`, `'99999999'`, `'1.0'` | **all accepted** — it bounds nothing but "casts to a nonzero number" |
+
+So 0004 keeps `confidence TEXT` and adds only the CHECK. Changing the type would have broken the
+Decimal-as-string rule for no gain, and would not have fixed acceptance anyway.
+
+**A second correction, found while capturing the transcript for the board.** This batch first wrote that a
+bare `ORDER BY confidence` remains lexicographic and therefore wrong, and that `CAST` is what fixes it.
+Executing it says otherwise: over `0.5, 0.05, 0.9, 0.12345` the two orderings are **identical**, and they
+stay identical for the prefix tie `'0.5'` against `'0.50'`. For values in `[0,1)` — the only range a
+probability may occupy — TEXT ordering and numeric ordering coincide, because every value shares the
+`'0.'` prefix and digit-by-digit comparison then agrees with magnitude. They diverge only at ten and
+above (`ORDER BY confidence` gives `1, 12, 9`; `CAST` gives `1, 9, 12`).
+
+So `CAST` is still the correct way to order the column, but the reason is not the one first written, and
+the divergence is reachable **only because the CHECK does not bound the range**: it asks whether a value
+casts to a nonzero number, not whether it is a probability, so `'12'`, `'-0.5'` and `'99999999'` are all
+accepted. That is a larger gap than the ordering claim it replaced, and it is recorded as a limitation
+(§9.7) and pinned by `test_the_check_does_not_bound_the_range_and_that_is_recorded` rather than quietly
+fixed — bounding the range belongs to whoever writes `memory_item.confidence` in stage 10, and a
+constraint that pretended to bound it would be worse than one that says it does not.
+
+`0004_memory_fidelity`: **15 statements**, `requires="dossier"`, checksum `4c7368d407bb…`.
+
+- Rebuilds `dossier` through `dossier_0004`. SQLite refuses both `ALTER COLUMN … TYPE` and
+  `ADD CONSTRAINT … FOREIGN KEY` (§5.3), so the foreign key needs create → copy → drop → rename; all 12
+  columns are copied and `ix_dossier_created` is recreated.
+- Rebuilds `memory_item` the same way to add the CHECK, recreating `ix_memory_kind` and
+  `ix_memory_created`.
+- Creates `venue_instrument_mapping`, translating `BIGINT GENERATED ALWAYS AS IDENTITY` to
+  `INTEGER PRIMARY KEY AUTOINCREMENT` (the IDENTITY clause has no SQLite equivalent, which is the likeliest
+  reason the table was omitted when the SQLite schema was written), `NUMERIC(28,12)` to TEXT seven times,
+  `JSONB fees` to `TEXT DEFAULT '{}'`, plus `audit_ref`, `UNIQUE (instrument_id, venue, venue_symbol)` and
+  `ix_mapping_venue`.
+
+The three earlier checksums are unchanged (`fcfd79161c83…`, `5e7fafd0673e…`, `1e9ec5a5d915…`), and all four
+are now pinned literally in `test_no_applied_migration_was_edited` — because `store/migrations.py` refuses
+a moved checksum only for a database that *already applied it*. A fresh checkout, a CI runner and a new
+host apply whatever the file says, so a literal list is the only thing that makes forward-only checkable
+offline. Adding to that list is normal; changing a line already in it means history was edited.
+
+Executed proofs rather than readings of the SQL: `PRAGMA foreign_key_list(dossier)` shows the FK; on a
+fresh autocommit connection with `PRAGMA foreign_keys=1` a dangling `instrument_id` is **rejected** and a
+real one accepted; all four indexes survive the rebuild; `mapping_id` autoincrements from 1; a duplicate
+`(instrument_id, venue, venue_symbol)` is refused. And
+`test_the_rebuild_preserves_existing_rows` writes rows into the **pre-0004** schema first and then rebuilds
+over them, because a migration that is only safe on an empty table will be run against a non-empty one
+someday. Both tables are empty today; that is luck, not a property.
+
+The target was corrected in the same commit — 11 columns across 8 tables, both bookkeeping tables, and both
+file headers rewritten. `0001_core.sql` claimed *"the two are kept column-for-column compatible"*: a claim
+nothing checked, and false in both directions. It is now enforced by `tests/test_schema_fidelity.py`
+(**35 tests**), which compares the **live post-migration** SQLite schema against the target and fails on
+divergence in tables, columns, nullability, foreign keys and types.
+
+Two properties of that test are deliberate. It compares the schema *after the migrations run*, not the SQL
+text: parsing `schema.py` statically also picks up 0004's staging tables and the superseded pre-rebuild
+`dossier`, and reports divergences that do not exist. And the legitimate translations are a written-down
+map, with `test_the_translation_map_covers_every_type_the_target_declares` failing if the target starts
+using a type the map has no rule for — so a new type is a decision rather than a difference absorbed
+silently. Result: **17 tables each side, 16 compared** (`audit_log` exempt and checked separately against
+its own mirror claim), **0 divergences**.
+
+Building that test produced three false positives worth recording, because an audit that cries wolf gets
+its findings acted on: a constraint filter matching the prefix `"CHECK"` silently swallowed the column
+named `checksum`; static parsing reported 0004's staging tables as drift; and a first draft asserted
+`payload["observed_at"] not in payload`, which raises `KeyError` precisely when the assertion holds.
+
+### 9.3 F-20 — 0004 exposed a defect in the migration runner: a deferral was indistinguishable from a bypass
+
+**Found by the existing suite, not by a new test.**
+`test_migrations.py::test_a_skipped_migration_applies_once_its_table_exists` failed with
+`MIGRATION_INVALID: migration 0003_audit_append_only is pending while later migrations are already
+applied; the sequence has a hole and this runner only moves forward`.
+
+The scenario is one this repository deliberately supports and tests: boot once with an ephemeral audit
+backend, where there is no `audit_log` to protect so 0003 is *skipped*, then boot the same file with a
+durable one. Until 0004, 0003 was the last migration, so nothing could ever move past it. Adding a
+migration **behind a skippable one** made the combination fatal: the ephemeral boot applies 0004 while
+0003 waits, and the next durable boot finds an applicable migration below an applied one and refuses to
+start.
+
+The refusal is **correct**. "No holes" is how a permanently bypassed migration gets noticed, and a bypass
+is fatal. What the runner could not do was tell a hole from a deferral it had itself reported one boot
+earlier — in `schema_migrations` the two look identical, because in both cases the version is simply
+absent. That is F-20, and it is a defect in the Stage 6 runner that only a fourth migration could expose.
+
+Fix: `schema_migration_skips (version, reason, skipped_at)`, created by `SCHEMA_MIGRATIONS_DDL` — which is
+not a versioned migration, so this needed no new version and moved no checksum. The runner records a skip
+when it reports one, clears that row in the **same transaction** as the application (a version must never
+be recorded as applied while a stale skip row still claims it is waiting), and treats a recorded deferral
+as not-a-hole.
+
+Verified by execution, three ways:
+
+| Boot sequence | Result |
+|---|---|
+| ephemeral boot, no `audit_log` | applies 0001, 0002, **0004**; skips *and records* 0003; `venue_instrument_mapping` exists |
+| durable boot over the same file | applies 0003; **no `MigrationError`**; all four recorded; the skip row is cleared |
+| `DELETE FROM schema_migrations WHERE version='0002_memory'`, then run | **refused**: `the sequence has a hole` |
+
+The third row is the one that matters. The refinement must not cost the guard its teeth, so
+`test_a_genuine_hole_is_still_refused` pins that a version removed from the bookkeeping with no deferral
+recorded against it still fails the boot closed.
+
+A consequence worth stating plainly: because 0004 now applies in memory mode too,
+`venue_instrument_mapping` exists under CI's `NEXUS_AUDIT_BACKEND=memory`. Had the fix gone the other way —
+stopping the runner at the first migration it cannot apply, which is what most migration runners do —
+memory mode would have had no such table, `counts()` would have failed on it, and L-B could not have been
+wired into boot at all. The choice was between two defensible runner semantics, and only one of them left
+the rest of this batch possible.
+
+Three stale expectations were updated in the same commit, and two were made **derived** rather than
+re-hardcoded: `test_boot_recovery.py::test_status_reports_the_system_of_record` asserted a literal
+three-version list and `TestMigrationSkip` a literal two-version list. Both now derive from `MIGRATIONS`,
+so adding 0005 will not break them. This is the third time the project has had to repair a test that
+hardcoded a total which grows; the standing rule about publishing floors rather than totals applies to
+test expectations as well as to documents.
+
+### 9.4 L-B — the seeded master reaches the system of record
+
+F-16's observable, inverted. `/v1/status` reported `instrument_master.count = 3` beside
+`persistence.counts.instrument = 0`; it now reports `count 3, active 0, projected 3` with
+`persistence.counts.venue_instrument_mapping = 4`. The `projected` key was added to that block precisely
+because this pair of numbers is how the finding was found: reporting only the registry side would have
+left the fix invisible in the one place the defect was visible.
+
+The mechanism already existed. `instrument.registered` was in `PROJECTABLE`, the dispatcher routed it to
+`save_instrument`, and `reproject_missing` would have replayed it from the chain. Nothing emitted the
+event, so there was nothing to replay. L-B is therefore an emitter and not a mechanism:
+`src/nexus/instruments/projection.py`, 168 lines. Three decisions inside it:
+
+1. **The payload is built from the domain objects, not from `registry._mapping_to_dict`.** That serialiser
+   is an API read-model and omits `margin_rate` and `fees` — the two fields that make a mapping an economic
+   description rather than a symbol translation. Projecting through it would have written all four seeded
+   mappings with both columns empty, and nothing would have failed, because both are nullable.
+   `test_mapping_payload_names_every_field_the_column_set_holds` now fails if a field is added to
+   `VenueMapping` and not to the projection.
+2. **The payload carries no timestamp of its own.** A projection stamped at call time has a different
+   digest on every boot, so every boot would append three audit records for instruments that had not
+   changed — a chain that grows without describing anything. `project_master` compares canonical digests
+   and appends only for an instrument that actually moved, which is what makes "call this at every boot"
+   safe. Verified across process restarts on one durable file: `instrument.registered` stays at exactly
+   **3 over three boots**, while `api.app_created` and `boot.recovery` legitimately grow by one each.
+3. **`op_projection` is keyed on `audit_ref` alone, so a projection that writes several rows marks itself
+   complete once, after all of them.** Handing `audit_ref` to each save would have booked the event as done
+   the moment the instrument row landed; a crash before the mappings were written would then leave a hole
+   that boot recovery believes is filled — the exact failure L-2 exists to prevent.
+   `test_a_crash_between_the_instrument_and_its_mappings_leaves_a_hole_recovery_fills` simulates that crash
+   and asserts the interrupted instrument's mapping is restored from the chain alone.
+
+Wired into boot: `create_app` projects **only a master it seeded itself**, for the same reason it seeds
+only its own — an injected registry is a test fixture and stays one, which is why
+`test_api_phase3.py`'s status assertion reads `projected: 0`. A boot that cannot write the master into the
+system of record does not serve.
+
+**What the projection faithfully records as empty.** All four seeded mappings project `margin_rate = NULL`
+and `fees = {}`, because Stage 7.3's seed specs never carried them — neither word appears in
+`instruments/seed.py`. The writer no longer drops those fields; the evidence never contained them.
+Filling them in would mean inventing a margin rate and a fee schedule with nothing behind them, so they
+stay empty and `test_the_seeded_mappings_have_no_margin_rate_or_fees_to_project` pins that they are empty
+for that reason rather than by accident.
+
+The bybit row survives the trip with its reason attached: `status = SUPPORTED` and a note beginning
+`GEO-BLOCKED`, naming F-2 and the D-021 VM. The owner's Stage 7 ruling was that the row stays open *and
+visible*, and a projection that dropped the note would have made it invisible again in the system of
+record while remaining visible in the registry.
+
+### 9.5 L-C — the first `evidence_ref` writer, and the half of F-14 it does not fix
+
+`src/nexus/intelligence/` is a new package — the fifteenth under `src/nexus/`, verified by
+`git ls-files 'backend/src/nexus/*/__init__.py'`: 14 before this batch, 15 after — holding `evidence.py`
+(279 lines). `dossier` and `memory_item` remain writer-less by ruling: 8.3 and stage 10.
+
+The writer follows §5.1's contract exactly — validate the identity column and raise `PersistenceError` if
+it is absent, `assert_no_secrets`, write inside `self._transaction()`, then `_mark` into `op_projection` —
+and it is audited as `evidence.recorded`, so it is recoverable from the chain like every other write.
+`test_a_missing_projection_is_refilled_from_the_chain` deletes the row, keeps the chain, and asserts boot
+recovery restores it field for field.
+
+`dossier_id` is nullable and the writer needs no dossier: the first writer must not depend on the one 8.3
+has not built. `test_evidence_can_be_recorded_before_any_dossier_exists` pins that.
+
+**The two timestamps are the content of this batch.** Per D-050 this is F-14's cheap half, so the claim is
+narrow and deliberate:
+
+- `retrieved_at` is a **required keyword-only argument with no default**, pinned by inspecting the
+  signature. A default of `observed_at` would manufacture a latency of exactly zero; a default of "now"
+  would record write time as receipt time. Both would look like measurements, which is worse than a gap.
+- `observed_at_source` records whether the observation time really came from the venue. A snapshot with no
+  `observed_at` is **refused** unless the caller declares `LOCAL_FALLBACK`; and declaring the fallback
+  while passing two *different* timestamps is refused too, because a flag that can be contradicted by the
+  row it qualifies is decoration.
+- `apparent_latency_seconds` is stored beside them and is **not** a latency measurement. It is
+  `retrieved_at - observed_at`, which contains the offset between the venue's clock and ours as well as any
+  network delay. A negative value is recorded rather than refused: run 27 measured 1.089 s of venue time
+  against 0.298 s of wall clock, so venue clocks run both ways, and a negative interval is evidence about
+  the clock rather than an error condition.
+- The provenance fields are written **last**, so a caller's payload cannot overwrite them.
+  `test_a_caller_cannot_overwrite_the_provenance_fields` passes `apparent_latency_seconds: 999.0` and
+  asserts the stored row still carries the computed value.
+- `data_status` defaults to `UNAVAILABLE` — the schema default and the fail-closed value — and is validated
+  against `DataStatus` (A-06). No vocabulary was extended: the writer's refusals raise `ValueError`,
+  following `core.time.iso_utc`, because they are programmer errors at an internal boundary, and a
+  `RejectReason` is vocabulary the audit log and the UI both consume. `RejectReason` is unchanged and
+  `test_the_reason_vocabulary_was_not_extended` pins that.
+- `kind` is passed through as free text. **No vocabulary for it is declared anywhere in the repository** —
+  the schema says only `DEFAULT 'DATA'` — and inventing an enum here would put a plausible-looking
+  controlled list in front of a distinction nobody has yet drawn.
+- `checksum` is computed by the writer over exactly what is stored, so it cannot disagree with the payload.
+  It is an **integrity** checksum over the recorded row, not an authenticity signature over the bytes the
+  venue sent; nothing in this system can attest to those yet.
+
+  > **Corrected by Stage 8.3 — this is F-21 (§10.3).** The second sentence was false: the checksum
+  > covered `payload` alone and not "the recorded row", so two evidence rows differing in `source`,
+  > `observed_at`, `retrieved_at`, `locator` and `evidence_id` but sharing a payload produced the *same*
+  > value. Nine of the row's eleven stored fields could change undetected, `observed_at` among them. The
+  > text is left as published because D-051 was ruled on it; §10.3 records the probe that falsified it,
+  > the fix, the test that had pinned the wrong behaviour, and the disclosure that this changes what an
+  > approved batch stored.
+
+One defect found while testing the writer, and fixed: a naive `observed_at` raised a bare `TypeError` from
+the timestamp subtraction, because `iso_utc`'s own refusal runs *after* the arithmetic. An unclassified
+crash at a boundary names nothing — the failure mode F-4 was about — so both timestamps are gated before
+they are used, and `test_a_naive_datetime_is_refused_by_name` pins the message.
+
+**F-14 stays OPEN (O-012).** No adapter was touched. `observed_at` is still venue time in all four and no
+receipt time exists anywhere in ingestion, so latency remains unmeasurable. What changed is that the
+evidence graph no longer *imports* the defect: a row written from now on says which of its two timestamps
+came from the venue, and carries the interval with its qualification attached.
+
+### 9.6 The gate
+
+| Check | at 8.1 | at 8.2 |
+|---|---|---|
+| `ruff format --check src tests` | 82 files | **88 files already formatted** |
+| `ruff check src tests` | clean | **clean** |
+| `mypy` (strict, `files = ["src/nexus"]`) | 57 files | **60 files, no issues** |
+| `pytest` | 1036 passed, 2 skipped | **1117 passed, 2 skipped** |
+| `tests/test_repo_hygiene.py` | 83 passed | **83 passed** |
+| `test_live_endpoints.py --collect-only` | 49 | **49** |
+| offline subset `-k "DiagnosisLogic or PatienceBehaviour or TradeSideRuling or CrossEndpoint"` | 32 | **32 passed, 17 deselected** |
+
+**+81 tests**: `test_schema_fidelity.py` 35, `test_evidence_writer.py` 27, `test_master_projection.py` 16,
+`test_migrations.py` 12 → 15. No live endpoint was called; nothing in this batch touches ingestion, so the
+live-check count is unchanged at 49 and no run number is published here.
+
+**Superseded after the board was built, and recorded rather than left in the annotations.** That
+sentence is true of the batch and not of its commit: the push that carried `11d6db3` triggered CI's
+own `venue-verification`, **run 30**, which is recorded in §9.9 with what it adds and what it does
+not. None of the 49 checks exercises this batch's code.
+
+### 9.7 Limitations of this batch
+
+1. **The CHECK on `confidence` bounds nothing but "is it a number".** It accepts `'0.5abc'` (which casts
+   to 0.5) and `'1e-9'`, but also `'12'`, `'-0.5'` and `'99999999'` — it asks whether the value casts to a
+   nonzero number, not whether it is a probability. It is a floor, not a validation, and the range is
+   unguarded: whoever writes `memory_item.confidence` in stage 10 must validate the value itself. This is
+   the only reason TEXT ordering can diverge from numeric ordering at all (§9.2).
+2. **Foreign keys are declared and still not enforced.** `PRAGMA foreign_keys` stays off, for the reason
+   `docs/13` §2.5 gives: boot recovery re-projects in chain order, which is not always parent-first, and a
+   hard FK failure mid-recovery would be worse than the inconsistency it prevents. 0004 moved
+   `dossier.instrument_id` *inside* that limitation; it did not lift it.
+   `test_it_is_not_enforced_by_default_and_that_is_recorded` pins that a dangling dossier is still
+   accepted at runtime, so nobody reads the new FK as protection that does not exist.
+3. **The fidelity test compares SQLite against a target no PostgreSQL server has ever executed.** There is
+   no PostgreSQL server or driver in this sandbox, so every statement about the target is a property of
+   declared types. The `.sql` files have never been run by anything, here or in CI.
+4. **The four seeded mappings carry no economics.** `margin_rate` NULL and `fees` `{}` on all four,
+   `contract_size` on one of four. The projection is faithful; the seed evidence is not there.
+5. **Nothing calls `record_evidence` yet.** L-C delivered the writer and its contract; wiring it into the
+   four adapters is F-14's expensive half and is unauthorised. Until something calls it, `evidence_ref`
+   stays empty in production exactly as `dossier` and `memory_item` do.
+6. **`/v1/status` gained one key** (`instrument_master.projected`). Two tests asserted that block by exact
+   equality and were updated; an external consumer doing the same would see the change.
+
+### 9.8 Decision requested
+
+> **Ruled 2026-11-26 — all four answered `Recommend`, recorded as D-051 (§9.9).** The four
+> questions below are the request exactly as it was put and are unchanged; §9.9 carries the ruling
+> and what each answer changes.
+
+1. **Is Stage 8.2 approved?** L-A + L-B + L-C as described, with the deviation in §9.2 (TEXT kept, CHECK
+   added) and the runner change in §9.3 (F-20) disclosed above. **Recommendation: approve**, and record as
+   **D-051**.
+2. **What is 8.3?** L-D is the read-only `/v1/intelligence/dossiers` route; L-E is the dossier writer at
+   `stance=ABSTAIN`; F-18's cheap half is three `ADD COLUMN`s on `memory_item` (`valid_from`, `valid_until`,
+   `change_conditions`) plus `contradicts` on `evidence_ref`. **Recommendation: L-D + L-E only**, and defer
+   F-18's columns to the batch that writes `memory_item` in stage 10 — columns no writer populates are
+   columns no test can exercise, and this batch is evidence that a nullable column nobody fills is
+   indistinguishable from one that was dropped.
+3. **F-14's expensive half: authorise it, and when?** The merits, now quantified: run 29 measured the
+   wall-clock rate at 3.95× the venue-time rate, so using `observed_at` as a denominator biases a rate
+   *downward* by the skew factor rather than merely adding noise. Changing it means giving four adapters a
+   real receipt time, which changes what a persisted field means. **Recommendation: authorise it as its own
+   batch (8.4), not folded into 8.3** — it deserves its own gate and its own live runs, and folding a
+   four-adapter semantic change into a batch that also writes the dossier would make any regression
+   ambiguous between the two.
+4. **§8's question 4, still unanswered: should finding ids be scoped per stage from Stage 8 onward?**
+   F-19 records that F-1…F-7 are already ambiguous between two approved documents, and F-20 continues the
+   global sequence. **Recommendation: continue global numbering**, as §8 recommended — a prefix scheme
+   introduced halfway creates a second convention to remember, and the collision is now recorded where a
+   reader will find it.
+
+### 9.9 D-051 — the four rulings, and the live run this commit's push triggered
+
+All four questions in §9.8 were answered `Recommend`, each against exactly one marked recommendation, and
+are recorded as **D-051**. §9.8 is left as it was put; this section is the ruling.
+
+| # | Question as put | Ruled | What it changes |
+|---|---|---|---|
+| 1 | Is Stage 8.2 approved? | **Approved, recorded as D-051**, with §9.2's deviation (TEXT kept, CHECK added) and §9.3's runner change (F-20) both disclosed | This batch's row in `docs/07` flips to `APPROVED`; **F-15/O-013 and F-16 close as fixed** and **F-20 as found-and-fixed**. The alternative offered — bound the CHECK's range in a follow-up before 8.3 — was **not** taken, so §9.7's limitation 1 stands exactly as published: `confidence` is constrained to "casts to a nonzero number", and `'12'`, `'-0.5'`, `'99999999'`, `'0.5abc'` and `'1e-9'` are accepted. Bounding the range belongs to whoever writes `memory_item.confidence` in stage 10 |
+| 2 | What is 8.3? | **L-D + L-E only** | L-D = the read-only `/v1/intelligence/dossiers` route; L-E = the dossier writer at `stance=ABSTAIN`. **F-18's cheap half is deferred** to the stage-10 batch that writes `memory_item`: the three `ADD COLUMN`s (`valid_from`, `valid_until`, `change_conditions`) and `evidence_ref.contradicts` are not landed now. The reason the ruling adopted is this batch's own evidence — `save_venue_mapping` writes `margin_rate=NULL` and `fees={}` for all four seeded mappings and nothing detects it, so a nullable column no writer fills is indistinguishable from one that was dropped |
+| 3 | F-14's expensive half — authorise it, and when? | **Authorised as its own batch, 8.4**, not folded into 8.3 | F-14/O-012 stays `OPEN` and is now **authorised** rather than merely re-asked: four adapters get a real receipt time, which changes what a persisted field means. **8.3 does not touch ingestion.** 8.4 gets its own gate and its own live runs, because a regression inside a batch that both writes the dossier and re-stamps four adapters could not be attributed to either half |
+| 4 | Should finding ids be scoped per stage from Stage 8 onward? | **Continue global numbering** | F-21 onward continues the sequence; no prefix scheme, so there is one convention and not two. F-19's record of the F-1…F-7 collision between two approved documents stands as the place a reader finds it. This was §8's question 4, put for the first time here and now answered |
+
+**Run 30 — the live run CI triggered on this batch's own commit, recorded rather than left in the
+annotations.** Commit `11d6db3` produced three runs and all three are `conclusion=success`:
+`45875230477` (`push`, five jobs) and `45875239151` + `45875239156` (`pull_request`). The
+`pull_request` event carries `venue-verification`, so a live run happened even though nothing in this
+batch calls a venue — §9.6's "no run number is published" was true of the batch and is superseded by CI.
+Run 30 is `45875239151`, and its annotation carries:
+
+```
+44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49 live checks
+PARTIAL - 5 geo-blocked (need a runner outside the restricted region)
+
+okx.cross_endpoint quotes_mid=60490.35 book_mid=60490.35 gap_bps=0.0 dt_observed_s=0.385
+                   dt_wall_s=0.249 bps_per_s_observed=0.0 bps_per_s_wall=0.0
+                   quoted_spread_bps=0.017 asserts_agreement=False
+okx.trades         count=50 price_min=60487 price_max=60490.4 buy=37 sell=13 unspecified=0
+dukascopy.layout   passed=True payload_bytes=25761 decompressed_bytes=101480 tick_count=5074
+dukascopy.ticks    count=5074 price_min=1.09502 price_max=1.0964 layout_flag=True
+binance-vision.parse rows=1440 accepted=1440 rejected=0 timestamp_units=us
+dukascopy.probe.*  outcome=network-IngestFault (browser_ua, production_ua, production_ua_other_hour)
+```
+
+What it adds, and what it does not. **It is the fourth measured skew and the smallest: 1.55×**
+(`dt_observed_s=0.385` against `dt_wall_s=0.249`), beside 3.95× in run 29, 2.6× in run 28 and 3.7× in
+run 27.
+
+> **Corrected by Stage 8.3 (§10.4): this is the *seventh* measured skew, not the fourth, and it is not the
+> smallest.** Seven runs have published both intervals — `docs/14` §4.1's table holds runs 24–29 and this
+> section holds run 30 — and every pair was re-read from its CI annotation on 2026-11-26: 24 = **1.46x** (0.439/0.300), 25 = **2.51x** (0.739/0.294), 26 = **0.80x** (0.238/0.298), 27 = **3.65x** (1.089/0.298), 28 = **2.62x** (0.937/0.358), 29 = **3.97x** (1.170/0.295), 30 = **1.55x** (0.385/0.249).
+> Run 26's **0.80×** and run 24's **1.46×** are both below 1.55×, and run 26 is below 1, which is the
+> bidirectionality `docs/14` §4.1 already recorded. The quoted **3.95×** for run 29 is that run's *rate*
+> ratio (`bps_per_s_wall=0.557` against `bps_per_s_observed=0.141`, `docs/14` §4.1), not its interval
+> ratio, which is 3.97×. **The conclusion is unchanged and stronger**: the factor spans 0.80×–3.97×, a
+> 5.0× range across seven runs, so it is not a constant and cannot be divided out after the fact. The
+> sentence is left as published because D-051 was ruled on it. Both rates are `0.0` because the gap is `0.000` again, so this run yields **no rate comparison**
+and adds nothing to run 29's finding that the wall-clock rate is the one that means anything. What it
+does add is the point ruling 3 rests on: **the skew factor is not a constant**, so it cannot be divided
+out after the fact — giving four adapters a real receipt time is the only way to stop dividing a market
+move by somebody else's clock. It breaks no floor either: **0 skips**, so `layout_flag=` is
+live-evidenced in run 30 as well as 24, 25, 26, 27 and 29 — six runs, with run 28 the only one that
+skipped the check — and dukascopy's three reachability probes returned `network-IngestFault` under both
+user agents, as they have since F-8.
+
+Two things this section does not claim. The annotation is truncated at `2713 escaped characters over the
+cap`, so the bybit rows sit inside the truncated tail and are **not** quoted here; naming them from a
+partial annotation is not something this document does. And run 30 says nothing about this batch's code:
+no check in the 49 exercises migration 0004, the projection or the evidence writer, all three of which
+are covered by the 1,117 offline tests instead.
+
+---
+
+## 10. Stage 8.3 delivered (D-051): the dossier opens, the route serves it, and one of 8.2's claims turns out to have been false
+
+**Date: 2026-11-26. Authorised by D-051 as L-D + L-E only.**
+
+### 10.0 What was ruled, and what was not
+
+D-051 scoped this batch as **L-D + L-E**: the read-only `/v1/intelligence/dossiers` route and the dossier
+writer at `stance=ABSTAIN`. It ruled *out* three plausible additions, and none of them is here:
+
+* **F-18's cheap half is not landed.** No `ADD COLUMN` on `memory_item`, no `contradicts` on
+  `evidence_ref`. `memory_item` is still schema-only and still empty, and a test pins both facts.
+* **F-14 is untouched.** No adapter changed, no third timestamp exists, O-012 stays `OPEN`. Its expensive
+  half is authorised as 8.4 and has not happened.
+* **Finding ids stay global**, so this batch's one new finding is **F-21**, not a scoped `S8-F-1`.
+
+What is here: one new module (`intelligence/dossier.py`, 357 lines), three new store members
+(`save_dossier`, `dossiers`, `get_dossier`), one new audited event type (`dossier.opened`) in
+`writeahead.PROJECTABLE`, two new routes, one correction to what 8.2 shipped (**F-21**), and **141 new
+tests**. `backend/` moved **11 files, +2,079 / −24**. Route count: 11 application routes became **13**
+(17 handler routes once FastAPI's own four are counted; the OpenAPI schema publishes 12 because
+`/metrics` is `include_in_schema=False`).
+
+### 10.1 L-E — the dossier writer, and four decisions it makes on the record's behalf
+
+A writer's defaults are its politics. Everything here defaults to the ABSTAIN side, because this
+package's own rule — written in 8.2, before a dossier existed — is that an intelligence record which can
+be created without a basis is a record that will be.
+
+```
+dossier_id: CASE-0CB572D89F5247D1-MPCJ26KZ   (prefix CASE, which core.ids.new_id has declared
+                                              for a research case since Phase 2 and nothing had spent)
+audit_ref:  AUD-19285A24053F45CA-HVBA9CPD    PROJECTABLE["dossier.opened"] = dossier
+stance: ABSTAIN | state: DRAFT | sufficiency: INSUFFICIENT | venue_maps_instrument: True
+created_at: 2026-11-26T20:59:51.934Z | updated_at: 2026-11-26T20:59:51.934Z
+stored row: {
+  "dossier_id": "CASE-0CB572D89F5247D1-MPCJ26KZ", "instrument_id": "INS-BTC-USDT-USDT",
+  "venue": "OKX", "state": "DRAFT", "stance": "ABSTAIN",
+  "summary": "Perp basis widening into the US session; watching for a funding flip.",
+  "uncertainty": "Sixty seconds of ticker data only, so the regime is unknown.",
+  "sufficiency": "INSUFFICIENT",
+  "payload": {
+    "sufficiency_basis": "one okx ticker and one order-book snapshot, both LIVE, 0.3s apart",
+    "sufficiency_target": "V1 evidence and data sufficiency for a research case, not for a trade",
+    "venue_maps_instrument": true },
+  "audit_ref": "AUD-19285A24053F45CA-HVBA9CPD" }
+```
+
+**Decision 1 — `stance` uses `DecisionVerb`, and that is not the treatment `kind` got.** The seven words
+ACCEPT/REJECT/WAIT/REDUCE/EXIT/ESCALATE/ABSTAIN are validated. Two things point at that vocabulary and
+not at free text: the schema's own default `'ABSTAIN'` is a `DecisionVerb` member and belongs to no other
+enum in the repository, and `docs/03` §7 with `docs/10` §3.1 both name exactly this list for the
+intelligence layer's disposition. Stage 8.2 left `evidence_ref.kind` as free text *because no vocabulary
+for it is declared anywhere*; where one exists and the default is in it, using it is not invention, and
+leaving the column open would invite an eighth word for ABSTAIN. The column stays `TEXT` — the writer
+enforces this, the schema does not, and a test pins that fact so nobody mistakes the two. Lower case is
+refused too: a vocabulary that silently normalises case is a vocabulary nobody has to learn.
+
+**Decision 2 — `sufficiency` stays a string, and a claim has to carry its basis and its target.**
+`docs/15` §6's L-E is explicit that sufficiency must stay a string until stage 10 defines the meter, so
+no scale is invented here. But `docs/10` §3.1's context rail asks for a *"knowledge-sufficiency meter
+with stated basis and what it is sufficient for"*, and §3.2 warns that *"a dossier that records
+sufficiency as a bare enum leaves nowhere for V1's outcome to live"*. So two payload keys are pinned —
+`sufficiency_basis` and `sufficiency_target` — and claiming anything other than `INSUFFICIENT` without
+both is refused. `INSUFFICIENT` needs neither, because it claims nothing. A **numeric** sufficiency is
+refused outright under `docs/12` §1.3's law (A-02+A-08), that no gate can be satisfied by a confidence
+value: `'0.85'` in this column is a confidence value wearing a judgement's name.
+
+**Decision 3 — a venue the instrument is not mapped on is *recorded*, not refused.** `venue_maps_instrument`
+is computed from the master at open time and pinned into the payload, because the two cases mean
+different things to a reviewer: a case about a mapped pair is about something this system can observe,
+and a case about an unmapped pair is about a gap. Refusing the second would block the research the
+Intelligence Centre exists to hold — `INS-EUR-USD` on `OANDA` is a legitimate case today and the master
+maps EUR/USD at `DUKASCOPY` only. The flag is a snapshot: nothing re-checks it if the master moves.
+
+```
+  master maps INS-BTC-USDT         on BINANCE    as BTCUSDT        DATA_AVAILABLE
+  master maps INS-BTC-USDT-USDT    on BYBIT      as BTCUSDT        SUPPORTED
+  master maps INS-BTC-USDT-USDT    on OKX        as BTC-USDT-SWAP  DATA_AVAILABLE
+  master maps INS-EUR-USD          on DUKASCOPY  as EURUSD         DATA_AVAILABLE
+  open(INS-BTC-USDT-USDT , OKX      ) -> venue_maps_instrument=True
+  open(INS-BTC-USDT-USDT , BYBIT    ) -> venue_maps_instrument=True
+  open(INS-BTC-USDT      , BINANCE  ) -> venue_maps_instrument=True
+  open(INS-BTC-USDT      , MT4      ) -> venue_maps_instrument=False
+  open(INS-EUR-USD       , DUKASCOPY) -> venue_maps_instrument=True
+  open(INS-EUR-USD       , OANDA    ) -> venue_maps_instrument=False   <- a gap, not an error
+  open(None              , OKX      ) -> venue_maps_instrument=None
+  open(INS-EUR-USD       , None     ) -> venue_maps_instrument=None
+  caller tried to forge the flag True -> False
+```
+
+**Decision 4 — opening is not editing.** A caller-supplied `dossier_id` that already exists is refused.
+The store writes with `INSERT OR REPLACE` because it is a *projection*, so a second "open" would restate
+the first row's stance and summary; the audit chain would still hold both events, so nothing is lost
+durably, but the row a reviewer reads would no longer be the row that was opened. §5.1's principle —
+memory is superseded, never edited in place — is why `memory_item.superseded_by` exists. Changing a
+stance is a later batch's verb with its own audit event, not a second call to this one. A test pins that
+the store *would* have replaced the row, so the refusal reads as a decision rather than an accident.
+
+**The parent check, and why it is in the writer rather than in the projection.** Migration
+`0004_memory_fidelity` gave `dossier.instrument_id` its `REFERENCES` clause back, but
+`PRAGMA foreign_keys` is deliberately off (`store/schema.py`'s module docstring: recovery re-projects in
+chain order, which is not always parent-first, and a hard FK failure mid-recovery would be worse than the
+inconsistency it prevents). So the database accepts a dangling parent without comment, and the writer is
+the only thing that refuses one. Demonstrated rather than asserted from the docs:
+
+```
+PRAGMA foreign_keys on a fresh connection: 0
+PRAGMA foreign_key_list(dossier): [(0, 0, 'instrument', 'instrument_id', 'instrument_id',
+                                    'NO ACTION', 'NO ACTION', 'NONE')]
+dangling parent, pragma OFF -> accepted, rows: 1
+pragma ON                   -> refused: FOREIGN KEY constraint failed
+```
+
+This is what makes 8.2's L-B load-bearing rather than decorative. Before the seeded master was
+projected there was no parent row for a dossier to point at, and the honest failure would have been
+silent:
+
+```
+instruments in store before projection: 0
+open_dossier(instrument_id="INS-BTC-USDT") ->
+  ValueError: instrument 'INS-BTC-USDT' is not in the system of record, which holds 0: [].
+  dossier.instrument_id REFERENCES instrument since migration 0004_memory_fidelity, but
+  PRAGMA foreign_keys is deliberately off, so SQLite would accept this dangling parent
+  without comment — project the instrument first (Stage 8.2's L-B) or open the case with
+  instrument_id=None
+```
+
+**The refusals, all fifteen, verbatim.** Each is a `ValueError` at an internal boundary except the last,
+which is the audit log's own guard; none spends a `RejectReason`, for the reason 8.2 recorded. Every one
+of them left the row count and the chain length unchanged.
+
+```
+  summary='' (whitespace)      -> ValueError: a dossier needs a summary: it is the thesis in one line, the 'concise rationale' docs/03 §7 permits ...
+  stance='MAYBE'               -> ValueError: stance must be one of ['ACCEPT', 'REJECT', 'WAIT', 'REDUCE', 'EXIT', 'ESCALATE', 'ABSTAIN']; got 'MAYBE' ...
+  stance='abstain' (case)      -> ValueError: stance must be one of [...]; got 'abstain' ...
+  venue='NASDAQ'               -> ValueError: venue must be one of ['BYBIT', 'BINANCE', 'OKX', 'DUKASCOPY', 'MT4', 'MT5', 'CTRADER', 'IBKR', 'OANDA', 'ALPACA'] or None ...
+  venue='okx' (case)           -> ValueError: venue must be one of [...] or None; got 'okx' ...
+  sufficiency='0.85'           -> ValueError: sufficiency must be a judgement, not a number; got '0.85'. docs/12 §1.3's law (A-02+A-08) ...
+  sufficiency='12'             -> ValueError: sufficiency must be a judgement, not a number ...
+  sufficiency='1e-9'           -> ValueError: sufficiency must be a judgement, not a number ...
+  SUFFICIENT, no basis         -> ValueError: sufficiency='SUFFICIENT_FOR_REVIEW' claims a judgement, so it needs both sufficiency_basis ... and sufficiency_target ...
+  SUFFICIENT, no target        -> ValueError: sufficiency='SUFFICIENT_FOR_REVIEW' claims a judgement, so it needs both ...
+  ABSTAIN, no uncertainty      -> ValueError: stance=ABSTAIN needs a non-empty uncertainty: the schema's comment is that ABSTAIN is the default and not a fallback ...
+  instrument_id='INS-NOPE'     -> ValueError: instrument 'INS-NOPE' is not in the system of record, which holds 3: [...] ...
+  instrument_id=''             -> ValueError: instrument_id must be a real id or None; an empty string is neither
+  re-open the same id          -> ValueError: dossier 'CASE-0CB572...' already exists, and opening is not editing ...
+  payload={'api_secret': ...}  -> SecretMaterialDetected: SECRET_UNAVAILABLE: refused to audit secret material: forbidden key at payload.api_secret
+chain length before: 10 after: 10 | dossiers: 1
+```
+
+`stance=ABSTAIN` requiring a non-empty `uncertainty` is the one that could look like over-reach, so its
+reason is on the record: the schema's own comment is *"ABSTAIN is the default, not a fallback"*, and an
+abstention that does not say what is unresolved is a fallback. `docs/03` J-04's exit condition is that
+the owner learns *"what would invalidate the thesis"*. A summary is required for the same reason — it is
+the "concise rationale" `docs/03` §7 permits and the first thing J-04 step 1 renders, and `state='DRAFT'`
+means not yet dispositioned, not not yet described. Both rules are scoped by tests that assert what they
+*permit*: the other six verbs need no uncertainty, so the gate is about ABSTAIN and not a demand for prose.
+
+**Timestamps ride inside the event.** The applied schema has no `DEFAULT now()` for `created_at` or
+`updated_at` (two of the four defaults §9.1 classifies as a house convention), so a projection that
+filled them at write time would restamp a replayed event with the replay's clock — and boot recovery
+would quietly rewrite the chronology `docs/10` §3.1 asks the view to show. Tested across a real gap:
+
+```
+after wipe: dossier = 0 evidence_ref = 0
+reapplied refs: 14
+created_at before wipe:  2026-11-26T20:59:51.934Z
+created_at after replay: 2026-11-26T20:59:51.934Z
+identical: True | payload identical: True
+evidence row restored: 1 with checksum verifying: True
+```
+
+### 10.2 L-D — the route, the honest empty, and nine gaps it names instead of hiding
+
+`docs/15` §6 scoped this lever as *"read-only, serving what exists and rendering empty honestly"*,
+because the Intelligence Centre chrome has been reserved since D-035 with nothing behind it. The
+interesting part is not that a 200 comes back. It is that an empty list explains itself, following the
+distinction `/v1/data/coverage` already draws between "no archive" and "archive holds nothing":
+
+```
+GET /v1/intelligence/dossiers -> 0 dossiers, 9 named gaps
+{ "meaning": "no dossier has been opened at all",
+  "writer": "nexus.intelligence.open_dossier exists since Stage 8.3 and is audited as dossier.opened",
+  "callers": "none yet — nothing in src/ opens a dossier, which is the same limitation Stage 8.2
+              recorded for record_evidence. The writer is built and unwired on purpose: wiring it
+              means deciding what the system should research, and that is not this batch's ruling",
+  "not_a_fault": "the route works and the table exists; an empty list here is an honest empty, the
+              distinction /v1/data/coverage draws between 'no archive' and 'archive holds nothing'" }
+served_from: operational projection of the audit chain (R-1); the chain is the record
+note: a stance is a research disposition and never a trade signal — docs/03 J-04's exit condition is
+      'Research completion ≠ trade signal', and live authority is DENIED
+vocabularies.stance.values:      ['ACCEPT', 'REJECT', 'WAIT', 'REDUCE', 'EXIT', 'ESCALATE', 'ABSTAIN']
+vocabularies.stance.enforced_by: the writer (intelligence/dossier.py); the column is TEXT and the schema does not
+vocabularies.sufficiency.values: None
+vocabularies.state.values:       None
+```
+
+The empty is scoped when the list is filtered, so a filter that matches nothing does not read as a system
+that has researched nothing: with one dossier open, `?instrument_id=INS-EUR-USD` answers `"no dossier has
+been opened for this instrument"`.
+
+**`view_gaps` is part of the response, not a comment in the source.** `docs/03` J-04 and `docs/10` §3.1
+fix what the dossier view must show, and nine of those elements have no column to come from, or only
+partly. A route that served what it can and stayed silent about the rest would render as complete:
+
+| Element the approved view asks for | Asked by | Why this route cannot serve it | Moved by |
+|---|---|---|---|
+| contradictions highlighted and linked | `docs/10` §3.1; J-04 step 4 | needs `evidence_ref.contradicts`; no such column, so nothing records that two sources disagree | **D-051** deferred F-18's columns to the stage-10 writer |
+| counter-thesis | J-04 step 1; `docs/10` §3.1 | no column. `uncertainty` is served and is the nearest thing, but "what is unresolved" is not "the case against", and the route does not present one as the other | — |
+| publication time in the evidence table | J-04 step 2 | `evidence_ref` holds `observed_at` (the venue's stamp) and `retrieved_at` (our clock at receipt); a source's own publication moment has no column, and F-14 is still open | F-14/O-012 open; its expensive half authorised as **8.4** by D-051 |
+| research depth Tier 0–4 | `docs/03` §7; `docs/10` §3.1 | no column, and no tier is defined anywhere in the repository | — |
+| freshness | J-04 step 4; `docs/10` §3.1 | partly served, and the part that is not matters: each row's `data_status` is what its writer was told at record time and nothing re-evaluates it against the current clock, so a row recorded `LIVE` stays `LIVE` in the projection forever | — |
+| quant result with run id | `docs/10` §3.1 | the run id *is* served — every dossier and evidence row carries `audit_ref` — but no quantitative result is computed anywhere in `src/`, so there is nothing to attach it to | — |
+| knowledge-sufficiency meter | `docs/10` §3.1 rail | the basis and the target are served as strings; the meter is not. §6's L-E keeps sufficiency a string until stage 10 defines the meter | stage 10 |
+| beliefs with confidence band, validity interval and change conditions | `docs/03` §7; `docs/10` §3.1 | that is `memory_item`: schema-only, no writer, and F-18's three columns do not exist | **D-051** deferred to the stage-10 writer |
+| disposition with reason code | `docs/10` §3.1 | the disposition is served as `stance`, but `dossier` has no reason-code column; reason codes live on `DecisionRecord`, and a dossier is not a decision | — |
+
+A test asserts the served dossier **invents none of them** — no `counter_thesis`, `contradictions`,
+`tier` or `publication_time` key — because naming a gap is only honest if the response does not also fake
+filling it.
+
+**The chronology runs forwards while the store returns newest first.** `store.evidence_refs` orders by
+`retrieved_at DESC`, which is right for "what did we lately rely on" and wrong for a chronology, so the
+route re-sorts:
+
+```
+store order  (evidence_refs): ['okx.ticker', 'okx.books']
+route order  (chronology)   : ['okx.books', 'okx.ticker']
+   2026-11-26T12:00:00.300Z okx.books   observed=2026-11-26T12:00:00.000Z src=VENUE latency=0.3 status=LIVE checksum_ok=True
+   2026-11-26T12:00:02.300Z okx.ticker  observed=2026-11-26T12:00:02.000Z src=VENUE latency=0.3 status=LIVE checksum_ok=True
+evidence_count: 2 | evidence_checksums_verify: True
+```
+
+`observed_at_source` and `apparent_latency_seconds` are lifted out of the evidence payload beside the
+columns, so a reader does not have to know where 8.2 put F-14's qualifications to see them.
+
+**Read-only at the router, not only by convention**, and bounded:
+
+```
+  POST   /v1/intelligence/dossiers -> 405      PUT -> 405   PATCH -> 405   DELETE -> 405
+  methods registered on both paths: ['GET']
+  GET unknown id -> 404 {'detail': 'unknown dossier: CASE-NOPE'}
+  GET known id   -> 200
+  limit=   1 -> 200     limit= 200 -> 200     limit=   0 -> 422     limit= 201 -> 422
+  openapi paths: ['/v1/intelligence/dossiers', '/v1/intelligence/dossiers/{dossier_id}']
+```
+
+The unknown id is a 404 and not a successful empty body, because a typo and a case that holds nothing
+must not look the same. A detail route exists at all because J-04 step 1 is *"selects case"*.
+
+**`/v1/status` gained no key.** `counts()` has listed `dossier` since Stage 6, so an empty Intelligence
+Centre was always observable there; this batch added a view, not another status key — which matters
+because §9.7 recorded the one key 8.2 *did* add as a limitation.
+
+```
+  top-level keys (14): unchanged
+  any key mentioning intelligence or dossier: none
+  persistence.counts.dossier      = 1
+  persistence.counts.evidence_ref = 2
+  persistence.counts.memory_item  = 0
+  instrument_master               = {'count': 3, 'active': 0, 'projected': 3}
+```
+
+### 10.3 F-21 — the evidence checksum covered the payload, not the row (NEW, found and fixed here)
+
+**Found by this batch's own route probe, and it falsifies a claim 8.2 published.** §9.5 says the
+checksum *"is computed by the writer over exactly what is stored"* and is *"an **integrity** checksum
+over the recorded row"*. It was not. `record_evidence` hashed `body` — the caller's payload plus the two
+provenance keys the writer adds — and nothing else. So two evidence rows recorded with different
+`source`, `observed_at`, `retrieved_at`, `locator` and `evidence_id` values but no caller payload
+produced the *same* checksum:
+
+```
+two rows, no caller payload:
+  EV-F34AF48F352 source=okx.books   observed_at=2026-11-26T12:00:00.000Z retrieved_at=...T12:00:00.300Z locator=.../books
+  EV-BE947D99BD4 source=okx.ticker  observed_at=2026-11-26T12:00:02.000Z retrieved_at=...T12:00:02.300Z locator=.../ticker
+  payload of both: {'apparent_latency_seconds': 0.3, 'observed_at_source': 'VENUE'}
+  what 8.2 hashed  sha256(dumps_canonical(payload)):
+     row A: 4e3f2bafa9e22a8a429f4a33b07d6bdf
+     row B: 4e3f2bafa9e22a8a429f4a33b07d6bdf
+     IDENTICAL: True <- the defect: different rows, one checksum
+  what 8.3 hashes  evidence_checksum(row), covering 9 fields:
+     row A: dab6a4e92c70a081a6583b2e5711d6c5
+     row B: 98403ebaf87436adb41dc331f3605e8d
+     DIFFER: True
+```
+
+Nine of the row's eleven stored fields could change undetected, and `observed_at` was one of them — the
+field F-14 exists because of. The 8.2 test that pinned the behaviour was named
+`test_the_checksum_is_over_exactly_what_was_stored` and its docstring said *"An integrity checksum over
+the recorded row"* while its assertion read `sha256_hex(dumps_canonical(row["payload"]))`: the defect was
+enshrined rather than caught, which is the same shape as the `ORDER BY confidence` claim §9.2 corrected —
+a plausible sentence published before anything executed it.
+
+**The fix.** `CHECKSUMMED_FIELDS` names the nine covered fields once, `evidence_checksum(row)` recomputes
+the value from a row, and `verify_evidence_checksum(row)` compares. The writer uses the same function it
+asks readers to use, so the two cannot drift. `audit_ref` is excluded deliberately and the reason is
+recorded in the code: it does not exist yet when the writer hashes (L-2 writes the audit entry first and
+the ref comes back from it), and the link into the chain is protected by the chain's own hash linkage —
+`audit/chain.py` — rather than by this value. A test pins that exclusion so it reads as a decision.
+
+Tampering, written straight into SQLite past every writer, is now detected in all nine fields and
+survives restoration; a `NULL` or empty checksum verifies **False**, because an absence of evidence of
+tampering is not evidence of integrity; and a reader adding a top-level key cannot change the value while
+a reader changing the payload can.
+
+```
+    altered observed_at   -> verify=False      altered kind          -> verify=False
+    altered source        -> verify=False      altered dossier_id    -> verify=False
+    altered retrieved_at  -> verify=False      altered evidence_id   -> verify=False
+    altered data_status   -> verify=False      altered payload       -> verify=False
+    altered locator       -> verify=False      restored              -> verify=True
+    checksum set NULL     -> verify=False
+```
+
+**And the route is the first reader that checks.** `_dossier_view` recomputes each row's checksum on the
+way out and serves `checksum_ok` per row plus `evidence_checksums_verify` per dossier — `None` when the
+dossier holds no evidence, because `all(())` is `True` and a case with no evidence must not report itself
+verified. Until this batch the checksum was written and never read, so the value was a decoration; now a
+tampered row is reported rather than served. A test tampers with `observed_at` through SQLite and asserts
+the *response* says `checksum_ok: false`.
+
+**Disclosure.** This changes what an approved batch stored. Both tables are empty in production — §9.7's
+limitation 7 records that the rebuild was proven against rows the tables do not yet hold — so there is
+nothing to backfill and no stored value changes meaning under a reader. It is disclosed here rather than
+applied quietly, in the same way §9.2 disclosed the `NUMERIC(6,5)` deviation, and it is put to the owner
+in §10.6.
+
+### 10.4 Stale numbers: three copies of one count, and a skew series that omitted runs the record already held
+
+Writing this section required the numeric-as-TEXT count again, so it was re-derived from both DDLs rather
+than copied: **26 columns across 8 tables are TEXT today, and 19 across 7 were before `0004` added
+`venue_instrument_mapping`'s seven**. That confirms §9.1's correction and exposes three places still
+carrying the wrong pairing of "19" with "8 tables" — `migrations/0002_memory.sql`'s header and two
+comments in `tests/test_schema_fidelity.py`, all three written in 8.2. All three now state both numbers,
+and the `TYPE_TRANSLATIONS` comment points at the comparison that re-derives the count instead of trusting
+a comment, because a total in a comment is a total nobody re-measures.
+
+```
+  target NUMERIC/DECIMAL columns      : 26 across 8 tables
+  of those TEXT in the applied schema : 26 across 8 tables     not TEXT: none
+  per table: {'decision': 1, 'fills': 3, 'instrument': 1, 'memory_item': 1, 'orders': 4,
+              'risk_limit_change': 2, 'trade_intent': 7, 'venue_instrument_mapping': 7}
+  without venue_instrument_mapping    : 19 across 7 tables
+```
+
+Also corrected, because 8.3 falsified them: §2's inventory row that lists *"the 11 routes"* and says
+nothing serves dossiers now carries a pointer to this section, and `docs/13` §2.5's *"tables have no
+writers"* is superseded for a second of the three. Both are annotated, not rewritten.
+
+**And one published number turned out to be wrong in a section D-051 was ruled on.** Re-reading the CI
+annotations for this batch's board showed that §9.9's *"the fourth measured skew and the smallest: 1.55×"*
+is false twice over. Runs 24–30 had all published both intervals at the time of writing — seven, not four —
+and two of them are smaller than 1.55×. (Run 31, on the commit carrying this correction, added an eighth;
+§10.8 restates the series as a property, because a count that grows with every push is stale the moment it is
+written and a range is not.)
+
+| Run | Commit | `dt_observed_s` | `dt_wall_s` | skew |
+|---|---|---|---|---|
+| 24 | `7929a96` | 0.439 | 0.300 | **1.46×** |
+| 25 | `7929a96` | 0.739 | 0.294 | **2.51×** |
+| 26 | `ab841c7` | 0.238 | 0.298 | **0.80×** — the smallest, and below 1 |
+| 27 | `4fef432` | 1.089 | 0.298 | **3.65×** |
+| 28 | `f5e6201` | 0.937 | 0.358 | **2.62×** |
+| 29 | `9e70ed3` | 1.170 | 0.295 | **3.97×** — the largest |
+| 30 | `11d6db3` | 0.385 | 0.249 | **1.55×** |
+
+*(Run 31, on the commit that carried this correction, added an eighth pair — 0.590/0.251 = **2.35×**. It is
+in §10.8's table, which restates the series as a property rather than a count, because a total that
+re-triggers on every push is stale the moment it is written. The range does not go stale.)*
+
+Every pair was re-read from the run's own check annotation on 2026-11-26 (`gh api
+repos/{owner}/{repo}/check-runs/<job>/annotations`), and the ratios recomputed rather than copied. The table
+is a snapshot of runs 24–30; §10.8 carries the series as it stands after run 31. Two
+further details the published sentence conflated: the **3.95×** it attributes to run 29 is that run's
+*rate* ratio (`bps_per_s_wall=0.557` against `bps_per_s_observed=0.141`, recorded in `docs/14` §4.1), not
+its interval ratio; and `docs/14` publishes run 27 as "a 3.7× skew" where 1.089/0.298 = 3.65.
+
+**What survives is the conclusion, strengthened.** The factor spans **0.80×–3.97×**, a 5.0× range across
+seven runs, and one run sits below 1, so it is bidirectional as well as non-constant: it cannot be divided
+out after the fact, which is exactly the evidence D-051's ruling 3 rests on. A smaller series would have
+supported that conclusion less well, so the correction does not weaken the ruling — but the number was
+wrong, and the wrong number is what §9.9 published. A correction pointer is inserted there and the ruled-on
+text is left intact. The same sentence is repeated in `docs/07`'s 8.2 register row and on board 8.2, and
+both now carry the correction too.
+
+### 10.5 The gate
+
+| Check | Command | Result |
+|---|---|---|
+| Full suite | `.venv/bin/python -m pytest -p no:warnings` | **1,258 passed / 2 skipped / 0 failed** (+141) |
+| New: dossier writer | `pytest tests/test_dossier_writer.py` | **87 tests** |
+| New: intelligence routes | `pytest tests/test_intelligence_routes.py` | **39 tests** |
+| Changed: evidence writer (F-21) | `pytest tests/test_evidence_writer.py` | **42 tests** (was 27, +15) |
+| Unchanged: fidelity | `pytest tests/test_schema_fidelity.py` | **35 tests** — no DDL moved, so no checksum moved |
+| Repository hygiene | `pytest tests/test_repo_hygiene.py` | **83 passed** |
+| Live checks collect | `NEXUS_LIVE_VERIFY=1 pytest tests/test_live_endpoints.py --collect-only -q` | **49** — unchanged, nothing here touches ingestion |
+| Offline live subset | `pytest tests/test_live_endpoints.py -k "DiagnosisLogic or PatienceBehaviour or TradeSideRuling or CrossEndpoint"` | **32 passed / 17 deselected** |
+| Lint + format | `ruff check src tests` · `ruff format --check src tests` | clean · **91 files already formatted** (was 88) |
+| Types | `mypy` (strict) | **Success: no issues found in 61 source files** (was 60) |
+| Diff | `git diff --stat HEAD -- backend/` | **11 files, +2,079 / −24** |
+| Size | source / tests | **14,938** / **16,074** lines |
+
+No live endpoint was called by this batch. CI's own `venue-verification` will run on the commit that
+carries it, as it did for 8.2 (run 30, §9.9); that run is CI's and not this batch's evidence, and no
+check in it exercises the dossier writer or the route.
+
+### 10.6 Limitations of this batch
+
+1. **Nothing calls `open_dossier`.** The writer exists, is audited, is projectable and is tested; no
+   production code opens a case, because deciding *what* the system should research was not this batch's
+   ruling. The route therefore serves an honest empty in every environment, and says so. This is the same
+   limitation §9.7 recorded for `record_evidence`, which still has no caller either.
+2. **A stance is recorded, never produced.** Nothing in the repository derives a stance from evidence.
+   `DecisionRecord` is still never constructed in `src/` (F-17), and a dossier's `stance` is whatever a
+   caller passed, validated against a vocabulary and nothing more.
+3. **`sufficiency` is a string with no meter.** The basis and the target are pinned and required for a
+   claim above `INSUFFICIENT`, but the value itself is not validated against any list, because no list
+   exists. Stage 10 defines the meter; until then a caller can write `SUFFICIENT_FOR_ANYTHING`.
+4. **`venue_maps_instrument` is a snapshot taken at open.** If the master later maps that venue, the row
+   still says `False`. Nothing re-checks it, and a dossier is not re-projected when an instrument is.
+5. **Foreign keys are still declared and still not enforced.** The writer refuses a dangling parent and
+   the database would not; with the pragma off, a row written by anything other than this writer can
+   still point at an instrument that does not exist. §9.7's limitation 2 is unchanged.
+6. **The checksum proves integrity, not authenticity, and nothing verifies it on a schedule.** F-21's fix
+   makes the value cover the row and gives the route a recomputation, but there is no periodic audit, no
+   alert on a `False`, and no signature over the bytes a venue actually sent.
+7. **The route reads the projection, not the chain.** A row the projection lost and recovery has not yet
+   restored is invisible here; `served_from` says so, and `reproject_missing` is what closes the gap.
+8. **The dossier view's nine gaps are named, not filled.** Two of them (contradictions, beliefs with
+   validity intervals) are deferred by D-051 to stage 10; one (publication time) waits on 8.4; the other
+   six have no ruling behind them at all and no column, and this batch added none.
+
+### 10.7 Decision requested
+
+> **Ruled 2026-11-26 — D-052.** All four questions below were answered `Recommend`, each against exactly one
+> marked recommendation. §10.9 is the ruling and §10.10 is the finding ruling 4 opens; the questions are left
+> here exactly as they were asked.
+
+1. **Is Stage 8.3 approved?** L-D + L-E as described, with the **F-21 correction to an approved batch**
+   disclosed in §10.3 — the evidence checksum now covers nine stored fields instead of the payload alone,
+   which changes what `record_evidence` stores. **Recommendation: approve**, and record as **D-052**.
+2. **What is 8.4?** D-051 authorised F-14's expensive half as its own batch: a real receipt time in
+   `okx`, `bybit`, `binance_vision` and `dukascopy`, which changes what `observed_at` means in every
+   record type and every test asserting on it. **Recommendation: 8.4 = F-14's expensive half alone** —
+   no dossier work, no new tables — because its whole value is that a regression can be attributed to it
+   and to nothing else. Its evidence is the measured skew series — **every run from 24 onward that has
+   published both intervals, spanning 0.80×–3.97× with one run below 1** (§10.4 and §10.8; stated as a
+   range because the count grows with every push) — and it needs its own live runs before and after.
+3. **Should anything open a dossier yet?** §10.6's first limitation is that nothing calls the writer.
+   Wiring it means deciding what the system researches, which no ruling has covered.
+   **Recommendation: not yet** — leave both writers unwired until the verification stages exist (stage 11
+   defines V1–V3), and let stage 10's `memory_item` writer be the next thing built, since a dossier with
+   no beliefs beside it is a case file with no conclusions in it.
+4. **F-21's verification: should it run anywhere other than on a read?** Today `verify_evidence_checksum`
+   runs when the route serves a row. **Recommendation: no periodic audit yet**, but record the gap as a
+   finding so it is not discovered later as an absence — an integrity check that only runs when somebody
+   looks cannot catch a change nobody looks at.
+
+### 10.8 CI's own run on this commit: run 31, and why the skew series is now stated as a property
+
+`ffc4128` triggered three runs, all `conclusion=success`: the `push` run (`45898061044`) and two
+`pull_request` runs (`45898067353`, `45898067364`). The second carries `Live public endpoints (O-009 /
+O-010)`, which is **run 31** — a live measurement on the commit that delivered this batch. As with run 30,
+**no check in those 49 exercises the dossier writer, the route, the projection, migration 0004 or F-21's
+checksum**; all of that is covered by the 1,258 offline tests. What run 31 adds is the eighth pair of
+interval readings.
+
+```
+44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49 live checks
+PARTIAL - 5 geo-blocked (need a runner outside the restricted region)
+
+okx.cross_endpoint quotes_mid=60833.95 book_mid=60833.95 gap_bps=0.0 dt_observed_s=0.59 dt_wall_s=0.251
+                   bps_per_s_observed=0.0 bps_per_s_wall=0.0 quoted_spread_bps=0.016 asserts_agreement=False
+okx.trades         count=50 price_min=60826.1 price_max=60831.7 sides=['BUY'] buy=50 sell=0 unspecified=0
+okx.bars           count=100 interval=1m span_hours=1.65 close_min=60639.8 close_max=60836.6
+okx.book           depth=40 best_bid=60833.9 best_ask=60834 spread_bps=0.016 entitlement=LIVE
+binance-vision.parse rows=1440 accepted=1440 rejected=0 had_header=False timestamp_units=us
+dukascopy.layout   passed=True payload_bytes=25761 decompressed_bytes=101480 tick_count=5074 reasons=-
+dukascopy.ticks    count=5074 price_min=1.09502 price_max=1.0964 source=DUKASCOPY_BI5 layout_flag=True
+dukascopy.probe.production_ua outcome=ok bytes=25761 lzma=True
+dukascopy.diagnosis verdict=nothing to diagnose: the production User-Agent works action=none
+```
+
+**The skew is 2.35× (`dt_observed_s=0.59` against `dt_wall_s=0.251`).** Four things about run 31 are worth
+more than the number:
+
+1. **§10.4 published a total, and the total re-triggered before the ink was dry.** That section corrected
+   §9.9's "fourth measured skew" by counting seven runs — and the push carrying the correction produced an
+   eighth. This is the exact trap the record's own rule names: a number that re-triggers per push must be
+   written as a bound, floor or property, never a total. So the series is restated here as a property:
+   **every run that has published both intervals, from run 24 onward, is in the table below; as of
+   `ffc4128` that is runs 24–31, and the next push adds another.** The range is what carries the argument,
+   and a range does not go stale: **0.80×–3.97×, a 5.0× spread, with one run below 1.**
+2. **`gap_bps=0.0` again, so both rates are `0.0` and run 31 yields no rate comparison.** Run 29's
+   `0.165` remains a single sample, and the finding that the wall-clock rate is the one that means anything
+   still rests on that one measurement.
+3. **A fully one-sided trade list passed live again, in the opposite direction.** Runs 24 and 25 returned
+   `sides=['SELL'] buy=0 sell=50`; run 31 returns `sides=['BUY'] buy=50 sell=0`. P-7's ruling — record the
+   side split and never assert on balance — is now vindicated in both directions across three runs.
+4. **The dukascopy probes are not stable run to run.** Run 30 had all three return
+   `network-IngestFault`; run 31 has `production_ua outcome=ok` with the diagnosis
+   `nothing to diagnose: the production User-Agent works`, and run 27 had `browser_ua ok`. So the probe
+   outcome is a property of the moment, not of the code, and no claim here is built on it.
+
+**0 skips**, so `layout_flag=True` is live-evidenced in a seventh run (24, 25, 26, 27, 29, 30, 31) with run
+28 still the only one that skipped the check that emits it. The annotation truncates at `2312 escaped
+characters over the cap`, so the bybit rows sit inside the tail and are **not** quoted here.
+
+| Run | Commit | `dt_observed_s` | `dt_wall_s` | skew |
+|---|---|---|---|---|
+| 24 | `7929a96` | 0.439 | 0.300 | 1.46× |
+| 25 | `7929a96` | 0.739 | 0.294 | 2.51× |
+| 26 | `ab841c7` | 0.238 | 0.298 | **0.80×** — the smallest, and below 1 |
+| 27 | `4fef432` | 1.089 | 0.298 | 3.65× |
+| 28 | `f5e6201` | 0.937 | 0.358 | 2.62× |
+| 29 | `9e70ed3` | 1.170 | 0.295 | **3.97×** — the largest |
+| 30 | `11d6db3` | 0.385 | 0.249 | 1.55× |
+| 31 | `ffc4128` | 0.590 | 0.251 | 2.35× |
+
+Every pair re-read from its own check annotation and every ratio recomputed, not copied. This table is the
+evidence 8.4 starts from, and it is the reason 8.4 needs its own live runs before and after: the quantity it
+changes is the one that has moved 5.0× between runs while nothing in the code did.
+
+> **Restated by Stage 8.4 (D-053's ruling 2, §11.14): the series continues under the renamed key, and the
+> range is now `skew_venue_over_wall` 0.673×–3.97× across eleven pairs.** The eight rows above are left
+> exactly as published, because D-051 and D-052 were both ruled on them. What moved is the key and the
+> floor, not the quantity: every value above was computed as `dt_observed_s / dt_wall_s` where
+> `dt_observed_s` was read from a field holding venue stamps, which is venue-interval over wall-interval —
+> the quantity the harness now publishes directly as `skew_venue_over_wall`. So 8.4's three pairs are
+> admitted as its ninth, tenth and eleventh rather than starting a second series:
+>
+> | pair | commit | run id | trigger | `dt_venue_s` | `dt_wall_s` | `skew_venue_over_wall` |
+> |---|---|---|---|---|---|---|
+> | 9 | `bbfe95f` | `45964962991` | `push` | 0.498 | 0.244 | **2.037×** |
+> | 10 | `bbfe95f` | `45964969570` | `pull_request` | 0.239 | 0.355 | **0.673×** — the new floor, below 1 |
+> | 11 | `ec0dd09` | `45996139111` | `pull_request` | 1.083 | 0.301 | **3.604×** — inside the old ceiling |
+>
+> **The floor moves and the ceiling does not: 0.673×–3.97×, a 5.9× spread across eleven pairs, with two runs
+> below one.** Run 26's 0.80× was the only published reading under one until pair 10; pair 11 sits inside
+> the 3.97× that run 29 set. Nothing above is contradicted and one of its two bounds is. The ratios quoted
+> are the harness's published values, computed from unrounded intervals; recomputing from the three-decimal
+> inputs shown differs in the third place (2.041 against 2.037, 3.598 against 3.604), and the published
+> value is quoted rather than the recomputation because the recomputation inherits a rounding the harness
+> did not make.
+>
+> These three rows are keyed on **commit and run id** rather than on a sequential run number, deliberately.
+> This section's own rule is that a count re-triggering per push is stale on arrival, and the numbering
+> already shows the cost of ignoring it: this section calls the run triggered by the commit carrying it
+> "run 32", while §10.9 counts **two** runs, 32 and 33, for `9dad6b7` and `9664c7b` — §10.8 was written
+> across both commits, so "the commit that carried this section" has no single answer. A run id does. **The
+> next batch picks the series up by run id too.**
+
+**Where the series stops being quoted, and why.** The commit that carried this section triggered its own
+`Live public endpoints` run — run 32, `conclusion=success`, on a commit that changed documents and design
+files and no code — and its numbers are deliberately **not** quoted here. Quoting them would require another
+commit, which would trigger another run, whose numbers would then be unquoted for the same reason: the regress
+is endless and each turn of it publishes a total that is stale on arrival. That is exactly what the property
+phrasing above exists to stop. So the rule this section leaves behind is the rule it follows: **the series is
+open-ended, the range is the claim, and the next batch that touches this record picks the table up from
+wherever CI has reached** — with every pair re-read from its own annotation before it is written down.
+
+### 10.9 D-052 — the four rulings, and the finding the fourth one opens
+
+All four questions in §10.7 were answered `Recommend`, each against exactly one marked recommendation, and
+are recorded as **D-052**. §10.7 is left as it was put; this section is the ruling.
+
+| # | Question as put | Ruled | What it changes |
+|---|---|---|---|
+| 1 | Is Stage 8.3 approved? | **Approved, recorded as D-052**, with the F-21 correction to an approved batch disclosed (§10.3) and the skew-series correction disclosed (§10.4, §10.8) | This batch's rows in `docs/07` move to `APPROVED`. The checksum now covers nine stored fields, so `record_evidence` stores a different value than the one D-051 was ruled on, and that is on the record rather than in a diff. §10.6's eight limitations stand as published — in particular limitation 3, `sufficiency` unvalidated against any list, is **not** bounded by this ruling, exactly as D-051 left `memory_item.confidence`'s range unbounded |
+| 2 | What is 8.4? | **F-14's expensive half alone** | A real receipt time in `okx`, `bybit`, `binance_vision` and `dukascopy`, and nothing else: no dossier work, no new tables, no writer wiring. Its own gate and its own live runs before and after, so a regression is attributable to it and to nothing else. `O-012` stays `OPEN` until it lands |
+| 3 | Should anything open a dossier or record evidence yet? | **Not yet** | Both writers stay unwired, and the test that greps `src/nexus` for callers keeps saying so. The next thing built is **stage 10's `memory_item` writer**, because a dossier with no beliefs beside it is a case file with no conclusions in it — and that batch carries F-18's three columns plus `evidence_ref.contradicts`, which D-051 deferred to exactly there |
+| 4 | Should the checksum be verified anywhere other than on a read? | **No periodic audit yet — but record the gap as a finding** | **F-22 is opened** (§10.10) and ledger row `O-014` carries it. Ruling 4 is the reason it is a finding and not a shrug: an integrity check that only runs when somebody looks cannot catch a change nobody looks at, and an unrecorded gap is discovered later as an absence |
+
+Two things this ruling does **not** do, stated so nobody has to infer them. It does not bound
+`sufficiency` against a list — stage 10 defines the meter, and until then a caller can still write
+`SUFFICIENT_FOR_ANYTHING`. And it does not fill any of the nine `view_gaps`: two stay deferred to stage 10
+by D-051, one waits on 8.4, and six have no ruling behind them at all.
+
+**Runs 32 and 33 — and the rule §10.8 leaves behind, exercised immediately.** The commit that carried run
+31's record (`9dad6b7`, documents and design only) triggered its own `Live public endpoints` run, and so did
+the commit that carried §10.8 (`9664c7b`). Both are `conclusion=success`, as are all three runs of each of
+`ffc4128`, `9dad6b7` and `9664c7b`. **Neither run's numbers are quoted here**, for the reason §10.8 states:
+quoting them needs another commit, which triggers another run, whose numbers would be unquoted for the same
+reason. The series is open-ended, the range is the claim — **0.80×–3.97×** across every run that has
+published both intervals — and the next batch that touches this record picks the table up from wherever CI
+has reached, re-reading each pair from its own annotation before writing it down. 8.4 is that batch, and it
+needs runs before and after the change it makes.
+
+### 10.10 F-22 — the evidence checksum is verified only when somebody looks (NEW, opened by D-052's ruling 4)
+
+**Status: `OPEN`, recorded by ruling rather than discovered by accident — which is the point of it.**
+
+`verify_evidence_checksum` exists, is exported, is tested against nine tampered fields and a NULL value, and
+runs in exactly one place: `_dossier_view`, when `GET /v1/intelligence/dossiers` or its detail route serves a
+row. So the system can tell whether an evidence row still matches what its writer hashed — but only if
+somebody asks for that row.
+
+**Why that is a finding and not a design.** The checksum's purpose, as §9.5 published it and §10.3 restored
+it, is integrity: detecting that a stored row changed after it was written. Nothing in `src/` writes to
+`evidence_ref` except `record_evidence`, so a change can only come from outside the application — a restored
+backup, a hand-edited database file, a migration gone wrong, a disk fault, or a future writer nobody has
+reviewed. Every one of those happens whether or not a reader asks. An integrity check that runs on read
+therefore reports tampering only for rows somebody happened to request, and reports nothing at all for the
+rest — including the whole table on a day nobody opens the Intelligence Centre.
+
+**What F-22 is not.** It is not a claim that the checksum is wrong: F-21 fixed what it covers, and the fix is
+tested. It is not a claim that a periodic audit is needed now: D-052's ruling 4 says it is not, and with both
+tables empty in production there is nothing to sweep. It is the gap between those two facts, written down so
+that it is a known absence rather than an unnoticed one.
+
+**What would close it**, for whoever picks it up: a verification pass that recomputes every
+`evidence_ref.checksum` outside a request — at boot, on a schedule, or as part of `audit/chain.py`'s existing
+verification — plus a decision about where a mismatch goes. That decision is the hard part, and it is the
+reason this is not a one-line fix: a mismatch can be reported into `/v1/status` (which the owner reads), into
+the audit chain (which is append-only and cannot retract a false alarm), or into an alert channel (which
+`docs/00` D-020 fixed as Telegram + Web Push + Brevo + in-app, none of them wired yet). F-22 stays open until
+both halves exist.
+
+**Ledger row:** `O-014`. **Sequence:** the global numbering D-051 ruled on, so F-22 follows F-21 and the next
+finding is **F-23**.
+
+### 10.11 The image gate went red on a documents-only push — an upstream Debian CVE, fixed rather than suppressed
+
+**Status: fixed in `backend/Dockerfile` and proven in the test suite; the build that proves it in the image is CI's, and had not run when this was written.**
+
+§10.8 set the rule that a number re-triggered by a push is stale on arrival, and §10.10 recorded a gap the owner asked to have written down rather than closed. This section is the third kind of thing a batch has to report: **a gate that failed for a reason the batch did not cause**, and what was done about it. The standing rule it exercises is the one that says CI can go red on a documents-only push, so every push gets polled and triaged before anybody assumes the batch broke something.
+
+**What failed.** `a065b40` — the D-052 record, six documentation and design files, +185/−17, nothing under `backend/src` or `backend/tests` — produced three runs. The `pull_request` run carrying `Live public endpoints (O-009 / O-010)` was `success`. The other two were `failure`, and in both the job list is identical: `Backend (lint · types · tests)`, `Runtime smoke test`, `Compose config valid` and `Secret scanning` all `success`, and **`Container image (amd64 + arm64 build)` failed**. Reading that job's annotations rather than its logs — logs are served from a host outside this environment's egress allowlist, which is exactly why O-011 built the annotation publisher — named the cause in one packed warning:
+
+> `4 findings (0 CRITICAL), each with an available fix. The scan fails the build until every one is fixed or explicitly justified.`
+
+All four are **HIGH CVE-2025-6020** against `libpam-modules`, `libpam-modules-bin`, `libpam-runtime` and `libpam0g` at `1.5.2-6+deb12u2`, each with the fix at `1.5.2-6+deb12u3`, in `nexus-core:ci (debian 12.15)`.
+
+**Why it is not this batch's fault, and why that is not an excuse.** Nothing in this repository installs a PAM package; all four ship inside `python:3.12-slim-bookworm`. The finding is upstream drift between rebuilds — Debian published a point release after the last successful build — which is precisely what the nightly `schedule: cron "20 3 * * *"` in `.github/workflows/ci.yml` exists to catch, and what any push can surface anyway because the image is rebuilt from a moving tag on every one. So the batch did not cause it and could not have prevented it. What the batch could choose is **what to do about it**, and that choice is the content of this section.
+
+**Fix, not suppress — and the reason is the file's own history.** Suppression was available in principle and was not taken:
+
+- `ignore-unfixed: true` is set on both Trivy steps, which means every finding the scan reports is one an upgrade can clear. "Justify it" is therefore never the necessary option for these; it is only ever the lazy one.
+- No `.trivyignore` exists in the repository (`git ls-files | grep -i trivy` returns nothing), and creating one to hold a fixable HIGH would be the first entry in a file whose only purpose would be to stop the gate from working.
+- The precedent in `backend/Dockerfile` runs the other way. The previous HIGH, CVE-2025-47273 against `setuptools 70.3.0`, was **proved false by measurement** — pip was removed from both interpreters and six assertions with exit codes 21–26 verify the removal, its non-importability and the absence of the vendored SBOM the scanner actually reads. A finding was answered with evidence, not with an ignore rule.
+- Reachability was **not established, and that is the argument rather than a weakness in it.** What the Dockerfile guarantees is that the process runs as the non-root `nexus` user (uid 1001) with `/usr/sbin/nologin`, and nothing this repository installs provides a login path, an `sshd` or a `sudo`. Whether the base image nevertheless carries `su` or any other PAM consumer was never checked, because no Docker daemon exists here to check it with. So the honest form of the claim is "probably unreachable, unverified" — and `apt-get dist-upgrade` costs one rebuild step. **Where the free option removes the need for an unverified judgement, take it and do not publish the judgement in its place.**
+
+**What changed.** One `RUN` in the runtime stage only — the builder stage's packages never reach the image, so upgrading them would change nothing that is scanned:
+
+```
+apt-get update
+apt-get install -y --no-install-recommends curl tzdata
+apt-get dist-upgrade -y
+! dpkg-query -W -f='${Package} ${Version}\n' 'libpam*' | grep -q 'deb12u2$' || exit 27
+rm -rf /var/lib/apt/lists/*
+groupadd … ; useradd …
+```
+
+Three choices in it are load-bearing.
+
+1. **`dist-upgrade`, not `upgrade`.** Plain `apt-get upgrade` refuses to install a new dependency and silently holds back any package whose fix needs one — a skipped security fix, which is the exact failure being prevented. The list is removed afterwards as before, and the ordering is unchanged: upgrade before `rm -rf /var/lib/apt/lists/*`, and both long before `USER nexus`.
+2. **The assertion is targeted, and the generic version is asserted absent.** Trivy *is* the generic gate: it fails this build on any HIGH with an available fix, in any package, forever, so restating "nothing is left to upgrade" here would add no coverage. What a scanner cannot say is whether the upgrade that was meant to clear a *named* finding ran at all — a `dist-upgrade` that silently did nothing would leave the build green today and red tomorrow for a reason nobody could see. So the assertion checks the four packages CVE-2025-6020 was reported against and nothing else. A generic `apt-get -s upgrade | grep -q '^0 upgraded'` would fire on any package held back for a reason nobody here can act on, which is the failure `ignore-unfixed` exists to prevent; `test_repo_hygiene.py` now asserts `apt-get -s` does not appear in the runtime stage at all.
+3. **Exit code 27 joins a documented legend, in its own `RUN`.** CI publishes the failing command line but not the build log, so an undocumented code can only report that something failed. 27 is therefore named in the comment block above its `RUN` — and it is deliberately *not* folded into the pip-removal block's 21–26 sequence even though it appears earlier in the file, because `test_the_image_checks_exit_with_distinct_documented_codes` pins that range as a property and renumbering six working codes to make room for one new one would break a test that has already caught a real defect.
+
+**What was measured, and what was not.** No Docker daemon exists in the environment this was written in, so the build could not be run here — which is why the pip-removal block asserts its own outcome instead of trusting it, and why the new assertion is treated the same way. The shell semantics were measured rather than argued for: `test_the_runtime_stage_upgrades_and_proves_the_named_finding_is_gone` extracts the assertion line from the Dockerfile and executes it under `/bin/sh` against a model of `dpkg-query` that **honours the package pattern it is handed**. That detail matters — the first version of the model was a stub that ignored its arguments, and it made the collateral case fail, because a stub that does not filter cannot distinguish a targeted assertion from a blanket one. Eight fixtures then run, and each outcome is asserted:
+
+| Fixture | Expected | What it proves |
+|---|---|---|
+| all four named packages at `deb12u2` | `exit 27` | the assertion fires on the finding as Trivy reported it |
+| each of the four at `deb12u2`, the other three at `deb12u3` (four runs) | `exit 27` | the `libpam*` pattern covers **every** package the finding named, not just one of them |
+| all four at `deb12u3` | `0` | the fixed image passes |
+| all four at `deb12u9` | `0` | a **later** point release passes — the check does not go stale the next time Debian publishes and nobody remembers to edit this file |
+| all four fixed, `libpython3.12` at `deb12u2` | `0` | a package outside the finding cannot fail the build; this is why the assertion is targeted |
+
+The version comparison is a suffix match on `deb12u2`, not an expected-version pin, for the reason the fourth row exists: a pinned version in a Dockerfile is a build that fails for no reason anybody can see, and this repository has already paid for stale expectations twice (§10.4's counts, §10.8's series).
+
+**What this section could not claim when it was written.** It could not claim the image builds. `dist-upgrade` in a slim bookworm image can in principle pull a package that breaks the entrypoint, and nothing here would catch that except the build itself — which is also the only place the assertion can actually run against a real `dpkg-query`. The next batch reads that run before writing anything of its own, and 8.4 needs live runs before and after its change in any case, so the cost of reading it is already paid.
+
+**Resolved — and the resolution is the part that was not knowable from inside the sandbox.** `8482179`
+produced three runs and all three are `success`: the `push` run `45952230903`, the `pull_request` run
+`45952239831` carrying the same five jobs, and the `pull_request` run `45952239684` carrying
+`Live public endpoints (O-009 / O-010)` — **whose numbers are not read here, by §10.8's rule**. In *both*
+builds the `Container image (amd64 + arm64 build)` job passed, so `apt-get dist-upgrade` completed inside a
+slim bookworm image and the targeted assertion held against a real `dpkg-query`; the image scan's annotation
+now reads, verbatim:
+
+> `notice: no HIGH or CRITICAL fixable vulnerabilities in nexus-core%3Aci`
+
+(`%3A` is the encoded colon in the image reference, published as the step writes it.) The one risk this
+section could not rule out — that `dist-upgrade` pulls a package which breaks the entrypoint — is discharged
+by a different job: `Runtime smoke test (container actually serves)` passed on both runs, and it is the only
+check anywhere that starts the container and asks it for a response. **A limit stays, and it predates this
+batch:** Trivy scans the **amd64 image only**, because a multi-platform image cannot be loaded into a daemon
+(`docs/05` §3.6), so the arm64 half is proven to build and not proven to be clean — true of every scan this
+repository has ever run, and not changed by anything here.
+
+**This is a gate change, so it is recorded here and in `docs/00` (O-011 recurred, posture unchanged) and `docs/07`; it does not reopen O-011, which closed on readability, and readability is what made this triage possible in one step.**
+
+**Gate at `8482179`:** `1259 passed / 2 skipped / 0 failed` (+1, the new hygiene test), hygiene **84**, ruff clean, **91** files formatted, mypy strict clean on **61**. No finding id is consumed: this is not a defect in Nexus-AI's code but an upstream package version, so it is recorded against **O-011**, not against F-22's sequence. **The next finding id remains F-23.**
+
+---
+
+## 11. Stage 8.4 delivered (D-052's ruling 2): four adapters get a receipt time, and the run that proved it first failed on a test the offline suite cannot see
+
+D-052's ruling 2 scoped this batch narrowly: *"F-14's expensive half alone. A real receipt time in
+`okx`, `bybit`, `binance_vision` and `dukascopy`, and nothing else: no dossier work, no new tables, no
+writer wiring. Its own gate and its own live runs before and after, so a regression is attributable to it
+and to nothing else. `O-012` stays `OPEN` until it lands."*
+
+That is what shipped, in two commits: `8cdc871` (22 files, +1901/−144) and `bbfe95f` (2 files, +134/−6).
+§10.9 ended by naming this batch as the one that picks the skew table up again, *"and it needs runs before
+and after the change it makes."* Both runs are in §11.10, and the one in between failed.
+
+### 11.0 The defect, in the code: two fields, one value, no record of arrival
+
+F-14 as recorded in `docs/14` §4.2 named eight sites — `okx.py:216,:380`; `bybit.py:353,:416,:439`;
+`binance_vision.py:339`; `dukascopy.py:253` — at which an adapter bound `observed_at` to venue-supplied
+time. Every one of those line numbers was re-verified against the working tree before this batch started,
+and all eight were still exactly what the finding said. (The finding cites the adapters by bare filename;
+they live in `backend/src/nexus/ingestion/`, not in a `src/nexus/ingest/adapters/` — resolved with
+`git ls-files`, because a path quoted in a finding can be wrong while its line numbers are right.)
+
+The consequence is easier to state than to see. A record carried two timestamp fields and both held the
+venue's value:
+
+```python
+# what every adapter produced before this batch
+TickRecord(..., observed_at=to_utc(entry["ts"]), venue_timestamp=to_utc(entry["ts"]))
+```
+
+So `observed_at` — a field whose name says *we observed this at* — held a number produced by somebody
+else's clock, and the interval between the two fields, the only thing that would make receipt latency
+measurable, was identically zero everywhere in the system. Two findings followed, both written down when
+F-14 was raised: §3.5's Δt column measured venue-timestamp skew while its prose called it the harness's
+fetch interval, and any staleness gate computed against the venue's clock while its details called the
+number ours.
+
+### 11.1 The transport grows two methods, and the receipt time is stamped before the body is decoded
+
+`Transport` went from three methods to five. `fetch_json`/`fetch_bytes` return
+`Fetched(payload, received_at, url, attempts)`; `get_json`/`get_bytes` stay payload-only. The second pair
+is not legacy to be removed — it is for callers that receive nothing worth timing: reachability probes,
+and `verify_layout`, which is handed bytes rather than fetching them.
+
+The stamp is taken **before** decode, inside `_request`:
+
+```python
+# Stamped before the body is decoded, so the receipt time is the moment the
+# response was in hand and not the moment we finished reading it.
+received_at = utc_now()
+payload = response.content if want_bytes else response.json()
+```
+
+That ordering is a measurement decision, not a style one. A Dukascopy hour expands **roughly fourfold**
+under LZMA and a Binance Vision dump unzips before it parses; charging that CPU to the receipt time would
+inflate every latency this system reports by an amount that depends on the payload's compression ratio.
+The size of what is at stake is published four times in this record's own live runs, and it is two distinct
+hours rather than one measurement repeated:
+
+| run | commit | `payload_bytes` | `decompressed_bytes` | ratio | `tick_count` |
+|---|---|---|---|---|---|
+| run 30 (`45875239151`) | `11d6db3` | 25,761 | 101,480 | **3.94×** | 5,074 |
+| run 31 (`45898067364`) | `ffc4128` | 25,761 | 101,480 | **3.94×** | 5,074 |
+| before run (`45953629348`) | `975dc64` | 41,710 | 181,040 | **4.34×** | 9,052 |
+| failed run (`45963867416`) | `8cdc871` | 41,710 | 181,040 | **4.34×** | 9,052 |
+
+The kline dump is smaller and its expansion is published beside it in every one of those runs:
+`binance-vision.url day=2026-11-20 bytes=73320 zip=True` against `binance-vision.parse rows=1440`.
+
+> **Correction to the figure this section first carried, in `ec0dd09`.** It said "expands roughly 2.5×" and
+> cited "the run in §11.10" for the byte counts. Neither holds. No published pair in this record expands
+> 2.5×: the two distinct Dukascopy hours measured here expand **3.94×** and **4.34×**, and both pairs are
+> quoted in §10.3 and §10.8 rather than in §11.10, which is "What this section could not claim" and
+> contains no run at all. The likeliest provenance of 2.5× is a confusion with F-14's own first skew
+> reading — `dt_observed_s=0.739` against `dt_wall_s=0.294`, which is 2.51× and is recorded in `docs/07`'s
+> Stage 7.3 row — but that is a ratio of two *intervals*, not of two byte counts, and nothing licenses
+> carrying it across. Neither "after" run publishes `dukascopy.layout` at all (§11.12's limitation 4), so
+> this batch's own Dukascopy numbers come from the before run and from the failed run at `8cdc871` — which
+> is the one useful thing that failed run's annotation gave back.
+
+`RecordingTransport` grew an injectable clock (`now_fn=utc_now`) and a receipt log. The clock is what makes
+the gate in §11.6 possible: a fixture transport pinned to a date a year away from the venue stamps in the
+same payload cannot have one copied into the other without a test noticing.
+
+### 11.2 Four adapters, four different shapes of one defect
+
+| adapter | what `_get` returned before | what it returns now | the venue's stamp comes from |
+|---|---|---|---|
+| `okx` | `(data, None)` — the receipt time was **hard-coded to `None`** | `(data, received_at)` | the entry's own `ts`, or `None`: OKX's public envelope publishes no server time at all |
+| `bybit` | `(result, server_time)` | `(result, server_time, received_at)` | the entry's `ts`, falling back to the envelope's `time` — Bybit is the one venue here that publishes its own envelope clock |
+| `binance_vision` | payload only | `Fetched` via `fetch_bytes` | the CSV's own timestamp column, with `epoch_unit` detecting µs vs ms |
+| `dukascopy` | payload only | `Fetched` via `fetch_bytes` | **derived**: `hour_start + offset_ms`. A bi5 tick has no timestamp of its own, so its time is the venue's declaration read off the file's own hour |
+
+Two details in that table are the whole content of the batch.
+
+**Bybit's fallback survives, and moves.** An entry with no `ts` used to inherit the envelope's `time` into
+`observed_at`, so a field named for our observation carried Bybit's clock even when the entry said nothing
+about when it happened. It still inherits it — that remains the best available statement about when the
+quote happened — and it is now recorded in the field that says whose statement it is. A fallback to
+*their* clock belongs in `venue_timestamp`; a fallback into `observed_at` is how the defect reproduced
+itself on the rows that had no stamp of their own.
+
+**OKX publishes no envelope time, so its instrument records may have no venue stamp at all.** The honest
+value there is `None`. Copying our receipt time into `venue_timestamp` would satisfy the type, satisfy any
+`is not None` assertion, and assert something about OKX's clock that OKX never said — F-14's error told in
+the other direction. `None` is why `TickRecord.observed_at`, `BarRecord.observed_at` and
+`DukascopyHour.received_at` are all optional in the type: optional offline, where a parse from bytes on
+disk received nothing, and guaranteed on the live path, where the transport always has one. The guarantee
+is asserted rather than trusted (§11.6).
+
+### 11.3 What had to move off the receipt clock, and the one move that would have been silent
+
+A bulk download gives **one** arrival instant to every row in it. So anywhere that ordered, bucketed or
+partitioned on `observed_at` was reading a constant and calling it a time. Five places did:
+
+| site | what it did | what it does now | what it would have cost |
+|---|---|---|---|
+| `parquet_store._time_of` | partition key = `observed_at` | `open_time` for bars, `venue_timestamp` otherwise | **the silent one** — see below |
+| `archive/bars.py` | naive check, future check, sort key, `bucket_start`, `_accumulate` | all five read `venue_timestamp` | every bar built from a downloaded dump bucketed into one interval |
+| `pipeline` `market.ticks.archived` | `min`/`max` of `observed_at` published as `first`/`last` | `min`/`max` of `event_time(t)` | one instant published twice and called a range |
+| `dedupe_ticks` | sorted on `observed_at` | sorted on `event_time`, total over `None` | a bulk download's dedupe order became the file's row order |
+| okx / bybit / binance-vision trade ordering | sorted on `observed_at` | sorted on `event_time` | "chronological" trades in whatever order the venue served them |
+
+The partition key is the one that would not have announced itself. `observed_at` for a downloaded dump is
+today's date, so a day of 2025 trades fetched today would have filed under `year=2026/month=11/day=27`;
+every backfilled day would have collapsed into the partition of the day the backfill ran. The rows would
+have written, read back, and answered a date-range query — for the wrong dates. Nothing raises on a
+partition key that is merely wrong.
+
+§11.10 has the direct evidence, from a real download rather than a fixture:
+
+```
+binance-vision.bars count=1440 interval=1m span_hours=23.98
+                    first=2026-11-20T00:00:00+00:00 last=2026-11-20T23:59:00+00:00
+                    received_at=2026-11-27T08:21:42.878087+00:00 distinct_receipt_times=1
+                    rows_with_a_venue_stamp=1440
+```
+
+One arrival instant, 1,440 event times spanning 23.98 hours of a day seven days earlier. That row is the
+whole argument for the partition-key change, measured rather than reasoned about.
+
+Four separate `or` chains for "the event time of this tick" became one named function, `records.event_time`,
+because the rule has to mean the same thing at every call site and four copies of it will not stay the same.
+Its floor case returns `datetime.min` rather than raising, so ordering stays total for hand-built records;
+every consumer that *acts* on the value refuses a tick with no venue stamp under its own reason first.
+
+### 11.4 What this batch does not do
+
+Ruling 2 said "and nothing else", and the boundaries are stated where a reader would look for them.
+
+**No new gate.** `freshness` publishes two numbers beside `age_seconds` — `venue_age_seconds` and
+`receipt_minus_venue_s` — and the threshold is applied to ours alone. The two directions F-14 predicted are
+now pinned as tests rather than described:
+
+* a venue running **behind** made stale data look fresh, which is the dangerous direction because it is the
+  one that allows new risk: our receipt 30 s old, the venue's stamp 2 s old, and a gate aging the venue's
+  clock says `LIVE`;
+* a venue running **ahead** made fresh data look stale, and further ahead still tripped the
+  future-timestamp fault — a *clock fault in our system* caused entirely by somebody else's clock.
+
+Neither number gates anything, because a threshold on a venue's clock would fail closed whenever that venue
+drifted, and a venue's clock is not ours to police. A test sweeps the venue stamp across five values
+spanning an hour either side of now and asserts the verdict does not move.
+
+`venue_age_seconds` is deliberately **not** clamped by `core.time.age_seconds`. That helper clamps a future
+stamp to `0.0` on the contract that the gate flags it separately as a clock fault — and the flag reads our
+receipt time only. Clamping the venue's would report a stamp that has not happened yet as brand new, which
+is the one case the number exists to show.
+
+**Nothing is wired to `evidence_ref`.** `retrieved_at` is still a required argument supplied by the caller,
+and no caller in `src/` supplies one. What changed upstream is that a receipt time worth supplying now
+exists. `evidence.py` and `operational.py` gained a *pointer* saying so rather than being rewritten, because
+their paragraphs were ruled on at D-050 and still hold: `apparent_latency_seconds` still conflates network
+delay with clock offset, and a negative value is still evidence that the venue's clock runs fast rather
+than an error.
+
+**One `view_gap` changed kind, and the route says so.** §10.9 recorded that one of the nine gaps "waits on
+8.4". It was *"publication time in the evidence table"*, and 8.4 has now landed without filling it: a
+receipt time says when we got something, not when the source published it, so J-04's first of three times
+is exactly as unrecordable as it was. The served text was changed rather than left pointing at a batch the
+reader can go and find already merged — it now reads *"Stage 8.4 … has now landed without filling it …
+Nothing is scheduled for this gap now"* — and `test_intelligence_routes.py` pins that wording, because a
+gap that says "waiting on 8.4" after 8.4 merged sends the reader to a queue that is empty.
+
+### 11.5 Three tests that were passing for the wrong reason
+
+A test that passes is not evidence about the code unless it would fail on the wrong code. Three did not
+meet that bar after the partition key moved, and each was repaired rather than left green:
+
+* `test_naive_tick_time_is_refused` still passed — because the row now had *no* event time at all rather
+  than a naive one. Renamed and re-aimed at the venue's field, with a dedicated missing-event-time test
+  beside it.
+* `test_quote_without_observation_time_is_refused` — the archive needs the venue's event time, and the
+  name said otherwise. Renamed.
+* The archive's refusal message named `observed_at` while the check read `venue_timestamp`. A refusal that
+  points at the wrong field sends whoever reads it to fix a timestamp that was never the problem.
+
+And three adapter pins asserted only `observed_at is not None` (`test_adapters.py:473`, `:555`, `:786`),
+which the pre-8.4 code satisfied by copying the venue's stamp. They now pin an exact receipt clock a year
+away from the venue stamp in the same payload. Every fixture transport in `TestBybitAdapter` and
+`TestOkxAdapter` runs on that pinned clock, and the six shared `conftest` snapshots gained the venue's
+stamp too — otherwise every fixture in the suite is a pre-8.4 record with one clock, and a test written
+against it cannot tell the difference.
+
+Also folded in: a tick with no event time was counted by `archive/bars.py` as `NAIVE_TIMESTAMP`. It now has
+`MISSING_EVENT_TIME`, because the reason string is read by whoever has to fix the feed, and "your timestamp
+has no timezone" and "your feed published no timestamp" are different repairs.
+
+### 11.6 The gate, and proof that it is load-bearing
+
+`TestReceiptTimeIsOursAndVenueTimeIsTheirs` is the gate ruling 2 asked this batch to have of its own: 16
+tests across all four adapters. Every one asserts **both** halves. Asserting only `observed_at` would pass
+on an adapter that stamped our clock into *both* fields — the same defect with the clocks swapped — and
+asserting only `venue_timestamp` passes on the pre-8.4 code, which is what those three weak pins did.
+
+It ends by walking every record-producing surface of all four adapters — `quotes`, `trades`, `book`,
+`instrument_info`, `bars`, `fetch_klines`, `fetch_agg_trades`, `fetch_hour` — and requiring a receipt time
+from each record produced, so an endpoint added later without one fails there instead of quietly publishing
+records with no provenance. Beside it: `test_parsing_bytes_from_disk_invents_no_receipt_time`, which
+requires the opposite from the three parsers, because a capture replayed or a layout verified received
+nothing and stamping a local clock would assert a receipt that never happened.
+
+Verified by tampering rather than by reading. All **ten** record-construction sites in `okx.py` and
+`bybit.py` were reverted so that `observed_at` takes the venue's own value from the adjacent
+`venue_timestamp=` argument — five sites each, `to_utc(entry.get("ts"), …)`, `venue_ts` ×3, `open_time`,
+`server_time`, `bar.open_time`. That is F-14 restored faithfully in two of the four adapters: both fields
+hold one number again. The gate took **15 failures**, `1279 passed / 15 failed / 2 skipped`:
+
+```
+FAILED ...::test_okx_instruments_without_a_venue_stamp_do_not_borrow_ours
+FAILED ...::test_okx_bars_keep_the_event_time_and_gain_a_receipt_time
+FAILED ...::test_bybit_quotes_carry_our_receipt_time_and_the_entry_ts
+FAILED ...::test_bybits_server_time_fallback_lands_in_the_venues_field_not_ours
+FAILED ...::test_bybit_trades_share_one_receipt_time_and_are_ordered_by_venue_time
+FAILED ...::test_bybit_book_and_instruments_separate_the_two_clocks
+FAILED ...::test_bybit_bars_survive_the_field_by_field_rebuild
+FAILED ...::test_every_adapter_surface_produced_a_receipt_time
+FAILED TestBybitAdapter::test_instrument_info_extracts_contract_economics
+FAILED TestBybitAdapter::test_ticker_becomes_a_quote_with_decimal_prices
+FAILED TestOkxAdapter::test_ticker_becomes_a_quote
+```
+
+Twelve of the fifteen are the new gate class and three are the strengthened pre-existing pins of §11.5 —
+which is the point of strengthening them: a pin that only said `observed_at is not None` would have stayed
+green through a faithful restoration of the defect it was written near. The tamper was reverted and the
+suite re-run green (`1294 passed / 2 skipped`).
+
+**A correction to the figure this section first carried.** `8cdc871`'s commit message says eight tests
+failed. That number came from a `-k`-filtered run against a tamper that substituted
+`to_utc(entry.get("ts")) or received_at` at all five sites of each adapter by blind string replacement —
+an expression that is not valid at two of them (the `okx` bar rebuild and the `bybit` bar rebuild, where the
+variable in scope is `row`/`bar`, not `entry`), so those two raised `TypeError` instead of failing an
+assertion, and the filter excluded the three strengthened pins entirely. The measurement was therefore both
+undercounted and partly a crash report. Re-running it site by site gives fifteen. The correction is
+recorded here rather than in a rewritten message, and it is the thirteenth instance of this batch's
+recurring failure mode: a number published before the experiment that would have produced it was run
+correctly.
+
+### 11.7 F-23 — a protocol change cannot be checked against an implementation the offline suite cannot import (NEW, found by a run and closed in the same batch)
+
+**Status: `CLOSED`, in `bbfe95f`, by the run that found it. Ledger row `O-012` is unaffected; this is a
+separate defect in the verification harness, not in the adapters.**
+
+Run `45963867416` (`venue-verification`, `push`, at `8cdc871`) failed with one cause repeated thirteen
+times:
+
+```
+AttributeError: '_CapturingTransport' object has no attribute 'fetch_json'
+43 passed / 13 failed / 0 geo-blocked / 1 skipped of 57 live checks
+```
+
+Stage 8.4 grew `Transport` from three methods to five and moved every adapter to the new pair. There were
+four implementations in the repository and three were moved. The fourth was `_CapturingTransport` in
+`tests/test_live_endpoints.py` — a wrapper around a real `HttpTransport` that saves every response to disk,
+because those captures are the durable prize of a live run and the offline suite has never had a real
+payload.
+
+**The finding is not the omission. It is that nothing offline could have caught it.** That module skips at
+import unless `NEXUS_LIVE_VERIFY=1`, so in this sandbox the class is never constructed and no test among
+1,290 touches it. It is the blind spot `test_repo_hygiene.py` was written for, reached from the other side:
+that file exists because a `.gitignore` pattern hid six modules from a pushed commit and a suite running
+against the *working tree* could not see it. This is a defect invisible to a suite that can only exercise
+what it can *reach*.
+
+Which thirteen failed is itself evidence for §11.1's two-pair split. All five Bybit checks, all six OKX
+checks, the Binance Vision kline parse and Dukascopy's tick-band check failed — every path that fetches
+through an adapter. What passed: the URL-shape checks, which call `transport.get_bytes(url)` directly, and
+`DukascopyLiveLayout.verify_layout_passes_against_a_real_file`, which does the same and hands the bytes to
+a pure function. The receipt-less pair worked; the receipt-returning pair did not exist on the wrapper.
+The run was therefore *not* uniformly red, and its summary — `43 passed / 13 failed` with `0 geo-blocked`
+in one run and `5` in the next — could read as partial geo-blocking rather than as a defect. That is why
+the annotation names each failure's exception.
+
+**Correction to `bbfe95f`'s own commit message, disclosed rather than left standing.** That message said
+Dukascopy's checks passed because they go through `get_bytes`/`verify_layout`. Read against the full
+annotation that is wrong: `DukascopyLiveLayout.parsed_ticks_are_in_the_price_band` **failed**, because it
+goes through `fetch_hour` and therefore `fetch_bytes`. Only `verify_layout_passes_against_a_real_file`
+passed, for the reason given. The claim was written from the first 3,000 characters of the annotation,
+which is where that one `PASS` line appears and where the `FAIL` does not — the twelfth instance of this
+batch's recurring failure mode, publishing before verifying, and the reason §11.9 reads the whole
+annotation before writing anything about it.
+
+**The fix is a gate, not only the two methods.** `TestTransportImplementationsAreComplete` scans `src/` and
+`tests/` by AST for any class defining one of the four data methods and requires all five, naming the file
+and line of whatever falls short. Scanning rather than importing is the only way to gate a module that
+cannot run here. Verified load-bearing by tampering: renaming `_CapturingTransport.fetch_json` makes the
+scan fail offline with
+
+```
+backend/tests/test_live_endpoints.py:246 _CapturingTransport is missing ['fetch_json']
+```
+
+and restoring it makes it pass. A companion test asserts the scan finds exactly four implementations —
+`Transport`, `HttpTransport`, `RecordingTransport`, `_CapturingTransport` — because a scan that silently
+finds nothing passes forever, and that test is what fails if the wrapper is renamed or the scan stops
+reaching the one directory the suite cannot import. A third asserts the wrapper still *delegates*: a
+wrapper that grew its own `httpx` client to satisfy the protocol would capture payloads from a different
+code path than the one under test, and the captures would stop being evidence about the adapters'
+transport.
+
+Two things were kept deliberately. `get_json`/`get_bytes` on the wrapper now route through its own
+`fetch_*` methods, so there is one path to the wire and one place that saves a capture. And the JSON
+capture is still re-serialised rather than byte-faithful: `HttpTransport.fetch_json` decodes inside
+`_request`, so the original body is not reachable from a wrapper. Routing through `fetch_bytes` and decoding
+outside would capture it exactly — and would also move the decode out of `_request`'s retry loop, so a
+malformed body would stop being a retryable `IngestFault`. Byte fidelity of a capture is not worth changing
+fault semantics for, and the trade is written in the wrapper's comment rather than left to be rediscovered.
+
+### 11.8 The live harness measures the skew inside one record now
+
+Before this batch the skew series was *inferred*: an interval read from venue stamps, compared against an
+interval read from a wall clock, across two runs. `_record_cross_endpoint` now publishes both directly,
+and adds the measurement F-14 said did not exist anywhere in the system — the distance between the two
+clocks **inside a single record**.
+
+| key | before 8.4 | after 8.4 |
+|---|---|---|
+| `dt_observed_s` | the venue's interval, from `observed_at` — which held venue stamps | **our** interval, from two receipt times |
+| `dt_venue_s` | *(did not exist)* | the venue's interval, from two `venue_timestamp` values |
+| `dt_wall_s` | unchanged | unchanged |
+| `skew_venue_over_wall` | *(published as `dt_observed_s / dt_wall_s`)* | the same quantity, under a key that names the clock it came from |
+| `bps_per_s_venue` | *(did not exist)* | the gap over the venue's interval |
+| `receipt_lag_quotes_s`, `receipt_lag_book_s` | *(did not exist)* | receipt minus venue, inside one record |
+
+**The rename is the honest part, and it is the part most likely to be misread later.** `dt_observed_s`
+measured the venue's interval before 8.4 and measures ours after it, so the published series changed
+meaning at `8cdc871` without changing its key. That is stated in the function's docstring rather than left
+to be discovered by diffing two annotations, and the offline pins carry both the old literals and the new
+keys so the arithmetic that produced §10.8's table is still checkable.
+
+Every endpoint line gained the same treatment: `venue_timestamp`, `receipt_lag_s`, `received_at`,
+`distinct_receipt_times` and `rows_with_a_venue_stamp`. `.trades`'s `newest` moved to the venue's stamps,
+because `max` of a shared receipt instant publishes one arrival time and calls it the newest trade — and a
+feed that publishes no stamp at all gets `newest=None`, not our arrival substituted for it.
+`.bars` counts `open_time` as its event time, since a bar has always carried its event time there and
+deliberately has no second field for it; counting `venue_timestamp` on a bar line would report zero rows
+with an event time for a feed that gave one on every row.
+
+### 11.9 Before and after: the two runs ruling 2 asked for, and the third that arrived unasked
+
+All the runs quoted here are `venue-verification`. A correction to how this record has counted runs,
+discovered by reading `.github/workflows/venue-verification.yml` rather than by inferring it from a run
+list: that workflow's `push` and `pull_request` triggers carry **identical path filters** —
+`backend/src/nexus/ingestion/**`, `backend/src/nexus/data/records.py`,
+`backend/tests/test_live_endpoints.py` and the workflow file itself — but the two filters are evaluated
+over **different scopes**, and that is the part this record had not stated. `push` is filtered against the
+pushed commit; `pull_request` is filtered against the **pull request's whole diff versus the base branch**.
+This PR has contained all four paths since Stage 7.1 built the adapters, so the `pull_request` filter
+matches on every push to it, whatever that push changed. Net: a commit produces **four** runs when it
+touches an adapter or the harness, and **three** when it does not — never two.
+
+Verified against the run list rather than reasoned about: of the 30 most recent commits that produced runs,
+**all 30** have a `venue-verification` / `pull_request` run, including `a065b40` (six documentation and
+design files), `975dc64` (this record's previous entry) and `ec0dd09` (this section's own correction
+commit, `git diff bbfe95f ec0dd09 -- backend/` empty). Only `7929a96`, `4760462`, `fe96376`, `c48c714`,
+`500ac36`, `f675582`, `354b95c`, `8cdc871` and `bbfe95f` — the commits that touched a filtered path — have
+the fourth.
+
+**The consequence is worth stating plainly: a documents-only push spends a live run against four public
+venues, and can fail on their drift.** §10.8's "`ffc4128` triggered three runs" and §10.11's "`8482179`
+produced three runs" are both correct and neither said which of the three contacted the world — in both
+cases it was the `venue-verification` / `pull_request` one (`45898067364` and `45952239684`). **A run count
+is a property of what changed, not a constant** — the same lesson §10.8 drew about a count that re-triggers
+per push, applied to the count of runs themselves, and now with the mechanism rather than only the
+observation.
+
+| | before | (failed, in between) | after — run A | after — run B | after — run C |
+|---|---|---|---|---|---|
+| commit | `975dc64` | `8cdc871` | `bbfe95f` | `bbfe95f` | `ec0dd09` |
+| backend tree | — | — | this batch | identical to run A's | **identical to run A's** |
+| run | `45953629348` | `45963867416` | `45964962991` | `45964969570` | `45996139111` |
+| trigger | `pull_request` | `push` | `push` | `pull_request` | `pull_request` |
+| job / check-run | `140354959639` | `140387781536` | `140391348401` | `140391370141` | `140495884665` |
+| conclusion | `success` | `failure` | `success` | `success` | `success` |
+| summary | `44 passed / 0 failed / 5 geo-blocked / 0 skipped of 49` | `43 passed / 13 failed / 0 geo-blocked / 1 skipped of 57` | `52 passed / 0 failed / 5 geo-blocked / 0 skipped of 57` | `51 passed / 0 failed / 5 geo-blocked / 1 skipped of 57` | `52 passed / 0 failed / 5 geo-blocked / 0 skipped of 57` |
+| verdict line | `PARTIAL - 5 geo-blocked` | `AttributeError` ×13 | `PARTIAL - 5 geo-blocked` | `PARTIAL - 5 geo-blocked` | `PARTIAL - 5 geo-blocked` |
+| annotation truncated by | — | — | `4372 escaped characters` | `5185 escaped characters` | `5123 escaped characters` |
+
+Runs A and B are the same commit through the same workflow, minutes apart, and they are quoted separately
+rather than averaged: run B's `1 skipped` is not attributable from here, because its annotation truncates
+earlier than run A's (`5185 escaped characters over the cap` against `4372`) and the skip falls in the
+Dukascopy section past the cap. Naming it would be a guess. Run C returned `0 skipped`, and its annotation
+truncates by `5123` — so the skip is not a property of the code either, and the three summaries are
+`52/0/5/0`, `51/0/5/1` and `52/0/5/0`.
+
+**Run C was not planned and is the most useful of the three.** `ec0dd09` is the commit that carried this
+section, and it changes documents and design files only — `git diff bbfe95f ec0dd09 -- backend/` is empty,
+so the backend tree it ran against is **byte-identical** to the one runs A and B measured. Because
+`venue-verification`'s `pull_request` filter is scoped to the whole PR diff (above), a documents-only push
+still spends a live run, and that run is a **third reading of the same code** taken hours later rather than
+minutes later. It is quoted as such and not as a fourth run of the batch: the batch is two commits and
+ruling 2 asked for runs before and after it, which runs A and B are.
+
+The `of 49` → `of 57` is this batch's eight new live-module tests, and it is the reason the offline count
+moved by 35 and not by 43: those eight are collected by the live run, not by the offline suite, which skips
+the module at import. `8cdc871`'s own `ci` runs were both `success` (`45963867374` push, `45963877958`
+pull_request) — 1,290 offline tests green on a commit whose live run was red, which is F-23's blind spot
+stated as a pair of conclusions.
+
+**The cross-endpoint row, verbatim from each annotation.**
+
+Before, at `975dc64`:
+
+```
+okx.cross_endpoint quotes_mid=61658.75 book_mid=61666.55 gap_bps=1.265 dt_observed_s=1.137
+                   dt_wall_s=0.35 bps_per_s_observed=1.113 bps_per_s_wall=3.617
+                   quoted_spread_bps=0.016 asserts_agreement=False
+```
+
+After, at `bbfe95f`:
+
+```
+okx.cross_endpoint quotes_mid=61925.35 book_mid=61939.75 gap_bps=2.325 dt_observed_s=0.116
+                   dt_venue_s=0.498 dt_wall_s=0.244 skew_venue_over_wall=2.037
+                   bps_per_s_observed=20.093 bps_per_s_venue=4.669 bps_per_s_wall=9.513
+                   receipt_lag_quotes_s=0.436 receipt_lag_book_s=0.053
+                   quoted_spread_bps=0.016 asserts_agreement=False
+```
+
+After, run B (`45964969570`, `pull_request`), same commit:
+
+```
+okx.cross_endpoint quotes_mid=61963.15 book_mid=61963.15 gap_bps=0.0 dt_observed_s=0.172
+                   dt_venue_s=0.239 dt_wall_s=0.355 skew_venue_over_wall=0.673
+                   bps_per_s_observed=0.0 bps_per_s_venue=0.0 bps_per_s_wall=0.0
+                   receipt_lag_quotes_s=0.153 receipt_lag_book_s=0.086
+                   quoted_spread_bps=0.016 asserts_agreement=False
+```
+
+After, run C (`45996139111`, `pull_request`, at `ec0dd09` — same backend tree, hours later):
+
+```
+okx.cross_endpoint quotes_mid=61650.75 book_mid=61650.75 gap_bps=0.0 dt_observed_s=0.157
+                   dt_venue_s=1.083 dt_wall_s=0.301 skew_venue_over_wall=3.604
+                   bps_per_s_observed=0.0 bps_per_s_venue=0.0 bps_per_s_wall=0.0
+                   receipt_lag_quotes_s=0.989 receipt_lag_book_s=0.062
+                   quoted_spread_bps=0.016 asserts_agreement=False
+```
+
+**What converged, and what that means.**
+
+| reading | before (`975dc64`) | after, run A | after, run B | after, run C |
+|---|---|---|---|---|
+| `dt_observed_s / dt_wall_s` | `1.137 / 0.35` = **3.25×** | `0.116 / 0.244` = **0.48×** | `0.172 / 0.355` = **0.48×** | `0.157 / 0.301` = **0.52×** |
+| venue interval / wall clock | not separable — it *was* `dt_observed_s` | `0.498 / 0.244` = **2.037×** | `0.239 / 0.355` = **0.673×** | `1.083 / 0.301` = **3.604×** |
+| receipt minus venue, quote | not measurable anywhere in the system | **0.436 s** | **0.153 s** | **0.989 s** |
+| receipt minus venue, book | not measurable anywhere in the system | **0.053 s** | **0.086 s** | **0.062 s** |
+| `gap_bps` | 1.265 | 2.325 | 0.0 | 0.0 |
+| trades, buy / sell | 48 / 2 | 1 / 49 | **50 / 0** | 2 / 48 |
+
+The ratios in the second row are the harness's published `skew_venue_over_wall`, computed from unrounded
+intervals; the inputs shown are the annotation's three-decimal values, so recomputing from them differs in
+the third place (2.041 against 2.037 in run A, 3.598 against 3.604 in run C). The published value is
+quoted rather than the recomputation, because the recomputation inherits a rounding the harness did not
+make.
+
+**The convergence reproduces three times, and the venue's own skew does not reproduce at all.** Three runs
+of one backend tree put our interval at **0.48×**, **0.48×** and **0.52×** the wall clock around the same
+two calls — two minutes apart and then hours apart, each computed independently. Before the batch the same
+ratio was 3.25×, and the record could not say whose clock the disagreement belonged to. After it, ours is
+shorter than the wall clock by roughly the harness's own overhead between starting its timer and issuing
+the first request, which is the direction that difference should point, and it points that way **three
+times out of three**. That is the batch's central claim and run C is what turns it from a coincidence of
+two into a property of the code: 0.48/0.48 could have been one quiet minute measured twice, and 0.52 hours
+later on an identical tree cannot.
+
+The venue's reading moved by more than 5× across the three: **2.037×**, then **0.673×** four minutes later
+—the second **below one** — then **3.604×** hours after that, on an identical backend tree. That is not a
+contradiction and it is the reason §10.8 states this quantity as a range rather than a number: run 26's
+0.80× was until run B the only published reading under one, and run C's 3.604× sits inside §10.8's
+published ceiling of 3.97× rather than beyond it. So the three readings move the range's **floor** and
+leave its **ceiling** alone, which is exactly the asymmetry question 2 in §11.13 asks about. What the three
+runs agree on is not the value but that the value is now **attributable**: `skew_venue_over_wall` says whose
+interval it is, which `dt_observed_s` could not, and a quantity that swings 0.673×–3.604× between runs of
+identical code is one no threshold may be set against — the same reason P-8's recommendation at Stage 7.3
+chose no tolerance.
+
+Before the batch, the interval read from `observed_at` was 3.25× the interval the harness timed around the
+same two calls, and the record could not say whose clock the disagreement belonged to. After it, our own
+interval reads 0.116 s against a wall clock of 0.244 s — the same order, and shorter than the wall clock by
+roughly the harness's own overhead between starting its timer and issuing the first request, which is the
+direction that difference should point. The venue's interval, now separable, is 0.498 s: **2.037× the wall
+clock**, inside the range §10.8 published as a property (0.80×–3.97×) and attributable at last to the clock
+it came from.
+
+And the `receipt_lag_*` numbers are the measurement F-14 said did not exist. In run A OKX stamped the
+ticker 0.436 s before we received it and the book 0.053 s before; in run B, 0.153 s and 0.086 s; in run C,
+0.989 s and 0.062 s. The quote lag exceeds the book lag in **all three**, by 8×, 1.8× and 16× — which is
+the ticker endpoint updating less often than the book endpoint, the *conclusion* run 25 reached indirectly
+in `docs/14` §4.1, now readable off one row of one annotation instead of being inferred by comparing two
+runs, and reproduced in a second and a third. Run C's 0.989 s is the largest receipt-minus-venue gap
+published anywhere in this record and the only one near a second, which is a further reason limitation 5
+insists the number is not latency: it is the venue's stamp against our clock, and the two are not
+synchronised.
+
+**Other rows worth keeping, all verbatim.**
+
+```
+okx.quotes  count=1 bid=61924.5 ask=61924.6 spread_bps=0.016
+            observed_at=2026-11-27T08:21:41.540466+00:00
+            venue_timestamp=2026-11-27T08:21:41.142000+00:00 receipt_lag_s=0.398
+            distinct_receipt_times=1 rows_with_a_venue_stamp=1
+okx.trades  count=50 buy=1 sell=49 unspecified=0
+            newest=2026-11-27T08:21:40.493000+00:00
+            received_at=2026-11-27T08:21:41.679179+00:00 distinct_receipt_times=1
+            rows_with_a_venue_stamp=50
+            venue_time_first=...T08:21:40.237000+00:00 venue_time_last=...T08:21:40.493000+00:00
+okx.bars    count=100 interval=1m span_hours=1.65 received_at=...T08:21:41.810568+00:00
+            distinct_receipt_times=1 rows_with_a_venue_stamp=100
+okx.book    depth=40 entitlement=LIVE receipt_lag_s=0.056 distinct_receipt_times=1
+```
+
+Fifty trades, one receipt instant, event times spanning 0.256 s. A hundred one-minute candles spanning
+1.65 hours, one receipt instant. That is `distinct_receipt_times=1` doing the work §11.3's table describes,
+measured on live data rather than on a fixture.
+
+`buy=1 sell=49` in run A, **`buy=50 sell=0`** in run B and `buy=2 sell=48` in run C — the same endpoint,
+one backend tree, three readings ranging from entirely one-sided to 48/2. None is a failure, by P-7's
+ruling at Stage 7.3, and the triple is the strongest vindication of it this record has: a threshold on side
+balance chosen anywhere between 50/0 and 48/2 would have failed at least one of the three on identical
+code. The "before" run had `buy=48 sell=2`, so run C lands within one trade of the pre-batch reading while
+run B is its exact mirror. The distribution is recorded as counts rather than as the set of sides that
+happened to appear precisely so this comparison is possible — `sides=['BUY']` is identical for a 50/0
+minute and a 25/25 one, and run B published exactly that.
+
+**What the annotations still cannot show.** All three "after" annotations are truncated past the cap —
+`4372`, `5185` and `5123 escaped characters over the cap` — so the Bybit rows and the Dukascopy tick rows
+are unreachable in every one, as they were in the "before" run. The comparison is like-for-like on that
+account and no claim here rests on a Bybit or Dukascopy number from an "after" run. The cap is not a
+constant either: the same code produced 4,372 and 5,185 four minutes apart, because the escaped length
+depends on how many rows a check printed, which depends on the market. `PARTIAL - 5 geo-blocked` is
+unchanged and predates this batch: Bybit geo-blocks hosted runners (F-2, needs the D-021 VM).
+
+### 11.10 What this section could not claim, and one thing it now can
+
+§10.8's rule is that a skew series is stated as a range and a property, never as a count, because a count
+that re-triggers per push is stale on arrival. This section quotes **four** runs — one before, three after —
+and no series, under the authority ruling 2 gave ("its own live runs before and after"), and it does not
+extend §10.8's table on its own account: these are a before/after for one change, not members of an
+open-ended sequence. Whether the renamed key continues that sequence is question 2 in §11.13, and the
+answer changes what the published range says. It matters concretely, and the three after readings pull in
+opposite directions: run B's `skew_venue_over_wall` is **0.673×**, below the 0.80× floor of §10.8's
+published range, while run C's is **3.604×**, inside that range's 3.97× ceiling. Admitting all three widens
+the range to **0.673×–3.97×** — the floor moves, the ceiling does not — and admitting nothing leaves a
+published floor that a run of this repository's own CI has already gone below, with a third reading sitting
+comfortably inside the range that would have been abandoned.
+
+One conclusion `docs/14` §4.1 reached indirectly is now readable off a single row. That section recorded
+run 25's finding — OKX's ticker `ts` lagged its book `ts` by 0.739 s while both responses arrived within
+0.294 s, so the ticker endpoint updates less often — and noted that F-14 meant the *mechanism* was
+misattributed even though the conclusion stood. The "after" rows above measure the same thing directly:
+`receipt_lag_quotes_s=0.436` against `receipt_lag_book_s=0.053` in run A, `0.153` against `0.086` in run B,
+`0.989` against `0.062` in run C. Same conclusion three times, one row each, no inference across runs — and
+the ordering holds at every magnitude the gap took, from 0.053 s to 0.989 s.
+
+### 11.11 The gate
+
+| | at `975dc64` | at `8cdc871` | at `bbfe95f` |
+|---|---|---|---|
+| offline suite | `1259 passed / 2 skipped` | `1290 passed / 2 skipped` | **`1294 passed / 2 skipped`** |
+| live checks | 49 collected | 57 collected | **57 collected, `52 passed / 0 failed / 5 geo-blocked`** |
+| `test_repo_hygiene.py` | 84 | 84 | **88** |
+| `ruff check src tests` | clean | clean | **clean** |
+| `ruff format --check` | 91 files | 91 files | **91 files** |
+| `mypy src` | Success, 61 files | Success, 61 files | **Success, 61 files** |
+| source LOC (61 files) | 14,938 | 15,312 | **15,312** |
+| test LOC (30 files) | 16,214 | 17,597 | **17,725** |
+
+Both skips are pre-existing: `test_live_endpoints.py` (egress) and `test_archive_bars.py` (7m not
+modelled). Net new test functions are 43, of which 35 are collected offline and 8 belong to the live
+module — which is why the offline count moved by 35 and the live run's denominator by 8.
+
+The LOC figures are counted per revision from git (`git ls-tree` + `git show`, `.py` files under
+`backend/src` and `backend/tests`), not from the working tree, because a figure quoted for a commit has to
+be the figure that commit contains. Counted that way, `975dc64`'s test tree is 16,214 lines; the 16,074
+carried forward in this record's working notes was measured against a working tree and was 140 lines low.
+
+New tests by file: `test_adapters.py` +16, `test_data_quality.py` +9, `test_live_endpoints.py` +8,
+`test_repo_hygiene.py` +4, `test_parquet_archive.py` +4/−1 (one renamed), `test_pipeline.py` +2,
+`test_archive_bars.py` +1.
+
+**All four runs at `bbfe95f` are `success`**, read job by job rather than from the run list: `ci` push
+`45964962941` and `ci` pull_request `45964969608`, each with all five jobs green including
+`Container image (amd64 + arm64 build)` and `Runtime smoke test (container actually serves)`; and
+`venue-verification` push `45964962991` and pull_request `45964969570`. The image scan's annotation is
+unchanged from §10.11's, verbatim, in both `ci` runs:
+
+> `notice: no HIGH or CRITICAL fixable vulnerabilities in nexus-core%3Aci`
+
+so this batch did not disturb the posture O-011's recurrence resolved — which is worth stating, because
+§10.11 established that a documents-only push can go red on base-image drift and nothing in this batch
+would have noticed if it had.
+
+**`ec0dd09`, the commit carrying this section, produced three runs** — `ci` push `45996129637`, `ci`
+pull_request `45996139001` and `venue-verification` pull_request `45996139111` — and the third is run C
+above. It changed documents and design files only, so it is the mechanism in §11.9's first paragraph
+demonstrated on the commit that describes it: a documents-only push still spends a live run, and this one
+came back `52 passed / 0 failed / 5 geo-blocked / 0 skipped of 57` against a backend tree identical to
+`bbfe95f`'s. §10.11's warning was that such a push can go red on base-image drift; this one did not, and
+the `ci` runs' image annotation is the same sentence quoted above.
+
+**Finding ids consumed: F-23** (§11.7, closed in the same batch). **The next finding id remains F-24.**
+
+### 11.12 Limitations of this batch
+
+1. **`O-012` closes on the adapters, not on the system.** A receipt time now exists in all four, and
+   nothing in `src/` writes it anywhere durable. `evidence_ref.retrieved_at` still has no caller, so the
+   number is produced and dropped. Ruling 2 forbade writer wiring in this batch; the consequence is that
+   receipt latency is now *measurable* and still not *measured* outside a live run's annotation.
+2. **F-22 is untouched.** The evidence checksum is still verified only on a read.
+3. **The captures are still re-serialised for JSON.** §11.7 states the trade: byte fidelity would move the
+   decode out of the retry loop.
+4. **No Bybit or Dukascopy number is quoted from any "after" run.** All three annotations truncate before
+   those rows (`4372`, `5185` and `5123 escaped characters over the cap`). The Bybit path is verified by
+   the offline gate and by 13 checks that now pass, not by a published measurement. The Dukascopy LZMA
+   ratios in §11.1 come from the *before* run and from the failed run at `8cdc871`, and are labelled as
+   doing so there.
+5. **`receipt_minus_venue_s` and `receipt_lag_*_s` are not latency.** They conflate network delay with the
+   offset between the venue's clock and ours, exactly as `apparent_latency_seconds` does, and are labelled
+   as doing so wherever they appear. A negative value means the venue's clock runs fast; it is recorded,
+   not refused and not clamped.
+6. **Three readings under the new key are still not a property.** §10.8's range came from eight pairs
+   across runs 24–31; this batch adds three on one backend tree — two minutes apart and then hours apart —
+   and they span **0.673× to 3.604×**, a factor of 5.4. That spread is the point rather than a weakness,
+   and it is why the quantity is published as a range and why P-8's recommendation at Stage 7.3 chose no
+   tolerance; but three samples cannot bound anything either, one of the three came from a commit that was
+   not part of the batch, and the geo-blocking that removes Bybit from every hosted run is unchanged.
+7. **The AST scan gates method *presence*, not signatures.** A transport whose `fetch_json` took different
+   arguments would satisfy it. `mypy src` covers `src/`; the live module is not type-checked because it is
+   not under `src/`.
+8. **Nothing re-reads §3.5's Δt column.** That table's prose was already corrected when F-14 was raised;
+   its numbers were venue-timestamp skew and are now attributable as such, but the section was not
+   rewritten in this batch because ruling 2 scoped the batch to the adapters.
+
+### 11.13 Decision requested
+
+Four questions, each with one marked recommendation.
+
+**1. Is Stage 8.4 approved?** *Recommend: approve, recorded as D-053, with F-23 disclosed (§11.7), with
+the correction to `bbfe95f`'s commit message disclosed in the same section, and with the three corrections
+this record made to its own numbers disclosed in §11.6 (the tamper count), §11.1 (the LZMA ratio) and
+§11.9 (the run-count mechanism).* Ruling 2's scope was kept:
+four adapters, no dossier work, no new tables, no writer wiring. Its own gate exists and was proven
+load-bearing by tampering. Its own live runs before and after exist, and the three after readings show the
+convergence the batch was for — `dt_observed_s / dt_wall_s` from 3.25× to **0.48×, 0.48× and 0.52×** on one
+backend tree, with the venue's own interval now separable and labelled at 2.037×, 0.673× and 3.604×.
+`O-012` moves to `CLOSED`. The alternative is to hold it open until a
+writer consumes the receipt time, which would make the ledger row a statement about §11.12's limitation 1
+rather than about the defect F-14 named.
+
+**2. Does the pre-8.4 skew series continue under the renamed key, and what happens to its published
+floor?** *Recommend: it continues, and the range is restated as `skew_venue_over_wall` **0.673×–3.97×**,
+with 8.4's three readings admitted as its ninth, tenth and eleventh pairs.* The quantity is unchanged: every historical
+value was `dt_observed_s / dt_wall_s` where `dt_observed_s` was read from a field holding venue stamps,
+which is exactly venue-interval over wall-interval. Only the key moved, and a range that stops because a
+key was renamed would discard eight measurements to protect a name.
+
+The floor is the part that needs a ruling rather than a restatement. §10.8 published **0.80×–3.97×**, and
+0.80× (run 26) was the only reading below one. Run B measures **0.673×**, below that floor, on this
+repository's own CI; run C measures **3.604×**, inside the published range and 0.37× under its ceiling. So
+the three readings do not pull the same way, and only the floor is in question: either the range widens
+downward to **0.673×–3.97×** — which is what recommending it means, and which is consistent with §10.8's
+own warning that a floor claim must be scoped to the runs it was measured over — or the series stops here
+and 0.673× is recorded as a one-off outside it, which would leave a published floor that a run of this
+repository has already gone below and nobody has said so, while discarding a third reading that the same
+range already contains. The alternative to both is to start a new series at 8.4, defensible because the
+pre-8.4 values were computed by the harness from fields rather than published under this key, but it
+orphans the older range with nothing to compare against — and run C is the argument against it, since a
+fresh series of one reading bounded by 3.604× and 3.604× states less than the eleven-pair range it would
+replace.
+
+**3. Is F-23's gate the right posture — an AST scan of test-only implementations, or should the wrapper
+move where the offline suite imports it?** *Recommend: keep the scan, and do not move the wrapper.* The
+scan names the file and line of any incomplete implementation, runs in the ordinary CI job, and was proven
+load-bearing by tampering. Moving `_CapturingTransport` into `src/` would put test scaffolding in the
+shipped package; moving it into an importable test helper module would let it be imported but not
+exercised, since constructing it needs an `HttpTransport` and a directory, and a test that imports a class
+without calling it proves only that the class exists — which the scan already proves more cheaply. The
+alternative worth naming is a `runtime_checkable` `isinstance` assertion, which checks method presence
+too, but cannot run against a module that skips at import.
+
+**4. What is the next batch?** *Recommend: stage 10's `memory_item` writer, as ruling 3 already ordered.*
+Nothing in §11 changes that ordering: 8.4 added no tables and no wiring, so the reason ruling 3 gave still
+holds — a dossier with no beliefs beside it is a case file with no conclusions in it, and that batch
+carries F-18's three columns plus `evidence_ref.contradicts`. The alternative is to wire `retrieved_at`
+first, closing §11.12's limitation 1 by giving the receipt time a destination; that is a smaller batch and
+it would make 8.4's number durable, but it writes evidence rows for data nobody has decided to collect,
+which is the step ruling 3 declined.
+
+### 11.14 D-053 — the four rulings
+
+All four questions in §11.13 were answered `Recommend`, each against exactly one marked recommendation, and
+are recorded as **D-053**. §11.13 is left as it was put; this section is the ruling.
+
+| # | Question as put | Ruled | What it changes |
+|---|---|---|---|
+| 1 | Is Stage 8.4 approved? | **Approved, recorded as D-053**, with F-23 disclosed (§11.7) and with **all four** of this record's self-corrections disclosed rather than rewritten | Both 8.4 rows in `docs/07` move to `REVIEWED — APPROVED 2026-11-27`, the Stage 8 header reads 8.4 `APPROVED`, and **F-14 and `O-012` move to `CLOSED`**. The four disclosures are §11.6 (the tamper count, eight → fifteen), §11.7 (`bbfe95f`'s Dukascopy claim), §11.1 (the LZMA ratio) and §11.9 (the run-count mechanism) |
+| 2 | Does the skew series continue under the renamed key, and what happens to its floor? | **It continues**, and §10.8's range is restated as `skew_venue_over_wall` **0.673×–3.97×** across **eleven** pairs | The restatement is an **inserted pointer in §10.8**, not a rewrite: those eight rows were ruled on by D-051 and D-052 and stand as published. 8.4's three readings are its ninth, tenth and eleventh pairs. **The floor moves and the ceiling does not** — the spread widens from 5.0× to **5.9×** and two runs now sit below one. The new pairs are keyed on commit and run id, not on a sequential run number, for the reason given in that pointer |
+| 3 | Is F-23's gate the right posture? | **Keep the AST scan; do not move the wrapper** | Nothing changes in the code, which is the point: the scan already names file and line, runs in the ordinary CI job, and was proven load-bearing by tampering. Both alternatives were declined on the record — into `src/` puts test scaffolding in the shipped package, and into an importable test helper lets `_CapturingTransport` be imported but not exercised, which proves only that a class exists. A `runtime_checkable` `isinstance` assertion was named and declined too: it checks the same thing and cannot run against a module that skips at import |
+| 4 | What is the next batch? | **Stage 10's `memory_item` writer**, as D-052's ruling 3 already ordered | Nothing in §11 changed the ordering, because 8.4 added no tables and no wiring, so ruling 3's reason still holds. That batch carries F-18's three columns plus `evidence_ref.contradicts`. Wiring `retrieved_at` first was offered and **not** taken |
+
+**What this ruling does not do**, stated so nobody has to infer it. It does **not** close §11.12's
+limitation 1: `evidence_ref.retrieved_at` still has no caller, so the receipt time 8.4 built is still
+produced and dropped, and that limitation stays published *beside* the closure rather than being retired by
+it. `O-012` closes on the defect F-14 named — four adapters recording nothing about arrival — and not on the
+system. It does **not** touch **F-22** (`O-014`), which D-052's ruling 4 recorded precisely so it would not
+be closed by accident. It does **not** fill the `view_gap` that changed kind: §11.4 records that a receipt
+time says when *we got* something and not when the source *published* it, so J-04's first of three times is
+exactly as unrecordable as it was, and the route's corrected text says so. And it does **not** bound
+anything §11.12 left unbounded — limitations 5, 6, 7 and 8 all stand as published.
+
+**Finding ids.** F-14 `CLOSED` (delivered by 8.4, approved by D-053). F-23 `CLOSED` (found and closed in
+the same batch, disclosed in the ruling that approves it). `O-012` `CLOSED`. `O-014`/F-22 stays `OPEN`.
+**The next finding id is F-24.**
+
+**The regress §10.8 predicted, arrived at once.** `8d3973d` — the commit carrying §11.1's and §11.9's
+corrections, documents and design files only — triggered its own `Live public endpoints` run,
+`45998848348`, `conclusion=success`, against a backend tree byte-identical to `bbfe95f`'s. Its numbers are
+**not read here**, by §10.8's rule and by the precedent it set for runs 32 and 33: reading them would need
+another commit, which triggers another run, whose numbers would be unread for the same reason. The commit
+carrying *this* section does the same thing again. So the property is stated instead of the count: **every
+push to this PR produces another live reading of the same adapter code until an adapter changes**, which is
+§11.9's mechanism seen from the other end — and it is why pair 11 in §10.8's restatement is the last one
+this record will number.
+
+---
+
+## 12. Stage 8.5 delivered (D-053's ruling 4): `memory_item` gets a writer, F-18's three columns land, and a contradiction becomes recordable
+
+**Scope as ruled.** D-052's ruling 3 ordered *stage 10's `memory_item` writer* as the batch after 8.4, and
+D-053's ruling 4 re-ordered it against the alternative — wiring `evidence_ref.retrieved_at` first — and
+declined that alternative. §11.14's row 4 states what the batch carries: *"F-18's three columns plus
+`evidence_ref.contradicts`."* That is what was built, and nothing else: no wiring, no route that serves
+`memory_item`, no expiry column, no confidence band, no sufficiency meter, and no edit to any text an
+earlier ruling approved.
+
+Date: 2026-11-27. Status: `BUILT — AWAITING REVIEW`. Approval is requested as **D-054** in §12.13.
+
+### 12.0 What was ruled, and what was not
+
+| Ruled into this batch | Where it landed |
+|---|---|
+| the `memory_item` writer | `intelligence/memory.py`, 471 lines, audited as `memory.recorded` |
+| F-18's `valid_from`, `valid_until`, `change_conditions` | migration `0005_memory_beliefs`, three `ADD COLUMN`s on `memory_item` |
+| `evidence_ref.contradicts` | the same migration's fourth statement, a self-referencing foreign key |
+| the refusal that makes `docs/10` §3.1's sentence true | seventeen `raise ValueError` sites in the writer, not a `CHECK` in the schema |
+
+| Explicitly **not** ruled in, and not done | Why it is stated here rather than left absent |
+|---|---|
+| wiring `evidence_ref.retrieved_at` | offered at §11.13 question 4 and **declined** by ruling 4; §11.12's limitation 1 stands unchanged |
+| an `expires_at` column | F-18's second gap. Not one of "the three columns". `valid_until` is not a substitute — see §12.1 |
+| a confidence band (`confidence_low`/`confidence_high`) | two more columns, not this batch's ruling either. Recorded as **F-24** (§12.8) |
+| the sufficiency meter's definition | `docs/10` §3.2 finalises V1–V3 at stage 11; the route still serves basis and target as strings |
+| F-22 / `O-014`, the periodic checksum audit | recorded by D-052's ruling 4 precisely so a later batch would not close it by accident |
+| any rewrite of a ruled text | pointers only. §10.8's eleven-pair range, §9's and §10's disclosures and `docs/07`'s approved rows are all untouched |
+
+**The batch is not wired, by ruling.** `test_nothing_in_src_calls_it_yet` still passes: an `rglob` over
+`src/nexus` finds `record_memory_item` named in exactly three files — its own module, the package
+`__init__` that exports it, and a docstring in `store/operational.py` explaining why a projection may not
+refuse the row its writer already refused. No route serves `memory_item`: `app.py` still declares **13**
+routes, the same count §10.2 published, and `/v1/intelligence/memory` does not exist. A belief is now
+recordable and still not readable over HTTP, and the route's own gap text says so (§12.6).
+
+### 12.1 The four columns: what 0005 adds, and the three things it deliberately does not
+
+Migration `0005_memory_beliefs` is four statements, `requires="memory_item"`, checksum
+`4520e5b5e259eb4c868b70d1bfdc5ebdbac58f32d7083ea00cc4e980ac789c28`. It is the fifth entry in
+`MIGRATIONS`, and the third to name a `requires` table — so it is the third that can be *deferred and
+reported* rather than silently bypassed, which is F-20's fix doing its job on a batch that did not have to
+think about it.
+
+```sql
+ALTER TABLE memory_item   ADD COLUMN valid_from TEXT;
+ALTER TABLE memory_item   ADD COLUMN valid_until TEXT;
+ALTER TABLE memory_item   ADD COLUMN change_conditions TEXT NOT NULL DEFAULT '';
+ALTER TABLE evidence_ref  ADD COLUMN contradicts TEXT REFERENCES evidence_ref (evidence_id);
+```
+
+All four are `ADD COLUMN`, which is what §5.3's executed survey made cheap: SQLite permits a nullable
+column, a `NOT NULL` column with a constant default, a self-referencing foreign key and a `CHECK` on a new
+column, and refuses only `ALTER COLUMN ... TYPE` and `ADD CONSTRAINT`. **No row is copied and no table is
+rebuilt**, because none of the four changes what an existing column means — unlike `0004`, which had to
+create-copy-drop-rename `dossier` and `memory_item` to give one column a `REFERENCES` clause and another a
+`CHECK`. Both tables are empty in production (§9.7 limitation 7, restated by D-052's ruling 4), so a
+rebuild would have cost nothing either; the reason it was not needed is structural, not fortunate.
+
+Measured on a live post-migration database, not read off the DDL:
+
+| Table | Columns before | Columns after | Foreign keys after |
+|---|---|---|---|
+| `memory_item` | 11 | **14** | none — `cited_by` and `superseded_by` are `TEXT` lists, not references |
+| `evidence_ref` | 11 | **12** | **two**: `dossier_id → dossier (dossier_id)` and `contradicts → evidence_ref (evidence_id)` |
+| `dossier` | 12 | 12 | `instrument_id → instrument (instrument_id)` (from `0004`) |
+
+`PRAGMA foreign_key_list(evidence_ref)` returns both keys as a map
+`{'contradicts': ('evidence_ref', 'evidence_id'), 'dossier_id': ('dossier', 'dossier_id')}`. A test that
+asserted only the new entry failed on the old one, and was widened to assert the whole map — the same
+derived-set trap §10.4 recorded, in a new place.
+
+`ix_memory_kind` and `ix_memory_created` survive the `ADD COLUMN`s, and so does `0004`'s numeric `CHECK`
+on `confidence`: adding a column to a table does not rebuild it in SQLite, so a constraint that lived
+through `0004`'s rebuild lives through `0005`'s append. That was executed against a live post-migration
+database rather than assumed, because "an `ADD COLUMN` cannot drop a `CHECK`" is exactly the kind of
+sentence that should not be published unverified — `'abc'` and `''` are still refused by the database
+itself, and `'0.5abc'` and `'1e400'` are still **accepted** by it, which is the leak D-051 disclosed when it
+pinned the `CHECK` as a floor and not as validation. §12.3's writer refuses both.
+
+**Column order now differs between the two DDLs, and that is safe for a stated reason.** The PostgreSQL
+target declares all four inline, inside the `CREATE TABLE`s in `migrations/0002_memory.sql`, because that
+file states an end state for a fresh database. SQLite reaches the same four by appending them, because
+`ADD COLUMN` has no position clause — visible in the stored DDL itself, which ends
+`… audit_ref TEXT\n, valid_from TEXT, valid_until TEXT, change_conditions TEXT NOT NULL DEFAULT ''`. So
+`memory_item`'s columns are ordered `…, payload, audit_ref, valid_from, valid_until, change_conditions` in
+SQLite and interleaved differently in the target.
+
+Nothing depends on position, and that was checked rather than asserted. Every `INSERT` in `src/` names its
+columns — a grep for `INSERT INTO <table> VALUES` with no column list returns nothing anywhere in
+`src/nexus`. The reads do use `SELECT *` (`dossiers`, `evidence_refs`, `memory_items`, `get_memory_item` and
+more), but every one converts with `dict(row)` and is then indexed **by name**, so a column that moves moves
+its key and nothing else. The only positional row indexing in `src/` is `archive/parquet_store.py:517+`,
+over a duckdb result whose `SELECT` lists its fifteen columns explicitly — a different store, an explicit
+order, and unaffected by anything SQLite appends. `test_schema_fidelity.py` compares names, types,
+nullability and foreign keys and **not** order, which is what makes the divergence assertable rather than
+merely tolerated.
+
+**Why the target grows inline instead of gaining a `0005_memory_beliefs.sql`.** The fidelity gate parses
+`CREATE TABLE IF NOT EXISTS` statements only — a limitation §9.2 recorded when it was written. An
+ALTER-only target migration would therefore be invisible to it, and the four columns would exist in
+SQLite and be unasserted in the mirror, which is the exact defect F-15 named. Declaring them inline keeps
+the gate load-bearing. The cost is the order divergence above, and the alternative cost would have been a
+silent hole in the one test that keeps the two schemas honest.
+
+**Three things 0005 does not add, each written into the migration's own comment rather than left absent.**
+
+1. **`expires_at`.** F-18's second gap is that no expiry column exists anywhere in memory, and §5.3 lists
+   it among the cheap additions. It is not one of "the three columns" ruling 4 named. `valid_until` is not
+   a substitute and the difference is the whole point: `valid_until` says until when a claim holds **in the
+   world**, while an expiry says when **this system** should stop serving the row. `docs/10` §3.1 asks for
+   "expiring TTLs", which is the second. A belief valid until 2027 whose evidence went stale yesterday is
+   precisely the row the two columns disagree about, and only one of them exists. **The gap stays open.**
+2. **`confidence_low` / `confidence_high`.** Recorded as **F-24** in §12.8.
+3. **An index on `valid_until`.** Nothing queries by validity yet, so `memory_items()` scans. An index with
+   no reader behind it is machinery nobody reads — the reasoning D-052's ruling 4 used to decline a
+   periodic checksum audit, applied to a cheaper object. The scan is written down in the store's docstring
+   instead of being left for whoever hits it to discover.
+
+### 12.2 The writer, and the four decisions it makes on the record's behalf
+
+`intelligence/memory.py` follows the shape `dossier.py` and `evidence.py` established: a grounded module
+docstring, `__all__` (12 names), constants before code, a frozen `slots=True` receipt with `to_dict()`, and
+one public `*, audit, store, …` function whose every default sits on the side that claims least. The
+signature is fourteen keyword-only parameters:
+
+```python
+record_memory_item(*, audit, store, body, kind="OBSERVATION", scope="GLOBAL", subject="",
+                   confidence=None, valid_from=None, valid_until=None, change_conditions="",
+                   evidence_ids=(), payload=None, memory_id=None, actor="MEMORY") -> MemoryReceipt
+```
+
+`MemoryReceipt` has sixteen fields, three of which the caller cannot influence at all:
+`superseded_by` is always `None`, `cited_by` is always `()`, and `validity_open_ended` is always derived.
+`created_at` rides **inside** the audited event, so a replay after a gap reproduces the row byte-identically
+rather than restamping it with the replay's clock — the property §10.1 measured at 1.05 s and this batch
+re-measured through `reproject_missing`. `write_with_audit(...)` is the last statement (L-2: audit entry
+first, projection second), and the pinned payload keys are written **last** so a caller's `payload` cannot
+overwrite them.
+
+No `RejectReason` is spent. All seventeen refusals raise `ValueError` citing the document that requires
+the thing refused, because these are programmer errors at an internal boundary and a reason code is
+vocabulary the audit log and the UI both consume. A test asserts the module neither imports
+`nexus.core.errors` nor names a `RejectReason.` member — an earlier form of that assertion checked for the
+bare string `RejectReason` and failed on the writer's own docstring, which legitimately names the
+vocabulary it does **not** spend.
+
+**Decision 1 — a confidence is not a claim by itself.** `docs/10` §3.1: *"confidence as a band with
+validity interval and change conditions; a point estimate without them is a defect."* The sentence is about
+three columns at once, so no single `CHECK` can express it, and the schema's three new columns are
+therefore nullable or defaulted while the **writer** refuses the combination:
+
+| Refusal | Message (abridged) | Document cited |
+|---|---|---|
+| confidence without `change_conditions` | *"is a point estimate, and `docs/10` §3.1 is explicit that a point estimate without them is a defect"* | `docs/10` §3.1 |
+| confidence without `valid_from` | *"needs `valid_from`: `docs/10` §3.1 asks for confidence as a band with validity interval"* | `docs/10` §3.1 |
+| confidence without ≥1 `evidence_ids` | *"needs at least one `evidence_ids` entry: `docs/03` §7 asks the reviewer to see corroborating/contradictory sources"* | `docs/03` §7 |
+
+**Three refusals, three messages, never one.** A test calls the writer with a confidence and all three
+omitted and asserts the message names exactly one of them, then repeats for each — because folding three
+conditions into one string tells a caller that something is wrong without telling them what to change, and
+§12's own subject matter is records that cannot be acted on. A confidence of `None` requires none of the
+three: an `OBSERVATION` has no validity interval and needs none, which is why the columns are nullable
+rather than `NOT NULL`.
+
+**Decision 2 — the interval is about the world, not about this clock.** `valid_from` and `valid_until`
+never default to `created_at`, in either direction. `valid_until <= valid_from` is refused, including
+equality: a zero-length interval asserts a belief that held for no time at all, which is a different
+statement from an open-ended one and is not this system's to make on a caller's behalf. Naive datetimes are
+refused **before** any comparison, so the refusal is about the value and not about an ordering computed
+across two clocks. An interval that has already ended is **accepted and dated**, not refused: a belief
+whose validity lapsed is a fact about the past, and refusing to record it would be the system editing
+history. An interval that starts in the future is accepted for the same reason. When no end is stated,
+`payload["validity_open_ended"] = True` is derived and pinned — *"no end was stated"* and *"no end exists"*
+are different claims, and only the first is knowable here.
+
+**Decision 3 — provenance is checked against the store, not against the caller's word.** Every
+`evidence_ids` entry must name a row `evidence_ref` actually holds; an id the store has never held is
+refused, and so is a list mixing one real id with one invented one. This is the same posture
+`open_dossier` takes toward `instrument_id` (§10.1) and the reason is the same: `PRAGMA foreign_keys` is
+deliberately **off** for chain-order recovery (`docs/13` §2.5), so SQLite accepts a dangling parent without
+comment and the writer is the only place that can refuse one. `memory_item` itself declares **no** foreign
+keys, so without this check a belief could rest on evidence that does not exist and nothing anywhere would
+say so.
+
+**Decision 4 — recording is not editing.** A caller-supplied `memory_id` that already exists is refused:
+*"the store writes with `INSERT OR REPLACE` because it is a projection, so a second record would restate
+the first row's body and confidence. The audit chain would keep both events, but the row a reviewer reads
+would no longer be the row that was written."* Memory is superseded, never edited in place (§5.1);
+`superseded_by` stays `None` because setting it is a second verb this batch was not ruled into.
+
+`evidence_ref` behaves **differently** here and the difference is measured rather than assumed: re-recording
+under an existing `evidence_id` **replaces** the projection row (one row, two chain entries) and the new row
+still verifies against its own checksum. That is a restatement of one observation — same id, same subject,
+corrected values — and `docs/15` §5.1's supersede-don't-edit rule is about *beliefs*, whose whole content is
+the claim. The asymmetry is pinned by tests on both sides so it cannot drift into an accident.
+
+`kind` and `scope` are free text with schema-default fallbacks and `subject` is **not** validated against
+the instrument master. That is a limitation, not a design: §12.12 lists it.
+
+### 12.3 Confidence as text: what `NUMERIC(6,5)` would have done, and what is refused instead
+
+D-050 accepted `NUMERIC(6,5)` for the target and D-051 disclosed that the applied SQLite column stays
+`TEXT` plus a `CHECK`, because SQLite's NUMERIC affinity stores `'0.5'` as a `real` and that would make it
+the only float-backed numeric column in the schema (§9.2). The consequence this batch had to handle is that
+**the applied column accepts things the target would reject or silently round**, and a writer that stores
+only what SQLite accepts would write rows a PostgreSQL deploy refuses.
+
+So `confidence_text` enforces the target's precision at the boundary. `NUMERIC(6,5)` means six significant
+digits of which five are after the point, i.e. **exactly one digit before it** — a fact the first
+implementation of this check got wrong by comparing significant digits against `6` instead of digits before
+the point against `PRECISION - SCALE`. The corrected rule, from the **normalised** `Decimal`:
+
+* decimal places `= max(0, -exponent)` must not exceed `CONFIDENCE_SCALE` (5);
+* digits before the point `= len(digits) + exponent` must not exceed `CONFIDENCE_PRECISION - CONFIDENCE_SCALE` (1).
+
+`Decimal.normalize().as_tuple()` types the exponent as `Literal['n','N','F'] | int`, so the arithmetic needs
+an explicit `isinstance(exponent, int)` guard — unreachable from `confidence_text`, which refuses non-finite
+values first, but mypy is right to want it.
+
+Twenty-seven inputs were probed, not reasoned about. **Eleven accepted:**
+
+| Input | Stored | Why |
+|---|---|---|
+| `"0"` | `0` | the `CHECK`'s own special case: `CAST('0' AS REAL) = 0.0` is indistinguishable from `'0abc'`, so `0004` whitelists the zero spellings explicitly |
+| `"0.72"` | `0.72` | inside the target |
+| `"1"` | `1` | one digit before the point, the target's ceiling |
+| `"-0.5"` | `-0.5` | **negative, and accepted** — see below |
+| `"9.99999"` | `9.99999` | one digit before the point and five after: exactly the target's shape |
+| `"0.00001"` | `0.00001` | five decimal places, the target's floor |
+| `"9.999990"` | `9.999990` | stored **verbatim**; normalising it would publish `9.99999` and change what the caller wrote |
+| `"0.5"` | `0.5` | |
+| `Decimal("0.7")` | `0.7` | a `Decimal` is the type the whole codebase uses for money and prices |
+| `Decimal("1E-5")` | `0.00001` | scientific notation from a `Decimal`, rendered in plain form |
+| `1` (`int`) | `1` | an `int` is exact, so it is accepted; a `bool` is an `int` in Python and is **not** |
+
+**Sixteen refused**, each with its own message:
+
+| Refused | Reason |
+|---|---|
+| `"10"`, `"123"`, `"1E+2"`, `"-10"`, `"99.99999"` | two or more digits before the point: the target would overflow `NUMERIC(6,5)` |
+| `"0.123456"`, `"0.000001"`, `"1.0000009"` | more than five decimal places: the target would silently round |
+| `0.5` (`float`) | a float has already lost the caller's precision; converting it would manufacture digits nobody stated |
+| `True` | a `bool` is an `int` in Python, so `confidence=True` would store `1` — a certainty nobody asserted |
+| `""` | *"must be a number or None; an empty string is neither"* — the absence of a claim and an empty claim are different |
+| `"abc"`, `"0.7.2"` | not a number |
+| `"NaN"`, `"Infinity"`, `"-Infinity"` | `Decimal` accepts all three and the applied `CHECK` passes them, so they are refused here; the target would reject them too |
+
+The magnitude cases and the scale cases are **different axes and were parametrised separately** after a
+first draft used `9.9999999` as a magnitude case — that value has one digit before the point and fails on
+*scale*, so the test would have passed while asserting the wrong thing. The magnitude case is `99.99999`.
+
+**The writer's check is not redundant with the applied `CHECK`, and that is measured rather than argued.**
+D-051 disclosed that the `CHECK` `0004` added is *"a floor and not validation"* because it leaks `'0.5abc'`.
+Against a live post-0005 database: `'abc'` and `''` are refused by SQLite, while **`'0.5abc'` and `'1e400'`
+are accepted and stored as `text`** — the second being a value PostgreSQL would reject outright.
+`confidence_text` refuses both, the first as *"is not a number"* and the second as *"needs 401 digits before
+the decimal point"*. So the boundary check catches exactly what the database's own constraint lets through,
+which is the only justification for having two.
+
+**One thing it does not do: it stores the caller's spelling.** `'0.720000'`, `'+0.5'`, `'.5'`, `'5.'`,
+`' 0.5 '` and `'-0'` are all accepted and stored verbatim, so `'0.72'` and `'0.720000'` are two different
+stored strings for one number — and since `confidence` is not in any checksum while `evidence_ref`'s columns
+are, nothing compares them. Verbatim storage is deliberate: normalising would publish `9.99999` for a caller
+who wrote `9.999990` and change what they said. It is listed as limitation 12 because two rows can now
+disagree about a number while agreeing about its value.
+
+**Negative confidence is accepted deliberately, and is a question rather than an oversight.** Nothing in
+this repository defines the range of a belief's confidence. `docs/10` §3.1 asks for a band, `docs/03` §7
+asks for confidence beside corroborating and contradictory sources, and neither states a floor. The target's
+`NUMERIC(6,5)` bounds *magnitude* and not *sign*, so `-0.5` is representable in both schemas, and D-051's
+limitation 1 already records that the applied `CHECK` is a floor on numeric-ness and not validation.
+Inventing a `[0, 1]` bound here would put a number in front of a judgement no ruling has made — the same
+reasoning §10.1 used to keep `sufficiency` a string. So `-0.5` stores, a test pins that it stores, and
+§12.13 question 2 asks whether it should.
+
+### 12.4 What the writer stores, measured
+
+One record with the least claiming defaults, on a live store:
+
+| Column | Value | Note |
+|---|---|---|
+| `memory_id` | `MEM-…` | `new_id("MEM")`. `core/ids.py` does not validate prefixes and its docstring lists neither `MEM` nor `EV` — both were added by writers without touching it, which is stated here because a docstring that lags the prefixes in use is the F-12 defect class |
+| `kind` | `OBSERVATION` | the default; free text |
+| `scope` | `GLOBAL` | the default; free text |
+| `subject` | `""` | **not** validated against the instrument master |
+| `body` | the caller's text | required, and the one column the schema makes `NOT NULL` with no default |
+| `created_at` | inside the event | a replay reproduces it byte-identically |
+| `superseded_by` | `NULL` | always |
+| `cited_by` | `[]` | always, and pinned last so a caller cannot forge it |
+| `confidence` | the exact string, or `NULL` | never a float |
+| `valid_from` / `valid_until` | `NULL` unless stated | never defaulted to `created_at` |
+| `change_conditions` | `''` unless stated | `NOT NULL DEFAULT ''` |
+| `payload` | caller payload + `evidence_ids` + `validity_open_ended` + `cited_by` | the three pinned keys always win |
+| `audit_ref` | the chain entry's record id | written last, by `write_with_audit` |
+
+The audit event is `memory.recorded` and `PROJECTABLE` grew from **14** keys to **15** to project it, so a
+replay from the chain alone reproduces the row — including its clock, which is what
+`test_a_contradiction_survives_a_replay_from_the_chain_alone` and
+`test_a_replay_reproduces_the_row_including_its_clock` assert after deleting the projection and calling
+`reproject_missing`.
+
+### 12.5 `contradicts`: one direction stored, the other derived, and the derivation's scope
+
+`docs/10` §3.1 asks the dossier view for *"contradictions highlighted and linked"* and `docs/03` §8 asks the
+evidence graph for the same. Before this batch nothing recorded that two sources disagree, so nothing could
+be linked and nothing could be highlighted. `evidence_ref.contradicts` is that record.
+
+It points **one way** and there is no back-link column, which is a deliberate shape and not an omission:
+a mutual disagreement is two calls, each recording one row's own claim, and neither row is edited by the
+other. A second column would double every write and create two places for one fact to disagree with itself.
+
+`record_evidence` refuses two things the database would accept, because `PRAGMA foreign_keys` is off:
+
+* **a dangling `contradicts`** — *"evidence 'EV-…' does not exist, so nothing can be recorded as
+  contradicting it"*;
+* **a self-contradiction** — *"a contradiction is a disagreement between two observations, and a row
+  pointing at itself records neither"*.
+
+`None` means *no disagreement was claimed*, which is not the same as claiming that none exists — nothing in
+this system can establish that, and the column does not pretend to.
+
+**The checksum widened from nine covered fields to ten.** `contradicts` joined `CHECKSUMMED_FIELDS`, because
+a stored column outside that tuple is a column that can change undetected — which is F-21, and F-21's lesson
+was that the tuple and the table must move together. `evidence_ref` now has **12** stored columns and the
+tuple covers **10** of them; the two outside it are `checksum` (excluded by definition) and `audit_ref`
+(excluded because the audit entry is written first and its ref does not exist yet when the hash is
+computed). A test derives the covered set from the live table via `PRAGMA table_info` and asserts the
+complement is exactly those two, so a thirteenth column cannot arrive without a decision.
+
+**Consequence, published rather than buried:** `verify_evidence_checksum` now reports `False` for any row
+written before this change, because the hash input changed. There is nothing to backfill — both intelligence
+tables are empty in production (D-052's ruling 4) — and this is the same disclosure §10.3 made for F-21.
+A row with no checksum at all also verifies `False`, which is the fail-closed side.
+
+### 12.6 The route: what changed, and the honest scope of what it derives
+
+`GET /v1/intelligence/dossiers` and `…/{dossier_id}` gained three things and **no** new route:
+
+* `evidence[].contradicts` — the stored direction;
+* `evidence[].contradicted_by` — the reverse direction, **derived by a scan of the served dossier's own
+  rows**, sorted, and empty when nothing in this case points at the row;
+* `contradiction_count` — how many distinct unordered pairs the case holds. Two rows pointing at one common
+  row are **one pair each**, not one pair between them, and a mutual disagreement counted from both
+  directions is one pair and not two.
+
+The derivation's scope is stated in the response rather than left to be discovered, because serving a
+partial fact silently is the F-13 defect class:
+
+> the reverse direction is derived **inside this dossier only**. A contradiction recorded between rows in
+> two different cases appears in **neither** scan.
+
+That is asserted by `test_a_contradiction_across_two_cases_appears_in_neither_scan`, which opens two
+dossiers, records the disagreement across them, and checks both views report nothing — a test that would
+pass on a naive implementation and fail on an honest one is the wrong way round, so this one is written to
+fail if the scan is ever widened without the text changing.
+
+Nothing **detects** a disagreement and nothing decides a **winner**. `contradicts` records a claim made by
+whoever wrote the row, so two sources that contradict each other and were never linked stay unlinked; and
+`docs/12` §1.3's law (A-02+A-08) is that no gate can be satisfied by a confidence value, so the
+higher-confidence row does not win here and no code computes one. `contradiction_count` is a count, not a
+verdict, and the gap text says so in those words.
+
+**`view_gaps` is still nine elements** — the count §10.2 published and `docs/07` repeats. Two of the nine
+changed *kind* rather than disappearing, and both were re-aimed rather than deleted:
+
+| Gap | What it said at 8.3 | What it says now |
+|---|---|---|
+| "contradictions highlighted and linked" | no column to come from | **partly served**: the linking half exists and is served in both directions; the detection half and the verdict half have no column, no batch and no ruling |
+| "beliefs with confidence band, validity interval and change conditions" | `memory_item` schema-only, no writer, F-18's three columns deferred | **two of the three now exist and none of the three is served here**: there is no `memory_item` route, so a belief is recordable and not readable over HTTP; the third — a band — is **F-24** |
+
+Two tests pin gap prose by equality plus a list of literals (`"has now landed"`, `"Nothing is scheduled"`,
+`"receipt time"`, `"re-evaluates"`, `"stays LIVE"`, and now `"contradicts"`, `"A-02+A-08"`,
+`"memory.recorded"`, `"no memory_item route"`, `"F-24"`). They were **re-aimed, not deleted**: a test that
+asserts a future batch has not happened yet must be pointed at the next thing that has not happened, or the
+route's honesty becomes unasserted the moment one gap closes.
+
+### 12.7 What this batch does not do
+
+* **It wires nothing.** No caller in `src/` writes a memory item, and no route serves one. D-052's ruling 3
+  and D-053's ruling 4 both said so, and the test that says so still passes.
+* **It does not close F-18.** Two of its four gaps close: the validity interval and change conditions, and
+  the `evidence_ref` contradiction link. Two stay open: **the expiry column** (`expires_at`) and **the
+  sufficiency meter**, which is stage 10's to define and stage 11's to finalise. F-18 as a finding is
+  therefore **partly closed**, and §12.13 question 1 asks whether that partial closure is recorded as a
+  narrowing of F-18 or as two new rows.
+* **It does not touch F-22 / `O-014`.** The checksum is still verified only when a reader asks for the row,
+  and this batch made the checksum cover *more* of the row — which widens what an on-read check can catch
+  and changes nothing about when it runs.
+* **It does not close §11.12's limitation 1.** `evidence_ref.retrieved_at` still has no caller in `src/`.
+  Wiring it was the alternative offered at §11.13 question 4 and declined.
+* **It adds no `RejectReason`, no enum member and no alert.** `core/errors.py` is unchanged; nothing in the
+  vocabulary contains `MEMORY`, `BELIEF` or `CONFIDENCE`.
+* **It does not change the fidelity gate's published arithmetic.** The comment at `test_schema_fidelity.py`
+  claiming **26 numeric columns across 8 tables** are `TEXT` in the applied schema stays true: 0005 adds no
+  numeric column, and `valid_from`/`valid_until` are timestamps, which the house already stores as `TEXT`.
+* **No live endpoint was called.** No adapter changed, so no `venue-verification` run is worth reading —
+  though §11.9's mechanism means this commit's push will still trigger one, and by §10.8's rule its numbers
+  will not be quoted.
+
+### 12.8 F-24 — a belief still carries exactly one confidence number, and the design asks for a band (NEW)
+
+`docs/10` §3.1, approved at **D-035**, asks the Intelligence Centre for *"beliefs & uncertainty (confidence
+as a band with validity interval and change conditions; a point estimate without them is a defect)"*.
+`docs/03` §7 asks for *"beliefs with confidence, validity interval, change conditions"*.
+
+This batch delivered the **time axis** and left the **confidence axis** alone. `memory_item` now has
+`valid_from`, `valid_until` and `change_conditions` — and `confidence` is still one `TEXT` column holding
+one number. A band is an interval on the confidence axis: two numbers, or one number plus a width. So the
+sentence *"a point estimate without them is a defect"* is now half satisfied in a way that is easy to
+misread as fully satisfied: the point estimate has its interval and its conditions, and it is still a point
+estimate.
+
+**Why it is recorded and not fixed.** Two more columns are not this batch's ruling — §11.14 row 4 names
+"three columns plus `evidence_ref.contradicts`" — and the shape of a band is a design decision with no
+ruling behind it: `confidence_low`/`confidence_high`, a single `confidence` plus `confidence_width`, or a
+distribution. Each implies different refusals in the writer, and the writer's whole posture is that a
+default nobody argued for is a claim nobody made. `NUMERIC(6,5)`'s one-digit-before-the-point ceiling also
+constrains the answer: a band whose bounds are both `NUMERIC(6,5)` cannot express "0.7 ± 0.4" without
+deciding what the bounds mean.
+
+**What is true today, measured:** a belief can be recorded as `confidence="1"` — the ceiling of the target's
+magnitude — with an interval and conditions, and nothing anywhere in the system can express that the
+recorder was uncertain about the number itself. `docs/10` §3.1 calls that a defect. It is **F-24**, and the
+next finding id after it is **F-25**.
+
+### 12.9 F-25 — a dangling `dossier_id` is refused by nothing (NEW)
+
+Found by executing the contrast, not by reading: this batch added a refusal for a dangling `contradicts`, so
+the question "which parents does this codebase actually check?" became answerable by running it.
+
+| Parent reference | Refused in the writer? | Measured |
+|---|---|---|
+| `dossier.instrument_id → instrument` | **yes**, since 8.3 | `open_dossier(instrument_id="NOPE:NOPE")` → `ValueError: instrument 'NOPE:NOPE' is not in the system of record, which holds 0` |
+| `evidence_ref.contradicts → evidence_ref` | **yes**, since this batch | `record_evidence(contradicts="EV-NOPE")` → `ValueError: evidence 'EV-NOPE' does not exist…` |
+| `memory_item`'s `evidence_ids` (payload, no FK) | **yes**, since this batch | a list mixing one real id with one invented one is refused |
+| **`evidence_ref.dossier_id → dossier`** | **no** | `record_evidence(dossier_id="DOS-NOPE")` **accepted**; the row lands, `get_dossier("DOS-NOPE")` returns `None`, and the store holds **0** dossiers |
+
+So an evidence row can be written against a case that does not exist. The consequences are concrete rather
+than theoretical: `GET /v1/intelligence/dossiers/{id}` returns **404** for that id, so the row is unreachable
+through the route that serves evidence; `evidence_refs(dossier_id=…)` finds it only if a caller already
+knows the invented id; and `ix_evidence_dossier` indexes a value that matches nothing. The row is not
+corrupt — it verifies against its own checksum — it is **orphaned**, and nothing reports it.
+
+`PRAGMA foreign_keys` is off by design (`docs/13` §2.5: recovery re-projects in chain order, which is not
+always parent-first, and a hard FK failure mid-recovery would be worse than the inconsistency it prevents),
+so the writer is the only place this can be refused — exactly the reasoning that produced the other three
+refusals. The reason it is missing is ordinary: `dossier_id` is **optional** on `record_evidence` (`None`
+means the evidence belongs to no case yet, which is a legitimate state), so the check is
+`if dossier_id is not None and store.get_dossier(dossier_id) is None: refuse` — one more branch than the
+others, and 8.2 wrote the writer before any dossier existed to point at.
+
+Recorded, not fixed: **F-25**. Fixing it inside this batch would have changed a writer D-052 approved, in a
+batch ruled to be about `memory_item`, and §12.13 question 3 asks whether it should be its own batch.
+
+> **F-25 was closed by Stage 8.6, and its closure was ruled by D-055 (§13.9). This section is left
+> as it was written.** D-054's ruling 3 ordered the fix as its own batch; §13.1 records the refusal
+> that shipped and §13.3 the gate that names all four parents, so the table above now measures **4
+> guarded and 0 unguarded** rather than 3 and 1. Its fourth row stays true of the commit it was
+> measured at, `4443287`, which is why it is annotated rather than edited — a measurement is a fact
+> about a tree, and rewriting it would make this section a claim about code that no longer exists.
+
+### 12.10 The gate
+
+| Check | Result | At 8.4 (`c0bfaea`) |
+|---|---|---|
+| `.venv/bin/python -m pytest` (bare, full suite) | **1394 passed, 2 skipped**, 0 failed | 1294 passed, 2 skipped |
+| `ruff check src tests` | All checks passed | clean |
+| `ruff format --check src tests` | **93 files** already formatted | 91 files |
+| `mypy src` | Success: no issues found in **62** source files | 61 files |
+
+**+100 tests**, both skips pre-existing (`test_live_endpoints.py:84`, `test_archive_bars.py:117`). Run bare,
+not with `-q`: `pyproject.toml` already sets `addopts="-q --strict-markers"`, and a second `-q` suppresses
+the summary line the count comes from.
+
+Per-file, each measured separately:
+
+| File | Tests | Was | New test functions |
+|---|---|---|---|
+| `test_memory_writer.py` (**new**, 854 lines) | **77** | — | 55 |
+| `test_evidence_writer.py` | **54** | 44 | +10 |
+| `test_intelligence_routes.py` | **44** | 39 | +5 |
+| `test_schema_fidelity.py` | **41** | 35 | +6 |
+| `test_dossier_writer.py` | 87 | 87 | 0 (one test re-aimed, not added) |
+| `test_repo_hygiene.py` | 88 | 88 | 0 |
+
+**76 net new test functions** producing 100 new executed cases, the difference being parametrisation — the
+confidence accept/refuse table alone is 27 inputs across three axes.
+
+Source of the counts, so they can be re-derived rather than trusted: `git archive HEAD backend/src
+backend/tests` into a scratch directory gives **61 files / 15,312 lines** of `src` and **30 files /
+17,725 lines** of `tests` at `c0bfaea`; the working tree gives **62 / 16,181** and **31 / 19,121**. One new
+source file (`intelligence/memory.py`, 471 lines) and one new test file. Both numbers were produced by a
+script summing `len(path.read_text().splitlines())`, not by `wc -l` on a partial listing and not from
+memory — §10.4 exists because sixteen published numbers in 8.4 were stale.
+
+`test_dossier_writer.py`'s change is worth stating because it is a **replacement**: the test that asserted
+opening a dossier writes no `memory_item` row asserted it against the *schema*, and 0005 changed the schema.
+It is now `test_opening_a_dossier_still_writes_no_memory_item`, which asserts against the writer — the fact
+under test is that one verb does not perform another, and pinning that to a column list would make it fail
+for the wrong reason every time a column arrives.
+
+### 12.11 Proof the gate is load-bearing: twenty tampered sites, twenty caught
+
+Every gate in this batch was falsified by editing the source and re-running, with all six source files
+backed up and restored (`/tmp/t85/*.bak`; the full suite was re-run green afterwards, and `git diff` confirms
+the tree holds only this batch's work). Twenty sites, and **not one produced a silent pass**:
+
+| Tampered | Failures | Caught by (first names) |
+|---|---|---|
+| memory: drop the `change_conditions` requirement | **3** of 318 | `test_a_confidence_with_no_change_conditions_is_refused`, `test_whitespace_only_conditions_are_the_same_as_none`, `test_the_three_refusals_are_three_messages_not_one` |
+| memory: drop the `valid_from` requirement | **2** | `test_a_confidence_with_no_valid_from_is_refused`, `…three_messages_not_one` |
+| memory: drop the provenance requirement | **2** | `test_a_confidence_with_no_provenance_is_refused`, `…three_messages_not_one` |
+| memory: scale check disabled | **3** | `test_a_scale_the_target_would_round_is_refused[0.123456 / 0.000001 / 1.0000009]` |
+| memory: magnitude check disabled | **5** | `test_a_magnitude_the_target_would_overflow_is_refused[10 / 123 / 1E+2 / -10]` |
+| memory: a float accepted | **1** | `test_a_float_is_refused_because_a_decimal_never_becomes_one` |
+| memory: a dangling evidence id accepted | **2** | `test_an_evidence_id_the_store_has_never_held_is_refused`, `test_one_real_id_beside_one_fake_one_is_refused_too` |
+| memory: a repeated id becomes an edit | **1** | `test_a_second_record_under_the_same_id_is_refused` |
+| memory: an inverted interval accepted | **2** | `test_an_interval_that_ends_before_it_starts_is_refused`, `test_an_interval_of_zero_length_is_refused_too` |
+| memory: `open_ended` forced `False` | **1** | `test_an_open_ended_interval_says_so_instead_of_leaving_a_hole` |
+| memory: `cited_by` copied from the caller | **1** | `test_cited_by_is_always_empty_because_an_item_cannot_cite_itself` |
+| evidence: a dangling `contradicts` accepted | **1** | `test_a_row_that_does_not_exist_cannot_be_contradicted` |
+| evidence: a self-contradiction accepted | **1** | `test_a_row_cannot_contradict_itself` |
+| evidence: `contradicts` dropped from the checksum | **3** | `test_the_new_column_joined_the_covered_set`, `test_the_covered_set_is_derived_from_the_live_table`, `test_the_route_does_not_mutate_the_row_it_verifies` |
+| route: the reverse direction not derived | **2** | `test_both_directions_of_one_recorded_disagreement_are_served`, `test_two_rows_pointing_at_one_are_one_pair_each` |
+| route: the pair count forced to 0 | **3** | the two above plus `test_a_contradiction_across_two_cases_appears_in_neither_scan` |
+| schema: the `change_conditions` `ALTER` removed | **45** | `OperationalError` and `PersistenceError` across the memory and dossier writer tests |
+| schema: the `contradicts` `ALTER` removed | **96** | the same, plus every evidence and route test |
+| store: `contradicts` bound as `None` | **7** | `test_a_recorded_disagreement_is_stored_and_reads_back`, `test_a_mutual_disagreement_takes_two_calls_and_neither_row_is_edited`, `test_a_contradiction_survives_a_replay_from_the_chain_alone` |
+| writeahead: the `memory.recorded` branch deleted | **33** | `test_the_row_lands_with_the_least_claiming_defaults`, `test_a_replay_reproduces_the_row_including_its_clock`, `test_the_payload_reads_back_as_a_dict_not_as_text` |
+
+Two of the twenty are worth naming separately, because they are the ones a reviewer would expect to be
+*unfalsifiable*:
+
+* **Dropping `contradicts` from `CHECKSUMMED_FIELDS`** is caught by a test that never mentions the column:
+  `test_the_covered_set_is_derived_from_the_live_table` computes the complement of the tuple against
+  `PRAGMA table_info` and asserts it is exactly `{'checksum', 'audit_ref'}`. A narrowed tuple changes the
+  complement, so the failure names the mechanism rather than the field.
+* **Removing one `ALTER` from the migration** is caught 45 and 96 times over, because the migration's own
+  checksum is pinned in `test_schema_fidelity.py::CHECKSUMS` **and** the columns are used by every writer
+  test. Editing anything inside a migration's SQL string changes its checksum — including rewrapping a `--`
+  comment, which is what `ruff format` did to 0005 during this batch, moving it from `8f0adee4…` to
+  `4520e5b5…`. The checksum was re-derived from `MIGRATIONS` and republished, not restored by hand.
+
+### 12.12 Limitations of this batch
+
+1. **Nothing calls the writer.** No `memory_item` row has ever been written by this system outside a test,
+   and no route serves one. Every claim here is about what the writer *refuses*, which is testable, and not
+   about what it will be asked to record, which is not decided.
+2. **F-25: a dangling `evidence_ref.dossier_id` is refused by nothing.** Measured in §12.9. The row is
+   orphaned, unreachable through the route, and not reported.
+3. **F-24: no confidence band.** A belief carries one number on the confidence axis, and `docs/10` §3.1
+   calls a point estimate a defect. The interval and the conditions now exist; the band does not.
+4. **No expiry.** `expires_at` is absent and `valid_until` is not a substitute (§12.1). F-18's second gap
+   stays open, and `docs/10` §3.1's "expiring TTLs" is still unservable.
+5. **`subject` is not validated against the instrument master**, and `kind` and `scope` are free text. A
+   belief about an instrument the system of record has never heard of is recordable — the defect F-16 named
+   for dossiers, which `open_dossier` refuses and this writer does not. Closing it needs a ruling on whether
+   a belief's subject must be an instrument at all.
+6. **A negative confidence is accepted** and pinned by a test, with no `[0, 1]` bound anywhere. Deliberate,
+   and §12.13 question 2 asks whether it should stay that way.
+7. **The reverse contradiction direction is derived per dossier.** A disagreement across two cases appears
+   in neither view (§12.6), and a reader who wants it from the database alone has to scan.
+8. **The checksum now covers ten fields, so pre-8.5 rows verify `False`.** Nothing to backfill — both
+   intelligence tables are empty in production — but it is a change to what an approved batch stored, and
+   it is disclosed here in the same place §10.3 disclosed F-21's.
+9. **Column order diverges between the two DDLs** (§12.1). Safe today because every `INSERT` names its
+   columns and every `SELECT *` read converts with `dict(row)` and is then indexed **by name**.
+   **Corrected at D-054** (§12.14): this limitation first said "no `SELECT *` exists", which §12.1 two
+   sections above contradicts by naming the reads that use it — measured, `src/` holds **23** `SELECT *`
+   sites, **21** of them in `store/operational.py` and 2 in `audit/log.py`, against **14** `dict(row)`
+   conversions, and `INSERT INTO <table> VALUES` with no column list returns **0**. An `INSERT` without a
+   column list would still break the divergence, and nothing in the suite refuses one being added.
+10. **`new_id`'s docstring lists neither `MEM` nor `EV`.** The prefixes work — `core/ids.py` does not
+    validate them — but the docstring is the only place a reader would look for the vocabulary, and it lags
+    by two writers.
+11. **No live evidence.** No adapter changed, so no venue run speaks to this batch, and the run this commit
+    triggers will be unread by §10.8's rule.
+12. **A confidence is stored in the caller's own spelling.** `'0.72'` and `'0.720000'` are different stored
+    strings for one number, and nothing normalises or compares them (§12.3). Deliberate — normalising would
+    rewrite what a caller said — but it means two beliefs can disagree textually while agreeing numerically.
+
+### 12.13 Decision requested
+
+Four questions, each with one marked recommendation.
+
+**1. Is Stage 8.5 approved, and how is F-18's partial closure recorded?** *Recommend: approve, recorded as
+**D-054**, with F-24 and F-25 disclosed as opened here, and with F-18 **narrowed rather than closed** — its
+first and third gaps closed, its second and fourth left open in the same row.* The scope ruling 4 named was
+delivered and nothing outside it was: four columns, one writer, one derived view field, no wiring, no route,
+no rewrite of a ruled text. The gate is `1394 passed / 2 skipped` and was proven load-bearing at twenty
+tampered sites with zero silent passes. The alternative is to close F-18 outright, which would retire a
+finding whose expiry and sufficiency halves have no column and no batch behind them — the same error
+D-053's ruling 1 avoided by closing `O-012` on the defect F-14 named and not on the system.
+
+**2. Should a confidence outside `[0, 1]` — including a negative one — be refused?** *Recommend: leave it
+unbounded, keep the test that pins `-0.5` storing, and publish the absence as limitation 6.* No document in
+this repository states a range for a belief's confidence; the target's `NUMERIC(6,5)` bounds magnitude and
+not sign; and inventing `[0, 1]` would put a number in front of a judgement no ruling has made, which is
+what §10.1 declined to do for `sufficiency`. The alternative is to bound it now, which is cheap and would
+make `-0.5` a `ValueError` — but it needs a ruling on what `1` means, on whether `9.99999` (currently
+accepted, and the target's own ceiling) is a defect, and on whether a belief can legitimately carry a
+negative confidence as a statement of disconfirmation. Three questions the code cannot answer.
+
+**3. Should F-25 be its own batch, or folded into the next one?** *Recommend: its own small batch, **8.6 =
+F-25 alone**, in the same shape 8.4 took for F-14's expensive half.* The fix is one branch in
+`record_evidence`, the refusal already has three precedents in the same codebase to copy its wording from,
+and a batch of one attributable change is what makes a regression attributable — the reason D-052's ruling
+2 gave for scoping 8.4 to F-14 alone. The alternative is to fold it into whatever comes next, which is
+cheaper in commits and worse in attribution, and which is how a refusal ends up shipping beside an
+unrelated change nobody re-reads.
+
+**4. What comes after that?** *Recommend: `expires_at`, as **8.7**, and not the sufficiency meter.* It is
+F-18's remaining cheap half — §5.3 already established that a nullable `ADD COLUMN` needs no rebuild, so it
+is one migration statement plus one writer argument plus one refusal — and `docs/10` §3.1's "expiring TTLs"
+is the one approved sentence in F-18 that still has no column at all after this batch. The sufficiency meter
+should not be attempted before stage 10 defines it and stage 11 finalises V1–V3 (`docs/10` §3.2): a meter
+invented here would be a number in front of a judgement, which is limitation 4 of §10.6 and the reason
+`sufficiency` is still a string. The alternative worth naming is wiring `retrieved_at` (§11.12's limitation
+1), which is smaller and would make 8.4's number durable, but it writes evidence rows for data nobody has
+decided to collect — the step ruling 3 declined and ruling 4 declined again.
+
+---
+
+### 12.14 D-054 — the four rulings
+
+All four questions in §12.13 were answered `Recommend`, each against exactly one marked recommendation, and
+are recorded as **D-054**. §12.13 is left as it was put; this section is the ruling. No code changed —
+`git diff 4443287 HEAD -- backend/` is empty — and the gate re-ran anyway, because this section quotes what
+it produces: **1,394 passed / 2 skipped / 0 failed**, `ruff check src tests` clean, `ruff format --check`
+unchanged on **93** files, mypy strict clean on **62**.
+
+| # | Question as put | Ruled | What it changes |
+|---|---|---|---|
+| 1 | Is Stage 8.5 approved, and how is F-18's partial closure recorded? | **Approved, recorded as D-054**, with F-24 (§12.8) and F-25 (§12.9) disclosed as opened here and F-18 **narrowed rather than closed** | Both 8.5 rows in `docs/07` move to `REVIEWED — APPROVED 2026-11-27` and the Stage 8 header reads 8.5 `APPROVED`. F-18 keeps **two of its four gaps open in the same row**: the first (validity interval and change conditions) and the third (the `evidence_ref` contradiction link) close here, the second (`expires_at`) and the fourth (the sufficiency meter) do not. Closing F-18 outright was offered and **not** taken, for the reason §12.13 gave: it would retire a finding whose expiry and sufficiency halves have no column and no batch behind them, which is the error D-053's ruling 1 avoided when it closed `O-012` on the defect F-14 named — four adapters recording nothing about arrival — and not on the system |
+| 2 | Should a confidence outside `[0, 1]`, including a negative one, be refused? | **No — it stays unbounded**, the test that pins `-0.5` storing stays, and the absence stays published as limitation 6 | Nothing changes in `confidence_text`. The only bounds it enforces are the portable target's `NUMERIC(6,5)` — one digit before the point, five after — and the sign is not one of them. `[0, 1]` would need three rulings the code cannot make: what `1` means, whether `9.99999` (accepted today, and the target's own ceiling) is a defect, and whether a belief can legitimately carry a negative confidence as a statement of disconfirmation. Inventing it here would put a number in front of a judgement, which is what §10.1 declined to do for `sufficiency`. Deferring the bound to F-24's band ruling was also offered and **not** taken, so the range stays a published limitation rather than a queued one |
+| 3 | Should F-25 be its own batch, or folded into the next one? | **Its own small batch: 8.6 = F-25 alone** | One refusal in `record_evidence` plus a test that **all four** parent references this codebase guards are guarded — `dossier.instrument_id`, `evidence_ref.contradicts`, `evidence_ref.dossier_id` and `memory_item`'s `evidence_ids` — rather than three of them, so the fourth cannot go missing again without a red gate. The shape is 8.4's: one attributable change per batch, which is what makes a regression attributable, the reason D-052's ruling 2 gave for scoping 8.4 to F-14 alone. Folding it into 8.7 was declined on the record — cheaper in commits, worse in attribution, and it is how a refusal ends up shipping beside an unrelated change nobody re-reads |
+| 4 | What comes after that? | **`expires_at`, as 8.7** — not the sufficiency meter, and not wiring `retrieved_at` | F-18's remaining cheap half: §5.3's executed survey already established that a nullable `ADD COLUMN` needs no rebuild, so it is one migration statement, one writer argument and one refusal, and `docs/10` §3.1's "expiring TTLs" is the one approved sentence in F-18 that still has no column at all after this batch. The sufficiency meter waits on stage 10 defining it and stage 11 finalising V1–V3 (`docs/10` §3.2), because a meter invented here would be a number in front of a judgement — §10.6's limitation 4, and the reason `sufficiency` is still a string. Wiring `retrieved_at` was offered a third time and declined a third time, on D-053's ruling 4's reason: it writes evidence rows for data nobody has decided to collect |
+
+**What this ruling does not do**, stated so nobody has to infer it. It does **not** close F-18: two of its
+four gaps stay open in the same row, and a reader who sees "8.5 approved" without seeing "narrowed" would
+take the expiry and sufficiency halves as delivered. It does **not** bound a confidence, so limitation 6
+stands as published and `'-0.5'` still stores. It does **not** wire the writer: nothing in `src/` calls
+`record_memory_item` and no route serves `memory_item`, which `test_nothing_in_src_calls_it_yet` asserts and
+which stays true after this ruling — a belief is **recordable** and still not **readable over HTTP**. It does
+**not** close §11.12's limitation 1 either: `evidence_ref.retrieved_at` still has no caller, offered at
+D-053 and offered again here, declined both times. It does **not** touch **F-22** (`O-014`), which D-052's
+ruling 4 recorded precisely so it would not be closed by accident, and it does not touch F-17 or F-19. And
+it does **not** retire any of §12.12's twelve limitations, including the two it had the chance to: limitation
+5 (`subject` is still not validated against the instrument master, the defect F-16 named for dossiers) and
+limitation 12 (a confidence is still stored in the caller's own spelling, so `'0.72'` and `'0.720000'` are
+different stored strings for one number). Limitation 9 is **corrected** by this section rather than retired
+by it — see below.
+
+**Finding ids.** **F-24** stays `OPEN` with no batch behind it, because the shape of a band has no ruling:
+the time axis is delivered and the confidence axis is not, and two more columns are nobody's decision yet.
+**F-25** stays `OPEN` and is ordered fixed as **8.6**. **F-18** is `NARROWED` — gaps 1 and 3 `CLOSED`, gaps
+2 and 4 `OPEN`. **`O-014`/F-22** stays `OPEN`. **The next finding id is F-26.** **No ledger row is opened by
+this ruling.** F-24 and F-25 stay findings in §12.8 and §12.9 rather than becoming `O-` rows in `docs/00`,
+because scheduling a batch is not opening an obligation row: D-053's ruling 4 ordered 8.5 and opened no `O-`
+row, and F-17 and F-19 are open findings with none either. `O-014` exists for F-22 only because D-052's
+ruling 4 said so in terms, and a row opened without a ruling saying so would break the register's first law —
+the owner rules, then the row is opened.
+
+**Two corrections, both disclosed rather than left standing.** Neither reached a pushed commit as an error
+about the code, and both were errors about the record.
+
+1. **§12.12's limitation 9 said "no `SELECT *` exists".** It does not, and §12.1 — two sections above it,
+   in the same batch's own text — says the opposite by name: the reads *do* use `SELECT *`
+   (`dossiers`, `evidence_refs`, `memory_items`, `get_memory_item` and more) and are safe because every one
+   converts with `dict(row)` and is indexed **by name**. Measured here: **23** `SELECT *` sites in `src/`,
+   **21** of them in `store/operational.py` and 2 in `audit/log.py`, against **14** `dict(row)` conversions;
+   and `INSERT INTO <table> VALUES` with no column list returns **0** anywhere in `src/nexus`, so the
+   divergence really is position-independent. The limitation now states the checked claim. An **absence**
+   claim was doing the work of a **safety** argument, and the safety argument is the one that survives
+   measurement — which is §10.4's defect class again: a sentence written from what a grep was expected to
+   return rather than from what it returned.
+2. **The board's per-file gate table carried one wrong baseline.** `test_evidence_writer.py` collected **42**
+   tests at `c0bfaea`, not the 44 the draft beside it claimed. The other five were right — `test_intelligence_routes.py`
+   **39**, `test_schema_fidelity.py` **35**, `test_dossier_writer.py` **87** unchanged (one test replaced, not
+   added), `test_repo_hygiene.py` **88** unchanged, `test_migrations.py` **15** unchanged. They were caught by
+   measuring rather than reading: the baselines were re-derived from `git archive HEAD` into a scratch tree
+   and collected there with `PYTHONPATH` pointed at *that* tree's `src`, so the numbers are the pre-8.5 ones
+   and not this batch's. §10.4 exists because sixteen numbers published in 8.4 were stale; this one would have
+   been the seventeenth. The arithmetic it feeds is unchanged and now checks both ways: **+100** tests
+   (77 + 12 + 5 + 6) against **+76** test functions (55 + 10 + 5 + 6), the difference being parametrisation.
+
+**The live run this commit triggers, and why its numbers are not read.** This commit changes documents and
+design files only, and §10.8's rule stands: a run's numbers are not quoted from a tree no reader can
+attribute. `venue-verification`'s `pull_request` filter is evaluated against this PR's whole diff versus
+base, which it has matched since Stage 7.1, so a documents-only push still spends a live reading of four
+public venues — the mechanism §11.9 corrected the record on, and the regress §11.14 predicted arriving a
+third time. 8.5 changed **no adapter**, so no run speaks to this batch at all and §12.12's limitation 11 is
+not waiting on one. The property is stated instead of the count, exactly as §11.14 stated it: **every push to
+this PR produces another live reading of the same adapter code until an adapter changes** — and neither 8.6
+(F-25's refusal) nor 8.7 (`expires_at`) changes one.
+
+---
+
+---
+
+## 13. Stage 8.6 delivered (D-054's ruling 3): the fourth parent is guarded, and a gate that names all four
+
+### 13.0 What was ruled, and what this batch therefore did not do
+
+Ruling 3 asked for **one refusal in `record_evidence`** plus **a test that all four parent references this
+codebase guards are guarded, rather than three of them**. That is the whole batch. Three files changed,
+**+339 / −2**:
+
+| File | Change |
+|---|---|
+| `intelligence/evidence.py` | 444 → **516** lines: one private resolver (`_resolve_dossier`), two refusals, one call site, and the module docstring's block on `dossier_id`. `raise ValueError` in the file goes **8 → 10** |
+| `store/operational.py` | 1,351 → **1,355** lines: **four lines of docstring** on `save_evidence_ref`, saying that `dossier_id` is stored as given on the same terms as `contradicts`. No code |
+| `tests/test_evidence_writer.py` | 840 → **1,101** lines: **42 → 49** test functions, **54 → 68** tests, one test re-aimed and none deleted |
+
+Nothing else moved, and each absence was measured rather than assumed: `git diff HEAD -- store/schema.py
+migrations/ api/app.py` is **empty**, so there is **no migration, no column, no route, no gap text and no
+schema text** in this batch. `MIGRATIONS` is still **5** with the same five checksums (`0005_memory_beliefs`
+still `4520e5b5e259eb4c…`, and its pin in `test_schema_fidelity.py` untouched), `PROJECTABLE` is still
+**15**, `CHECKSUMMED_FIELDS` is still **10 of 12**, `app.py` still declares **13** routes and
+`DOSSIER_VIEW_GAPS` is still **9**. `src` stays at **62** files (16,181 → **16,257** lines) and `tests` at
+**31** (19,121 → **19,382**), both baselines re-derived from `git archive HEAD` into a scratch tree.
+
+The writers D-052 and D-054 approved are unchanged except for the branch ruling 3 ordered: `open_dossier`
+and `record_memory_item` were **read, not edited**, and appear in this batch only as two of the four parents
+the new gate names.
+
+### 13.1 The refusal: two branches, because two mistakes are not one
+
+`evidence_ref.dossier_id` has carried `REFERENCES dossier` since `0002_memory`, and `PRAGMA foreign_keys` is
+deliberately off (`docs/13` §2.5: recovery re-projects in chain order, which is not always parent-first, and
+a hard FK failure mid-recovery would be worse than the inconsistency it prevents). So the writer is the only
+place this can be refused — the reasoning that produced the other three guards. §12.9 already wrote the
+shape of the check down, and it is what shipped:
+
+```python
+if store.get_dossier(target) is None:
+    raise ValueError(...)
+```
+
+Two branches, two messages, and the distinction is the content:
+
+| Claim | Outcome | Why it is its own refusal |
+|---|---|---|
+| `dossier_id=None` | **accepted** | The legitimate state: evidence that belongs to no case yet. `0002_memory` makes the column nullable for exactly this, and refusing it would make the first writer depend on the second |
+| `dossier_id=""` or `"   "` | **refused** | Not a name and not `None` either. Telling this caller "dossier `''` does not exist" would report a failed lookup when what happened is that it named nothing at all |
+| a name the store has never held | **refused** | F-25. The row would be orphaned rather than corrupt, and the message says which: it would still verify its own checksum, `ix_evidence_dossier` would index a value matching nothing, and the route that serves evidence 404s on an id naming no case |
+
+The value is stored **as given** — not stripped, not case-folded, not normalised. Measured: `" CASE-… "`,
+`"CASE-…\n"` and `"case-…"` are all refused as dangling while the exact id is accepted, and the stored value
+equals what the caller passed. Stripping would rewrite what a caller said into something it did not say,
+which is the choice §12.12's limitation 12 records for a confidence, applied to an id.
+
+The parent is checked **before** the contradiction, because it is the wider claim of the two: a row that
+belongs to no case that exists has no business recording a disagreement inside one. That order is a
+decision, not an accident, and it is **not gated** — no test pins it, and §13.7 says so rather than implying
+otherwise.
+
+`record_snapshot` forwards to `record_evidence`, so it inherits the refusal instead of needing its own;
+measured, `record_snapshot(dossier_id="DOS-NOPE")` raises the same `ValueError` and writes nothing.
+
+### 13.2 The layer: the writer refuses, the store does not — and now a test says so
+
+`store.save_evidence_ref` still accepts a dangling parent, on purpose, and this batch made that explicit in
+its docstring rather than leaving it to be inferred from `save_dossier`'s. The store is the projection
+target: a check there would make boot recovery depend on a read, and could fail the replay of an event the
+chain already holds. Measured rather than argued — `save_evidence_ref(dossier_id="DOS-NOPE",
+contradicts="EV-ALSO-NOPE")` stores both, `get_dossier("DOS-NOPE")` returns `None`, `save_dossier` accepts
+`instrument_id="NOPE:NOPE"` on the same terms, and `PRAGMA foreign_keys` reads **0**.
+
+`test_the_guard_is_in_the_writer_and_not_in_the_store` pins the layering, so a future reader who "hardens"
+the store gets a red gate and an explanation instead of a silently broken recovery. Tampering proved it
+load-bearing: adding the check to `save_evidence_ref` fails exactly that test and nothing else.
+
+The consequence is stated rather than hidden: an orphan row is still **writable at the store layer**, and a
+replay of a pre-8.6 `evidence.recorded` event carrying a dangling `dossier_id` would still project one.
+Nothing in this batch scans for orphans and nothing removes them. Both intelligence tables are empty in
+production, so there is nothing to scan today; §13.7 carries it as a limitation.
+
+### 13.3 The four-parent gate: one table, both halves
+
+`docs/15` §12.9's table is now the test's data. One module-level tuple is the source of truth and both
+halves are derived from it, so a parent cannot be dropped from one test and kept in the other:
+
+| Parent reference | Dangling → | Grounded → |
+|---|---|---|
+| `dossier.instrument_id → instrument` | refused, naming the id and how many the master holds | `dossier` +1 |
+| `evidence_ref.contradicts → evidence_ref` | refused, naming the row | `evidence_ref` +1 |
+| `evidence_ref.dossier_id → dossier` | **refused** (this batch) | `evidence_ref` +1 |
+| `memory_item`'s `evidence_ids` (payload, no FK) | refused, naming the id | `memory_item` +1 |
+
+Re-measured live: **4 guarded, 0 unguarded** — §12.9 measured 3 and 1.
+
+Both halves exist because one half alone proves nothing. A test asserting only "a dangling parent is
+refused" passes on a writer that refuses everything; a test asserting only "a real parent is accepted"
+passes on a writer with no guard at all. That is the shape of the mistake Stage 8.4's receipt-time gate was
+built to avoid, where asserting one clock passed on either the old code or the same defect with the two
+swapped. Each attempt also asserts what landed: a refusal leaves the table count **and** `audit.length`
+unchanged (L-2 is audit-first, so a refused write wrote nothing to the chain either), and an acceptance adds
+exactly one row.
+
+### 13.4 What the tamper proof found before the batch shipped
+
+Nine sites, **nine caught, zero silent passes**, across four files (`evidence.py`, `dossier.py`,
+`memory.py`, `operational.py`), baseline **276** collected over the four test files that exercise them:
+
+| Tampered site | Result |
+|---|---|
+| the dangling-`dossier_id` branch deleted (F-25 back again) | **6 failed**, 270 passed |
+| the empty-string branch deleted | **2 failed**, 274 passed |
+| the refusal no longer names the value | **4 failed**, 272 passed |
+| the id stripped before the lookup | **1 failed**, 275 passed |
+| `None` refused too (the guard over-reaches) | **83 failed**, 193 passed |
+| the dangling-`contradicts` branch deleted | **2 failed**, 274 passed |
+| `open_dossier`'s instrument guard deleted | **3 failed**, 273 passed |
+| `record_memory_item`'s `evidence_ids` guard deleted | **3 failed**, 273 passed |
+| the guard moved into `save_evidence_ref` | **1 failed**, 275 passed |
+
+The middle three rows are the point of ruling 3: deleting a guard that **predates this batch** now fails a
+test that names the parent, which is what "the fourth cannot go missing again without a red gate" means in
+practice. The 83-failure row is the guard over-reaching — refusing `None` breaks nearly every evidence test
+in the repository, which is the cheapest possible proof that `None` is load-bearing rather than tolerated.
+
+**One site passed silently on the first run, and the test was weak, not the tamper.** Deleting the
+empty-string branch left 275 passing: with the branch gone, `""` fell through to the lookup and was refused
+by the *dangling* message, and the assertion as drafted — `str(empty.value) != str(dangling.value)` plus
+`"None" in str(empty.value)` — was satisfied by that folded message, because the dangling message
+interpolates the value and ends by naming `None` as the alternative. Two mistakes in one assertion: it
+compared two messages without pinning either, and it accepted a message that was true of a different
+condition. The test now pins each refusal with `match=` against text only that branch produces
+(`"an empty string is neither"` / `"does not exist"`) and asserts the empty-string message does **not**
+contain the dangling one's phrase, so a folded reason string fails. It is parametrised over `""` and
+`"   "` on the model of the contradiction test beside it, and the site now fails **2** of 68. The docstring
+records that tampering found it, because an assertion strengthened after a silent pass is the only kind
+whose weakness is documented rather than inherited.
+
+### 13.5 The nine declared foreign keys, and which of them a writer can guard
+
+Measured from the live schema with `PRAGMA foreign_key_list` over every table, because the question
+"which parents does this codebase check?" is only answerable against the whole map and not against the
+intelligence tables:
+
+| Foreign key | Guarded by a writer? |
+|---|---|
+| `dossier.instrument_id → instrument` | **yes** — `open_dossier`, since 8.3 |
+| `evidence_ref.contradicts → evidence_ref` | **yes** — `record_evidence`, since 8.5 |
+| `evidence_ref.dossier_id → dossier` | **yes** — `record_evidence`, since **this batch** |
+| `venue_instrument_mapping.instrument_id → instrument` (`ON DELETE CASCADE`) | **by construction** — `project_master` writes parents and children from one registry, so there is no id to dangle |
+| `decision.instrument_id → instrument` | **no writer calls it** |
+| `trade_intent.decision_id → decision` | **no writer calls it** |
+| `orders.intent_id → trade_intent` | projection only (`writeahead.py:178`) |
+| `fills.order_id → orders` | projection only (`writeahead.py:93`) |
+| `approval.intent_id → trade_intent` | **no writer calls it** |
+
+Plus one reference that is not a foreign key at all: `memory_item`'s `evidence_ids`, inside `payload`,
+guarded by `record_memory_item` since 8.5 — which is why the gate names four parents and not three.
+
+The five unguarded rows are the trading path, and they are unguarded for a structural reason rather than an
+oversight: `save_decision` takes a `DecisionRecord`, `save_intent` a `TradeIntent`, `save_approval` an
+`ApprovalRecord` — domain objects, with no store in the seam — and nothing in `src/` calls them, so there is
+no writer to put a guard in. `DecisionRecord.instrument_id` is `str | None` with no validation, so a
+dangling instrument is *representable* today; it is not *writable* by any code path, because no code path
+writes it. Whether that is a finding now or a note for Stage 9 was question 3 of §13.8; **D-055 answered
+it as `F-26 OPEN`** (§13.9), and this section is left as measured either way.
+
+### 13.6 The gate
+
+```
+$ .venv/bin/python -m pytest
+1408 passed, 2 skipped, 1 warning in 30.57s
+$ .venv/bin/ruff check src tests
+All checks passed!
+$ .venv/bin/ruff format --check src tests
+93 files already formatted
+$ .venv/bin/mypy src
+Success: no issues found in 62 source files
+```
+
+**1,408 passed / 2 skipped / 0 failed** — +14 over 8.5's 1,394, and both skips are the pre-existing ones
+(`test_live_endpoints.py:84`, `test_archive_bars.py:117`). Per file, each run separately:
+`test_evidence_writer.py` **68** (was 54), `test_dossier_writer.py` **87**, `test_memory_writer.py` **77**,
+`test_intelligence_routes.py` **44**, `test_schema_fidelity.py` **41**, `test_repo_hygiene.py` **88**,
+`test_migrations.py` **15** — six of the seven unchanged in count, which is the arithmetic check on "one
+file's worth of tests were added". The +14 is **+7 test functions**: two four-parent gates parametrised
+over the derived halves (4 + 4 cases), one empty-string test parametrised over `''` and `'   '` (2 cases),
+and four single tests — the refusal, the id stored as given, `record_snapshot`'s inheritance, and the
+layering pin. **42 + 7 = 49** functions and **54 + 14 = 68** tests, and this one file's diff reads **261
+insertions and 0 deletions**: the re-aimed test gained its parent, its assertion and a docstring saying why,
+without losing a line, so nothing in it was deleted and nothing outside it was touched.
+
+No adapter changed, so **no live endpoint was called** and no venue run speaks to this batch. The push
+carrying this record spends one anyway, by §10.8's mechanism, and its numbers are not quoted.
+
+### 13.7 Limitations of this batch
+
+1. **The guard is a read.** One `get_dossier` per write, so a caller attaching a hundred observations to one
+   case pays a hundred lookups for one answer. Invisible at Stage 8's volumes and recorded rather than
+   optimised, because a cache in front of it would be a second copy of the truth about what exists.
+2. **The check and the write are not atomic.** A dossier removed between the lookup and the insert would
+   still orphan the row. Nothing in `src/` deletes a dossier — the only `DELETE FROM` in the package is
+   `migrations.py:246`, against `schema_migration_skips` — so the window is theoretical today and would
+   stop being one the day a deletion path is built.
+3. **An orphan is still writable at the store layer**, and a replay of a pre-8.6 event carrying a dangling
+   `dossier_id` would project one. Nothing scans for orphans and nothing removes them. Both intelligence
+   tables are empty in production, so there is nothing to find.
+4. **The gate names four parents in a tuple, and the tuple is extended by hand.** A fifth guarded parent —
+   or a fifth *unguarded* one — does not turn the gate red by existing; §13.5's inventory is what would
+   catch it, and it is a measurement in a document, not a test. A scan deriving the table from
+   `PRAGMA foreign_key_list` was considered and not built: it would need to decide what "guarded" means for
+   a projection-only writer, and inventing that rule here would be a judgement dressed as a gate.
+5. **The refusal message describes another module's behaviour** — the route's 404. If the route changes, the
+   message goes stale, and nothing asserts the two against each other. The alternative (a message that names
+   only the rule) would tell a caller less about why the rule exists.
+6. **The gate lives in `test_evidence_writer.py`**, a file named for one writer, while it asserts behaviour
+   of three. A reader looking for cross-writer invariants would look in `test_repo_hygiene.py` and not find
+   it. Question 2 of §13.8.
+7. **The check order is not gated.** The parent before the contradiction is a decision recorded in a comment
+   and in §13.1, and no test fails if the two are swapped.
+8. **`subject` is still not validated against the instrument master** and `kind` and `scope` are still free
+   text (§12.12's limitation 5), and F-24 still stands: a belief carries one confidence number where
+   `docs/10` §3.1 asks for a band. Neither is this batch's, and neither is touched by it.
+
+### 13.8 Decision requested
+
+Four questions, each with one marked recommendation.
+
+**1. Is Stage 8.6 approved, and is F-25 closed?** *Recommend: approve, recorded as **D-055**, and close
+**F-25** on the defect §12.9 named — a dangling `evidence_ref.dossier_id` refused by nothing — and not on
+orphans in general, which limitation 3 says are still writable at the store layer.* That is the distinction
+D-053's ruling 1 drew for `O-012`: close on the defect the finding named, and leave the limitation published
+beside the closure rather than retired by it. The alternative is to hold F-25 open until the store layer
+refuses too, which would require the store to depend on a read and would put boot recovery at the mercy of
+a parent that has not been projected yet.
+
+**2. Should the four-parent gate stay in `test_evidence_writer.py`, or move?** *Recommend: keep it where it
+is.* It sits beside the refusal it was ordered beside, so removing either one shows up in the same file, and
+it is the file whose writer gained the fourth guard. Moving it to `test_repo_hygiene.py` would put a
+behavioural test that builds three stores among source scans, and moving it to a new
+`tests/test_parent_references.py` would take the file count from 31 to 32 for thirteen tests and separate
+the gate from the writer it guards. The cost of keeping it is limitation 6: the file's name understates what
+it holds, which is a naming problem and not a coverage one.
+
+**3. Are §13.5's five unguarded trading-path foreign keys a finding now, or a note for Stage 9?**
+*Recommend: record **F-26** now, as a finding about the seam and not about a defect in shipped behaviour.*
+`save_decision`, `save_intent` and `save_approval` take domain objects with no store in the signature, so
+the guard the three intelligence writers have **cannot be added there without changing the seam** — and
+`DecisionRecord.instrument_id` is `str | None` with no validation, so a dangling instrument is representable
+today. Nothing writes those tables, so nothing is orphaned today, which is why this is a finding about a
+decision Stage 9 will have to make and not a defect in code that runs. Recording it now costs one row and
+keeps Stage 9 from rediscovering it five times; the alternative — wait until Stage 9 has writers — is
+defensible and is what F-17 and F-19 did, but it leaves the seam question unasked until somebody is mid-batch
+with a reason to answer it quickly.
+
+**4. Does 8.7 still mean `expires_at`, and on which table?** *Recommend: yes, unchanged, and on
+`memory_item` only.* D-054's ruling 4 ordered it and nothing in this batch changes the reason: it is F-18's
+remaining cheap half, §5.3 lists `ADD COLUMN expires_at TEXT` as `OK` with no rebuild, and `docs/10` §3.1's
+"expiring TTLs" is the one approved sentence in F-18 that still has no column at all. `memory_item` only,
+because that is the table the sentence is about — `valid_until` says until when a claim holds **in the
+world** while an expiry says when **this system** should stop serving the row (§12.1), and the disagreement
+between the two is a property of a belief, not of an observation. `evidence_ref` gains nothing from an
+expiry: its freshness is already two columns and a `data_status`, and adding a third clock to a table whose
+two clocks F-14 spent a batch separating would be the wrong kind of company. The precedent for the column
+exists in the domain model — `DecisionRecord.expires_at` — and `docs/10` §3.2's V1–V3 gates are what would
+consume it, so the writer should store it and nothing should act on it yet.
+
+---
+
+### 13.9 D-055 — the four rulings
+
+All four questions in §13.8 were answered `Recommend`, each against exactly one marked recommendation, and
+are recorded as **D-055**. §13.8 is left as it was put; this section is the ruling. No code changed —
+`git diff f15eb43 HEAD -- backend/` is empty — and the gate re-ran anyway, because this section quotes what
+it produces: **1,408 passed / 2 skipped / 0 failed**, `ruff check src tests` clean, `ruff format --check`
+unchanged on **93** files, mypy strict clean on **62**.
+
+| # | Question as put | Ruled | What it changes |
+|---|---|---|---|
+| 1 | Is Stage 8.6 approved, and is F-25 closed? | **Approved, recorded as D-055**, and **F-25 `CLOSED`** — on the defect §12.9 named, *not* on orphans in general | Both 8.6 rows in `docs/07` become `REVIEWED — APPROVED 2026-11-28`. §13.7's **limitation 3 stands as published beside the closure** rather than being retired by it: an orphan is still writable at the store layer and still unscanned. That is D-053's ruling 1 distinction for `O-012` applied a second time — close on the defect the finding named, and leave the limitation visible next to the closure so a reader who sees "F-25 closed" cannot take "orphans impossible" with it |
+| 2 | Should the four-parent gate stay in `test_evidence_writer.py`, or move? | **It stays where it is** | No file moves, so `tests` stays at **31** files and the gate stays beside the refusal it was ordered beside — removing either one shows up in the same file. §13.7's **limitation 6 stays published**: the file's name understates what it holds, and this ruling accepts that cost rather than paying a 32nd file or putting a behavioural test that builds three stores among `test_repo_hygiene.py`'s source scans |
+| 3 | Are §13.5's five unguarded trading-path foreign keys a finding now, or a note for Stage 9? | **Recorded now as F-26, `OPEN`** — a finding about the **seam**, not about a defect in shipped behaviour | F-26 joins F-17, F-19, F-22 (`O-014`) and F-24 as an open finding with no batch behind it. It is **not** an `O-` row: D-054 established that scheduling a batch is not opening an obligation row, and recording a finding is not either — `O-014` exists for F-22 only because D-052's ruling 4 said so in terms. **The next finding id is F-27** |
+| 4 | Does 8.7 still mean `expires_at`, and on which table? | **Yes, unchanged, and on `memory_item` only** | 8.7 is ordered and scoped: one nullable `ADD COLUMN expires_at TEXT` (§5.3's executed survey lists it `OK`, so **no rebuild and no row copied**, unlike `0004`), one writer argument, and **nothing acting on it** — `docs/10` §3.2's V1–V3 gates are what would consume it. `evidence_ref` gains nothing: its freshness is already two columns and a `data_status`, and a third clock on the table whose two clocks F-14 spent a batch separating would be the wrong kind of company |
+
+**F-26, in the terms §13.5 measured it.** Five of the nine declared foreign keys in the live schema have no
+writer that *could* guard them: `decision.instrument_id → instrument`,
+`trade_intent.decision_id → decision`, `orders.intent_id → trade_intent`, `fills.order_id → orders` and
+`approval.intent_id → trade_intent`. The reason is structural rather than an oversight — `save_decision`
+takes a `DecisionRecord`, `save_intent` a `TradeIntent`, `save_approval` an `ApprovalRecord`, domain objects
+with **no store in the signature**, and nothing in `src/` calls any of the three; `orders` and `fills` are
+written only by projection (`writeahead.py:178` and `:93`). So the guard the three intelligence writers have
+**cannot be added there without changing the seam**. Beside it, `DecisionRecord.instrument_id` is
+`str | None` with no validation, so a dangling instrument is *representable* in the domain model today.
+Nothing writes those tables and nothing is orphaned today, which is why this is recorded as a finding about
+a decision and not as a defect in code that runs. **The decision Stage 9 will have to make** is which of two
+postures the trading path takes: either those writers gain a store in the seam, so a parent can be checked
+before a row is written the way `open_dossier`, `record_evidence` and `record_memory_item` each do; or the
+trading path accepts that its parents are checked **upstream**, in whatever produces a `DecisionRecord`, and
+says so in a document instead of leaving it to be inferred from five unguarded `REFERENCES` clauses. F-26
+exists so that question is asked before a writer is written, and not after.
+
+**What this ruling does not do**, stated so nobody has to infer it. It does **not** close **F-18**: gap 2
+(`expires_at`) is ordered as 8.7 and gap 4 (the sufficiency meter) stays open with **no batch behind it**,
+declined at D-054 and not offered again here. It does **not** retire any of §13.7's eight limitations,
+including limitation 3 — the one F-25's closure could most easily have been read to retire. It does **not**
+harden the store: `save_evidence_ref` still accepts a dangling `dossier_id` by design, `save_dossier` still
+accepts an unmapped `instrument_id` on the same terms, and `PRAGMA foreign_keys` still reads **0**, because
+a check in the projection target would make boot recovery depend on a read and could fail the replay of an
+event the chain already holds. It does **not** wire either writer: nothing in `src/` calls
+`record_memory_item` or `record_evidence`, no route serves `memory_item`, and a belief stays **recordable**
+and still not **readable over HTTP**. It does **not** close §11.12's limitation 1 — `evidence_ref.retrieved_at`
+still has no caller, offered at D-053, offered again at D-054 and declined both times. It does **not** touch
+**F-22** (`O-014`), which D-052's ruling 4 recorded precisely so it would not be closed by accident, and it
+does not touch F-17 or F-19. And it does **not** change a single number in §13: the gate, the tamper proof,
+the inventory and the file counts are all quoted here as measured at `f15eb43`.
+
+**Finding ids after this ruling.** **F-25 `CLOSED`** 2026-11-28 (D-055), on the defect §12.9 named.
+**F-26 `OPEN`**, recorded by this ruling, no batch behind it. **F-24 stays `OPEN`** with no batch behind it,
+because the shape of a band has no ruling: 8.5 delivered the time axis and the confidence axis is still one
+number where `docs/10` §3.1 asks for a band. **F-18 is `NARROWED`** — gaps 1 and 3 `CLOSED`, gap 2 ordered
+as 8.7, gap 4 `OPEN` with no batch. **F-22/`O-014` stays `OPEN`**. **The next finding id is F-27.**
+
+**Next.** **8.7 = `expires_at` on `memory_item` only**, ordered by ruling 4 and **not started**: no
+migration, no column and no writer argument exists in the tree at `f15eb43`. It is F-18's remaining cheap
+half and the one approved sentence in F-18 that still has no column at all — `docs/10` §3.1's "expiring
+TTLs" — with `DecisionRecord.expires_at` as the precedent for the column's shape and `docs/10` §3.2's V1–V3
+gates as what would eventually consume it. The writer stores it and nothing acts on it.
+
+> **8.7 was delivered after this ruling, and its record is §14. The paragraph above is left as it was
+> written.** It says no migration, no column and no writer argument exists in the tree *at `f15eb43`*, and
+> that is still true of `f15eb43` — §14 is what arrived after it. Migration `0006_memory_expiry`, one nullable
+> `ADD COLUMN`, one writer argument and nothing acting on the column are all recorded there, together with the
+> tamper proof that ruling 4's second half is load-bearing and with **F-27**, which this batch found while
+> writing `0006`'s tests and which spends the finding id named in the last line above.
+
+---
+
+## 14. Stage 8.7 delivered (D-055's ruling 4): `expires_at` on `memory_item` — stored, and acted on by nothing
+
+### 14.0 What was ruled, and what this batch therefore did not do
+
+D-055's ruling 4 ordered this batch and scoped it in one sentence: **`expires_at` on `memory_item` only** —
+one nullable `ADD COLUMN`, one writer argument, and **nothing acting on it**, because the gates that would
+consume an expiry are `docs/10` §3.2's V1–V3, which finalise at Stage 11. `evidence_ref` gains nothing.
+
+Everything below is inside that scope, and the things outside it are listed rather than left to be inferred:
+
+| Not done | Why it is not done |
+|---|---|
+| No expiry **filter** anywhere — not in `memory_items()`, not in a route | A `WHERE expires_at > now()` in the store would be an expiry **policy** decided in a query: invisible to a caller, hiding rows a reader has no way to ask for, and arriving before the V1–V3 gates that are supposed to decide it. §14.4 is the scan that says so |
+| No `is_expired()`-style **reader** on `memory_item` | `execution/intent.py:109-146` has exactly that shape, and it is the precedent for a *trading* deadline where an unfilled intent must stop being fillable. A belief is not an order: deciding when this system stops trusting one is Stage 11's business, and writing the reader now would put the decision in a property nobody ruled on |
+| No expiry on `evidence_ref` or `dossier` | Ruling 4 in terms. Evidence's freshness is already two columns and a `data_status`; a third clock on the table whose two clocks F-14 spent a batch separating would be the wrong kind of company |
+| No new refusal for a **past** expiry | §14.3. An item whose expiry has passed is legitimate to have recorded; refusing it would make the writer the arbiter of which beliefs should never have existed. F-18's gap 2 asked for a column, not a purge |
+| No comparison between `expires_at` and `valid_from`/`valid_until`/`created_at` | The two axes are different questions (§14.2). A refusal built on ordering them would assert a relationship the schema deliberately does not have — F-14's lesson read in reverse: clocks kept apart in the columns have to stay apart in the rules too |
+| No route, no view, no `DOSSIER_VIEW_GAPS` text | `git diff` over `src/nexus/api/`, `intelligence/evidence.py` and `intelligence/dossier.py` is **empty**. `app.py` does not contain the string `expires_at` at all; its only mentions of `memory_item` are in gap prose that already says *"there is no memory_item route"* |
+| No rebuild, no row copied | §5.3's executed survey lists `ADD COLUMN` as `OK` on SQLite, so this is `0005`'s shape and not `0004`'s: one statement against a live table, and the rows stay where they are |
+
+**F-18's gap 2 is what closed here, and only gap 2.** Gap 4 — the sufficiency meter — was declined at D-054,
+is not offered again, and stays open with no batch behind it. **F-24** (a belief carries one confidence
+number where `docs/10` §3.1 asks for a band) is untouched: this batch adds no band and no second confidence
+column. **F-26** (the five unguarded trading-path foreign keys) is untouched and is still Stage 9's decision.
+
+### 14.1 The migration: one statement, and the five things it deliberately is not
+
+`0006_memory_expiry`, appended to `MIGRATIONS` (5 → **6**), with `requires="memory_item"`:
+
+```
+ALTER TABLE memory_item ADD COLUMN expires_at TEXT;
+```
+
+One statement, one table, one column. Measured on a database built by the runner, before and after:
+
+| | before `0006` | after `0006` |
+|---|---|---|
+| `memory_item` columns | 14 | **15** |
+| the difference | — | `expires_at` |
+| `evidence_ref` columns | 12 | **12** — unchanged, `expires_at` absent |
+| `PRAGMA index_list(memory_item)` | `ix_memory_created`, `ix_memory_kind`, `sqlite_autoindex_memory_item_1` | **the same three, asserted equal** — both sets measured, the before-half from a database built by hand up to but not including `0006` |
+| `MIGRATIONS` | 5 | **6** |
+| `PROJECTABLE` | 15 | **15** — `memory.recorded` was already projectable since 8.5 |
+| checksum `0005_memory_beliefs` | `4520e5b5e259eb4c…` | `4520e5b5e259eb4c…` — **unchanged** |
+| checksum `0006_memory_expiry` | — | `f54eecd2c3f6c2c633223a6c531d63be50bc4d1867f3815a2ce8b1821c43fedb` |
+
+`0005`'s checksum being unchanged is the measurement that matters most in that table. Editing the SQL of an
+applied migration moves its checksum and the runner refuses the result (`migrations.py:191`), so a batch that
+had "tidied up" `0005`'s comment while adding `0006` would have made every existing database unbootable.
+This one appends, and nothing before it moves.
+
+Five things the statement deliberately is not:
+
+1. **Not `NOT NULL`.** `PRAGMA table_info` reports `notnull=0`. A belief recorded before this batch has no
+   expiry, and a belief recorded after one may still have none: `NULL` is the honest value for "no expiry was
+   stated", which is not the claim "never expires". Making the column `NOT NULL` would have forced that
+   second claim onto every existing row.
+2. **Not defaulted.** `PRAGMA table_info` reports `default=None`, and a raw `INSERT` naming no expiry stores
+   `NULL`. A `DEFAULT` computed from `created_at` would turn an unstated expiry into a stated one, silently,
+   in the schema — the same collapse `validity_open_ended` avoids for the interval by deriving rather than
+   defaulting. The store agrees: `save_memory_item` binds `_text(payload.get("expires_at"))`, so an absent
+   key is `NULL` and never the write clock.
+3. **Not `CHECK`ed.** There is no constraint relating `expires_at` to anything. See §14.3 for what that
+   permits, measured.
+4. **Not indexed.** `ix_memory_created` and `ix_memory_kind` are the only two indexes this codebase builds
+   on the table and both predate this batch. (`PRAGMA index_list` reports a third,
+   `sqlite_autoindex_memory_item_1`. That is SQLite's own implicit index for `memory_id TEXT PRIMARY KEY` —
+   a non-`INTEGER` primary key gets one — so it is not a decision anybody made here and not a bet on any
+   query. It is in the measured set on both sides because it has always been there, and an assertion that
+   compares the whole set has to name it or it fails.) An index is a bet that something queries the column;
+   nothing does, and a bet made in DDL is invisible to every reader who is looking at queries.
+5. **Not on a second table.** `evidence_ref` and `dossier` are untouched, per ruling 4.
+
+**The Postgres target.** `backend/migrations/` stays at **two** files. `0002_memory.sql` declares
+`expires_at TIMESTAMPTZ` **inline** in its `memory_item`, and its header now says one thing rather than two
+things are deliberately absent from it — the confidence band, F-24 — because the expiry is no longer absent.
+It is inline and not a new `0006_memory.sql` because the fidelity gate compares the concatenated target to the
+live SQLite schema table-by-table, and a mirror file containing `ALTER TABLE memory_item` would be a third
+spelling of one column: the gate reads `CREATE TABLE IF NOT EXISTS` only, so an `ALTER` in the target would
+be invisible to it while still shipping to a PostgreSQL deploy. The two DDLs now agree on fifteen columns by
+construction, and `test_schema_fidelity.py` is what makes that agreement a measurement rather than a claim.
+
+### 14.2 Four clocks on one row, and why the fourth is not a correction of the other three
+
+One belief, recorded with all four stated:
+
+| column | value | the question it answers |
+|---|---|---|
+| `created_at` | `2026-11-28T09:39:25.580Z` | when **this system** wrote the row |
+| `valid_from` | `2026-11-27T06:00:00.000Z` | from when the claim holds **in the world** |
+| `valid_until` | `2026-12-04T06:00:00.000Z` | until when the claim holds **in the world** |
+| `expires_at` | `2027-01-03T06:00:00.000Z` | when **this system** should stop serving the row |
+
+The third and fourth are the pair that needed a reason to exist separately, and in this row they disagree on
+purpose: the claim stops holding in the world on 4 December, and the system keeps serving it until 3 January.
+That is not an inconsistency to be repaired — it is the ordinary case, where a belief's usefulness outlives
+its validity (a narrow basis that ended is still the right thing to cite when the basis returns) or, more
+often, ends before it (a stale quote nobody should be shown again even though it was true when taken).
+Collapsing the two would make one of those two cases unrepresentable, and the schema would decide which.
+
+This is why `validity_of` is **unchanged**: it still returns exactly five keys —
+`change_conditions`, `evidence_ids`, `valid_from`, `valid_until`, `validity_open_ended`. An expiry is not
+part of the validity interval, and folding it in would hand every reader of that helper a collapsed pair of
+clocks with nothing in the signature to show for it. A tamper site in §14.6 adds the field to `validity_of`
+and the suite catches it.
+
+**The receipt and the event.** `MemoryReceipt` grows one field (`expires_at: str | None`, between
+`change_conditions` and `evidence_ids`) to **17**, carried in both `to_dict()` and `from_event`.
+`record_memory_item` grows one parameter (`expires_at: datetime | None = None`, in the same position) to
+**15**. `raise ValueError` in `memory.py` stays at **17** and `__all__` stays at **12**: this batch adds a
+column, not a rule.
+
+The value rides **inside** the audited event, which is law L-2 and not a stylistic choice. Measured across a
+real gap — write the belief, `DELETE FROM memory_item`, `DELETE FROM op_projection`, wait 1.05 s so a
+restamped clock could not match by rounding, then `reproject_missing()`:
+
+```
+created_at   before=2026-11-28T09:39:25.780Z  after=2026-11-28T09:39:25.780Z  identical=True
+expires_at   before=2027-01-03T06:00:00.000Z  after=2027-01-03T06:00:00.000Z  identical=True
+whole row byte-identical: True
+```
+
+A timestamp held outside the event is restamped by the replay, which is the defect `created_at` was moved
+inside the event to avoid in an earlier batch. The fourth clock went inside on the same reasoning, and the
+assertion is that the *whole row* is identical — not merely the two clocks quoted, so a replay that quietly
+dropped `payload` or `confidence` would fail here too.
+
+### 14.3 What the writer refuses, and what it deliberately permits
+
+Seven expiries through one writer, all of them measured rather than reasoned about:
+
+| expiry given | result | stored |
+|---|---|---|
+| naive `datetime(2027, 1, 3, 6, 0, 0)` | **REFUSED** | `expires_at must be an aware UTC datetime; got a naive '2027-01-03T06:00:00'` |
+| 400 days in the past | accepted | `2025-10-23T06:00:00.000Z` |
+| one day **before** `valid_from` | accepted | `2026-11-26T06:00:00.000Z` |
+| exactly `valid_from` | accepted | `2026-11-27T06:00:00.000Z` |
+| exactly `valid_until` | accepted | `2026-12-04T06:00:00.000Z` |
+| a decade **after** `valid_until` | accepted | `2036-12-01T06:00:00.000Z` |
+| not stated (`None`) | accepted | `None` |
+
+One refusal, and it is the refusal **every** clock in this codebase gets: `_aware` rejects a naive datetime
+before anything is compared with it, so the caller is told the value was naive rather than handed a bare
+`TypeError` from an aware/naive comparison — an unclassified crash at a point where nothing names the
+condition, which is the failure mode F-4 was about. Nothing is written and nothing is audited: the refusal
+test captures `audit.length` *before* the call and asserts it unchanged, which is L-2's other half.
+
+The six acceptances are the substance of this section, because each one looks like a missing validation:
+
+- **A past expiry is a date on a row, not a reason to reject it.** Refusing an expired belief would make the
+  writer the arbiter of which beliefs should never have been recorded, and the caller would have to lie about
+  the date to store a true one. 8.5 made the same call for the interval: a belief whose validity has already
+  ended is dated, not deleted.
+- **`expires_at < valid_from` is not an error.** A belief can be due for retirement before the world even
+  starts to bear it out — a short-lived quote about a regime nobody has confirmed yet. Ordering the two would
+  assert that serving-life contains validity-life, which nothing in `docs/10` or `docs/13` says.
+- **`expires_at` a decade after `valid_until` is not an error either.** That is the common case from §14.2.
+- **`expires_at == valid_until` is not refused, unlike the interval's own equality.** `valid_until <=
+  valid_from` is refused *including* equality, because an interval of zero length says the claim never held
+  and cannot be cited. Two clocks coinciding on one axis says nothing at all about either, so the same
+  comparison in the other pair would be a rule borrowed from a place it does not apply.
+
+A test parametrised over all four orderings pins them, with the reason for each in the parameter id, so a
+future reader who decides one of them *should* be refused finds the argument already written down instead of
+having to reconstruct why the code permits it.
+
+### 14.4 Nothing acts on it: the scan that says so, and why it had to become an AST walk
+
+The ruling's second half is a negative claim — *stored, and acted on by nothing* — and a negative claim is
+worth exactly as much as the scan that would fail if it became false. There is one, in
+`test_memory_writer.py`, over every `.py` file in `src/nexus`: it parses each file, collects string literals
+that look like SQL, and fails if any executable one mentions `expires_at`. It also fails if it inspected
+fewer than twenty such literals, because a scan that sees nothing passes — the silent-pass shape 8.6 had to
+fix in its own gate.
+
+Three measurements behind it:
+
+- `memory_items()` still binds exactly **three** parameters (`kind`, `scope`, `limit`) and its base SQL is
+  `SELECT * FROM memory_item` with no `WHERE` at all. A caller gets an expired row and can see that it is
+  expired, which is the honest version: the two clocks are both readable, and the decision about which to act
+  on is the caller's.
+- With one item expired 400 days ago and one expiring in a year in the same store, `memory_items()` serves
+  **2 of 2**, and the expired one is in the list.
+- `app.py` does not contain `expires_at`; `PROJECTABLE` is unchanged at 15; and the scan is not simply blind
+  to the column name, because `execution/intent.py` genuinely contains both `expires_at` and `def is_expired`
+  — the trading path's real reader, which is what an actual policy looks like in this codebase.
+
+**Getting there took three versions, and the two that failed are the reason the assertion is written this
+way.** The first grepped lines of source for `WHERE expires_at` and failed against a *docstring continuation
+line* in `store/operational.py` — the sentence explaining why there is no such clause, which names it in
+order to refuse it. The second parsed the files but did not strip SQL comments, and failed against
+`store/schema.py` twice: migrations `0004` and `0005`, because `0005`'s comment names `expires_at` in its
+list of what it deliberately did not add. A `--` line inside a SQL literal is prose exactly as much as a
+docstring is. Prose that names a thing is not code that does it, whether the prose is Python's or SQL's, and
+only a parse plus a comment strip can tell the two apart. That is F-23's lesson about a protocol growing a
+method, applied to a column growing a reader.
+
+### 14.5 F-27 — the recorded statement count is not the applied one (NEW)
+
+Found while writing `0006`'s test, by measuring rather than reading. `Migration.statements` is:
+
+```python
+return len([part for part in self.sql.split(";") if part.strip()])
+```
+
+It does not strip `--` comment lines, and it does not know that a trigger body is one statement with
+semicolons inside it. So a semicolon in a migration's own prose is counted as a statement. Measured over all
+six migrations:
+
+| migration | recorded | applied | prose `;` | |
+|---|---|---|---|---|
+| `0001_operational` | 19 | 19 | 0 | |
+| `0002_memory` | 8 | 8 | 0 | |
+| `0003_audit_append_only` | **4** | **2** | 0 | two triggers, each one statement with `;` in its body |
+| `0004_memory_fidelity` | **15** | **13** | 2 | a semicolon in each of two comment blocks |
+| `0005_memory_beliefs` | 4 | 4 | 0 | |
+| `0006_memory_expiry` | 1 | 1 | 0 | |
+
+Nothing misbehaves: the number is bookkeeping, stored in `schema_migrations.statements` and served by the
+API. But `migrations.py:11` describes the recorded row as holding "its version, its checksum and its
+statement count, so *when did the schema change* is answerable from" the database — and a reader who takes
+`statements` as "how many statements ran" is wrong by two on `0003` and by two on `0004`. The comment on
+`0004`'s assertion in `test_the_runner_records_what_it_applied` reads *"0004 rebuilds two tables and creates
+one"*, which is the inflated reading written down as though it were the count of statements.
+
+**Why this is recorded rather than fixed inside 8.7**, and the reason is measured:
+
+- Fixing the property does **not** move any checksum. `checksum` is `sha256(self.sql)` — the statement count
+  is not an input — so the forward-only refusal at `migrations.py:191` would not fire, and no existing
+  database would become unbootable.
+- But the recorded number is a **row written at apply time and never rewritten**. A fix therefore produces two
+  populations that nothing can tell apart: a database booted before the fix says `0004 → 15`, one booted
+  after says `0004 → 13`, for the identical version and checksum. Correcting history is exactly what a
+  forward-only migration system refuses to do, and the two readings would coexist in production with no way to
+  know which a given row carries.
+- So the honest options are a data migration against `schema_migrations` (which the forward-only rule was
+  built to avoid), or accepting the split and documenting it, or leaving the number alone and stopping calling
+  it a count of what was applied. That is a decision, not a one-line patch, and D-055 scoped this batch to
+  `expires_at`.
+
+**What 8.7 did instead, in two parts.** `0006`'s comment carries **no** semicolons — deliberately, and that is
+a constraint on the comment's punctuation rather than on its content, which is itself an argument for
+recording F-27 rather than working around it silently forever. And `test_schema_fidelity.py` gains one
+helper, `applied_statements()`, which strips comment lines before splitting and carries this whole finding in
+its docstring, so the two tests that need an honest count (0005's re-aimed assertion and 0006's) get one and
+the inflated values stay pinned where they were pinned, with the discrepancy stated next to them instead of
+hidden.
+
+**F-27 is not an `O-` row.** D-054 established that scheduling a batch is not opening an obligation row, and
+D-055 re-applied that to F-26: recording a finding is not either. `docs/00` still ends at `O-014`. The next
+finding id is **F-28**.
+
+### 14.6 Proof the gate is load-bearing: thirteen tampered sites, thirteen caught
+
+Each site backs up one source file, applies one string replacement, asserts the file actually **changed** — a
+stale anchor leaves the tree untouched and reports a silent pass that means nothing — re-runs the four test
+files that exercise the column, and restores from the backup. The tree's restoration is checked by SHA-256
+over all three touched files, not by comparing a file with itself, and the suite is re-run at the end and
+required to be back at its baseline.
+
+Baseline across the four files: **0 failed / 197 passed**.
+
+| # | Tamper | Caught by |
+|---|---|---|
+| 1 | the `ALTER TABLE` removed, so the column never arrives | **53** failed |
+| 2 | `evidence_ref` gains an expiry too, against ruling 4's scope | **5** failed |
+| 3 | `NOT NULL DEFAULT ''` invented for an unstated expiry | **6** failed |
+| 4 | an index built for a column nothing queries | **4** failed |
+| 5 | `0006`'s `requires="memory_item"` dropped | **1** failed — see below |
+| 6 | the aware-datetime refusal removed from the writer | **1** failed |
+| 7 | the expiry no longer rides in the audited event | **46** failed |
+| 8 | the expiry folded into `validity_of`, collapsing the two axes | **2** failed |
+| 9 | an over-reach added: `expires_at <= valid_until` refused | **4** failed |
+| 10 | the receipt stops carrying the expiry | **46** failed |
+| 11 | the projection writes `NULL` instead of the value it was given | **6** failed |
+| 12 | an unstated expiry defaulted to the write clock in the store | **1** failed |
+| 13 | the forbidden expiry filter added to `memory_items()` | **3** failed |
+
+**Thirteen sites, thirteen caught, zero silent passes — but only on the second run.** The first run found one
+silent pass, at site 5: dropping `requires="memory_item"` from `0006` left all 1,427 tests green.
+
+The reason is structural, and it is the same shape as the silent pass 8.6 found. `requires` only changes
+behaviour on a database where the required table is **absent**, and no test put the runner on one: every test
+boots a store, and `0002` creates `memory_item` before `0006` could ever need it. The dependency was declared
+and nothing in the repository could observe it.
+
+`test_migrations.py` gains the missing branch — `test_a_memory_migration_defers_when_memory_item_is_absent`
+(15 → **16** tests in that file). It boots a durable store, drops `memory_item`, deletes `0006`'s row from
+`schema_migrations` so the version is pending again while 0001–0005 stay applied and the sequence keeps no
+hole, and reopens. The runner must **skip and report** — F-20's rule, that a deferral and a bypass look
+identical in `schema_migrations` unless the skip is remembered. The same test then builds the mirror: an
+undeclared `Migration` whose SQL is `ALTER TABLE memory_item ADD COLUMN probe TEXT` against a database with no
+such table, which must raise `MigrationError`. Deferred on one side and fatal on the other is what makes the
+declared dependency observable at all, and site 5 now fails exactly **1** test, by name.
+
+Sites 7 and 10 both fail 46, and that is not a coincidence: the event and the receipt are the two ends of one
+chain, so cutting either breaks every replay test and every assertion that reads the column back. Sites 9 and
+12 fail small, which is the useful signal — an over-reaching refusal and an invented default each break only
+the tests written specifically about permissions, so the four ordering tests and the `NULL` test are what make
+those two tampering attempts visible.
+
+### 14.7 The gate
+
+```
+$ .venv/bin/python -m pytest
+1428 passed, 2 skipped, 1 warning in 32.47s
+$ .venv/bin/ruff check src tests
+All checks passed!
+$ .venv/bin/ruff format --check src tests
+93 files already formatted
+$ .venv/bin/mypy src
+Success: no issues found in 62 source files
+```
+
+**1,428 passed / 2 skipped / 0 failed**, up **20** from 8.6's 1,408. The two skips are named, because a skip
+is not a pass: `test_live_endpoints.py:86` (live venue verification needs network egress; nothing is verified
+by skipping it) and `test_archive_bars.py:117` (`7m` is not a modelled interval). Both are inherited.
+
+Where the twenty went:
+
+| file | before | after | |
+|---|---|---|---|
+| `test_memory_writer.py` | 77 | **88** | +11: the expiry class, the two re-aimed assertions, `validity_of` |
+| `test_schema_fidelity.py` | 41 | **49** | +8: `TestMigration0006` |
+| `test_migrations.py` | 15 | **16** | +1: the deferral branch §14.6 needed |
+| `test_evidence_writer.py` | 68 | 68 | unchanged |
+| `test_dossier_writer.py` | 87 | 87 | unchanged |
+| `test_intelligence_routes.py` | 44 | 44 | unchanged |
+| `test_repo_hygiene.py` | 88 | 88 | unchanged |
+
+`tests` stays at **31** files — D-055's ruling 2 kept 8.6's gate where it was rather than paying for a 32nd,
+and this batch adds no file either. `src` stays at **62** files / **16,347** lines (+90); `tests` is **31**
+files / **19,857** lines (+475).
+
+The diff is seven files, **+623 / −39**:
+
+```
+backend/migrations/0002_memory.sql       |  33 ++++-
+backend/src/nexus/intelligence/memory.py |  43 ++++--
+backend/src/nexus/store/operational.py   |  28 ++--
+backend/src/nexus/store/schema.py        |  55 +++++++
+backend/tests/test_memory_writer.py      | 238 ++++++++++++++++++++++++++--
+backend/tests/test_migrations.py         |  52 +++++++
+backend/tests/test_schema_fidelity.py    | 213 +++++++++++++++++++++++++-
+```
+
+Four source-side files, of which `operational.py`'s 28 lines are the `INSERT` (14 → **15** columns, 15 →
+**15** placeholders, arity asserted by walking the AST for the literal rather than by grepping a guess at its
+formatting) plus two docstrings. No route, no adapter, no archive, no venue code.
+
+### 14.8 Limitations of this batch
+
+1. **The column is inert by design.** Nothing in `src/` reads `expires_at` on `memory_item`, so a row that
+   should have stopped being served is still served. That is ruling 4, not an oversight — but it means the
+   expiry delivers no behaviour until Stage 11's V1–V3 gates consume it, and a reader who sees "8.7 delivered
+   expiring TTLs" would be wrong: 8.7 delivered the *column* `docs/10` §3.1's "expiring TTLs" needs, and the
+   TTL itself is still unwritten.
+2. **`memory_items()` cannot ask for "currently valid".** Its three parameters are `kind`, `scope` and
+   `limit`. A caller that wants only live beliefs must filter in Python, reading both clocks itself. §14.4
+   argues why that is the honest version; it is still a limitation for whoever builds the view.
+3. **Both writers remain unwired.** No route serves a `memory_item`, so an expiry is recordable and not
+   readable over HTTP. `app.py`'s own gap prose has said so since 8.5 and still says it.
+4. **F-18 is not closed, and its status word is not `OPEN`.** Gap 2 is what this batch delivers, and whether
+   it counts as *closed* is §14.9's Q1 — a finding's status is the owner's to set, not the batch's to
+   assume. Gap 4 (the sufficiency meter) is open with no batch. D-054 recorded F-18 as `NARROWED` rather
+   than `OPEN` for exactly this reason, and nothing here changes that word: three of four gaps delivered is
+   still not four.
+5. **F-24 and F-26 are untouched**, and neither has a batch. F-27 joins them.
+6. **F-27's inflated numbers stay in the tree.** `schema_migrations` records `0003 → 4` and `0004 → 15`, and
+   `test_the_runner_records_what_it_applied` pins both, with the discrepancy stated in a helper's docstring
+   rather than corrected. A reader of the API gets a number that is not a count of what ran.
+7. **No `0006` mirror file, so the Postgres target and the SQLite migrations express the column differently**
+   — inline in one DDL versus `ALTER` in the other. The fidelity gate compares the resulting schemas and so
+   catches a divergence in the column itself, but it cannot catch a divergence in *when* the column arrives,
+   because a PostgreSQL deploy following `0002_memory.sql` gets it at creation and a SQLite deploy gets it at
+   `0006`.
+8. **§13.7's eight limitations all still stand**, including limitation 3 — an orphan is still writable at the
+   store layer and still unscanned, published beside F-25's closure by D-055's ruling 1.
+
+### 14.9 Decision requested
+
+Four questions. Each has exactly one marked recommendation, and §14.8's limitations are published beside them
+rather than being offered as arguments for any of them.
+
+**Q1. Is Stage 8.7 approved, and is F-18's gap 2 closed?**
+
+- **(a) `Recommend` — approve 8.7 as delivered, and close F-18's gap 2 on the column and not on the TTL.**
+  The gap as recorded was that no expiry column exists anywhere; one now exists on `memory_item`, stored
+  faithfully, riding in the audited event, reproducing byte-identically across a replay, and read by nothing.
+  Closing on the column keeps limitation 1 published beside the closure — the same distinction D-053's ruling
+  1 drew for `O-012` and D-055's ruling 1 re-drew for F-25, applied a third time: close on the defect the
+  finding named, and leave the limitation visible next to it. **F-18 itself stays `NARROWED`** — the status
+  D-054 gave it — because gap 4 is untouched and a finding whose gaps close one at a time is not closed.
+- (b) Approve 8.7 but leave gap 2 open until something reads the column. Stricter, and defensible — but it
+  would make gap 2 uncloseable by any batch that obeys ruling 4, since ruling 4 forbids the reader.
+- (c) Request changes.
+
+**Q2. F-27 — the recorded statement count is not the applied one. Recorded, or given a batch?**
+
+- **(a) `Recommend` — record F-27 as `OPEN` with no batch, and leave the inflated numbers pinned where they
+  are.** §14.5's measurement is why: fixing the property moves no checksum, but the recorded value is a row
+  written at apply time and never rewritten, so a fix splits production into two populations that report
+  different counts for the same version and checksum, with nothing able to tell which a row carries. The
+  options are a data migration against `schema_migrations`, an accepted split, or leaving the number and
+  stopping calling it a count of what was applied. None of the three belongs in a batch scoped to
+  `expires_at`. `applied_statements()` already carries the finding in its docstring so the next person to
+  touch a migration reads it first.
+- (b) Give it a batch now: one small migration-less change to the property, accepting the split, and re-aim
+  `test_the_runner_records_what_it_applied` to the honest counts.
+- (c) Give it a batch that also repairs the recorded rows, i.e. a data migration against `schema_migrations`.
+- (d) Decline to record it: the number is bookkeeping and nobody acts on it.
+
+**Q3. Which stage opens next, given the directive to run several at once?**
+
+Nothing in `docs/` enumerates stages beyond the chain the record does establish — `docs/12` §1.3 names
+knowledge sufficiency as **stage 10** and the three verification gates as **stage 11**, and
+`design/build_board52.py:73-87` defines 9 as the candidate thesis / intelligence dossier, 10 as knowledge
+sufficiency, 11 as the three gates. This register will not invent the rest.
+
+- **(a) `Recommend` — open Stage 9 and settle F-26 inside it, as its first deliverable.** F-26 was recorded
+  precisely as "the decision Stage 9 will have to make", and Stage 9's candidate-thesis work is the first code
+  that would write `decision` or `trade_intent` rows — so the seam question (do those writers gain a store, or
+  does the trading path document that its parents are checked upstream?) has to be answered before that writer
+  exists rather than after. Answering it first also means Stage 9's own writers get the four-parent treatment
+  from the start instead of inheriting five unguarded keys.
+- (b) Open Stage 9 but defer F-26 again, accepting that Stage 9 writes against five unguarded foreign keys.
+- (c) Open Stage 10's sufficiency work first — F-18's gap 4 and F-24's band are both there, and neither needs
+  the trading path's seam decided.
+- (d) Name a different stage.
+
+**Q4. Does the cadence change, given "begin with multiple stages at once … we are way behind on production"?**
+
+Every batch so far has waited for a ruling before the next began. That is what makes each row in `docs/07`
+approvable, and it is also the throughput limit.
+
+- **(a) `Recommend` — batch the rulings, not the work: run 8.8 and Stage 9's first deliverable in parallel,
+  and put one combined board covering both.** The gate, the tamper proof and the register rows stay per-batch,
+  so nothing becomes unattributable; what changes is that the owner rules on two batches at once instead of
+  sequentially. Two boards become one, and the work does not stop between them.
+- (b) Keep one batch per ruling, and accept the throughput.
+- (c) Go further: authorise a run of batches against a standing scope (for example, all of Stage 9) with a
+  single ruling at the end, and an explicit list of what would still stop and ask.
+- (d) Something else.
+
+Whatever is ruled, three things do not change without a ruling of their own: no expiry **policy** before
+Stage 11's V1–V3 gates; no confidence **band** (F-24) without its own scope; and no wiring of either
+intelligence writer to a route, declined three times and not offered here.
+
+### 14.10 D-056 — the four rulings
+
+All four questions in §14.9 were answered `Recommend`, each against exactly one marked recommendation, and
+are recorded as **D-056**. §14.9 is left as it was put; this section is the ruling. No code changed —
+`git diff 2267eb4 HEAD -- backend/` is empty — and the gate re-ran anyway, because this section quotes what
+it produces: **1,428 passed / 2 skipped / 0 failed**, `ruff check src tests` clean, `ruff format --check`
+unchanged on **93** files, mypy strict clean on **62**.
+
+| # | Question as put | Ruled | What it changes |
+|---|---|---|---|
+| 1 | Is Stage 8.7 approved, and is F-18's gap 2 closed? | **Approved, recorded as D-056**, and **F-18's gap 2 `CLOSED`** — on the **column**, *not* on the TTL | Both 8.7 rows in `docs/07` become `REVIEWED — APPROVED 2026-11-28`. §14.8's **limitation 1 stands as published beside the closure** rather than being retired by it: the column is inert, nothing in `src/` reads it, and a row that should have stopped being served is still served. That is D-053's ruling 1 distinction for `O-012`, re-drawn by D-055 for F-25, applied a **third** time. **F-18's status word stays `NARROWED`**, now with gaps 1, 2 and 3 closed and **gap 4 alone open** with no batch — three of four gaps closed is still not four, and §14.8's limitation 4 said so before the ruling rather than after it |
+| 2 | F-27 — the recorded statement count is not the applied one. Recorded, or given a batch? | **Recorded as F-27, `OPEN`, with no batch** | The inflated numbers **stay pinned where they are**: `schema_migrations` still records `0003 → 4` and `0004 → 15`, `test_the_runner_records_what_it_applied` still asserts both, and `applied_statements()` still carries the finding in its docstring so the next person to touch a migration reads it first. The measured reason the ruling gives is the one §14.5 established: fixing the property moves **no** checksum, but the recorded value is a row written at apply time and never rewritten, so a fix would split production into two populations reporting different counts for the same version and checksum with nothing able to tell which a row carries. F-27 is **not** an `O-` row, on D-054's reasoning re-applied by D-055: recording a finding is not opening an obligation row, so `docs/00` still ends at `O-014`. **The next finding id is F-28** |
+| 3 | Which stage opens next, given the directive to run several at once? | **Stage 9 opens, and F-26's seam is settled inside it as its first deliverable** | Stage 9 is the candidate-thesis / intelligence-dossier stage (`design/build_board52.py:73-87`), and its work is the first code that would write `decision` or `trade_intent` rows — so F-26's question (do those writers gain a store in the seam, or does the trading path document that its parents are checked upstream?) is answered **before** that writer exists rather than after. Answering it first also means Stage 9's own writers get the four-parent treatment from the start instead of inheriting five unguarded `REFERENCES` clauses. **F-26 stays `OPEN` until that choice is made and recorded**; this ruling schedules the decision, it does not make it |
+| 4 | Does the cadence change, given "begin with multiple stages at once … we are way behind on production"? | **Yes — batch the rulings, not the work** | Two batches run concurrently and go to the owner on **one combined board**. What stays per-batch, so nothing becomes unattributable: the gate, the tamper proof, the `docs/07` register rows and the `docs/15` record section. What changes is that the owner rules on two batches at once instead of sequentially, and the work does not stop between them. This is the first ruling in the project's history to authorise concurrency, and it is recorded as a change of cadence rather than a relaxation of evidence: every claim on a combined board is still measured in-tree per batch |
+
+**What ruling 4 does not settle, stated because it is the one gap the ruling leaves.** Q4's option (a) named
+"8.8" as the batch that runs beside Stage 9's first deliverable, and **no document in this repository defines
+8.8's scope** — the option text carried the label without the content, and this record will not retro-fit a
+scope to a ruling that did not state one. What *is* derivable from in-repo pointers, and is therefore what the
+next board puts rather than what it assumes: **F-24** is the one open finding whose subject is Stage 8's own
+tables (a belief carries one confidence number where `docs/10` §3.1 asks for it *"as a band"* and D-035
+approved *"beliefs as bands"*); `migrations/0002_memory.sql`'s header says exactly **one** thing is
+deliberately absent from it *"because no batch has ruled on it"*, and since 8.7 that one thing is the
+confidence band; and F-18's remaining gap 4 is the sufficiency meter, which `docs/12` §1.3 places at
+**stage 10** and not in Stage 8. So 8.8 = F-24 is the derivation, **and the shape of a band still has no
+ruling behind it** (§12.8 recorded that when it opened the finding) — two more columns, one band column, or
+something else is a question for the owner, not a decision a batch may take silently.
+
+**What this ruling does not do**, stated so nobody has to infer it. It does **not** authorise an expiry
+**policy**: no filter, no `is_expired()`-style reader on `memory_item`, nothing acting on the column until
+`docs/10` §3.2's V1–V3 gates finalise at Stage 11. It does **not** authorise a confidence **band** — ruling 4
+schedules two batches, and F-24's shape is a question on the next board rather than a consequence of this one.
+It does **not** wire either intelligence writer to a route, declined three times and not offered in §14.9.
+It does **not** retire any of §14.8's eight limitations, including limitation 1 — the one gap 2's closure
+could most easily have been read to retire. It does **not** make F-26's seam choice, which is Stage 9's first
+deliverable and is still open. It does **not** close F-24, F-26 or F-27, and does **not** close F-18. And it
+does **not** enumerate stages beyond 11: `docs/12` §1.3 names knowledge sufficiency as stage 10 and the three
+verification gates as stage 11, `design/build_board52.py:73-87` defines 9, 10 and 11, and **no document in
+this repository names stages 12 to 23**, so none is invented here.
+
+**Next.** Two batches concurrently, on one combined board, per ruling 4: **8.8 = F-24's confidence band**,
+with the band's *shape* put as a question rather than assumed; and **Stage 9's first deliverable = F-26's
+seam**, settled before any Stage 9 writer is written. The next finding id is **F-28**.

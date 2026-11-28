@@ -1,0 +1,119 @@
+{
+  "$description": "NEXUS-AI primitive tokens (tier 1). Raw values only — no purpose, no mode. Never consumed directly by components (see docs/09 §3). Source steps approved in docs/03 §3.1 are preserved verbatim as the 400 steps of each semantic hue; additional steps exist solely to give the semantic tier WCAG-passing text values in each mode.",
+  "color": {
+    "ink":        { "$value": "#0B0F14", "$type": "color", "$description": "Deep graphite. Dark canvas. Brand Ink (D-031)." },
+    "graphite":   { "$value": "#121A24", "$type": "color", "$description": "Raised dark surface. Brand Graphite (D-031)." },
+    "steel":      { "$value": "#1A2433", "$type": "color", "$description": "Dark elevated surface (modals, dropdowns). docs/03 --bg-elevated." },
+    "hairline-dark": { "$value": "#1F2B3A", "$type": "color", "$description": "Decorative separators on dark. docs/03 --border. Not a component boundary (fails 3:1 by design; see border.strong)." },
+    "muted-dark": { "$value": "#7A8CA4", "$type": "color", "$description": "Passing muted text step for dark mode (5.60/5.10/4.55 on canvas/panel/elevated). Replaces docs/03 --text-muted #5C6B82 at the semantic tier only; proposal P-2 recorded against docs/03." },
+    "secondary-dark": { "$value": "#8B9BB4", "$type": "color", "$description": "docs/03 --text-secondary, verbatim." },
+    "platinum":   { "$value": "#E6EDF3", "$type": "color", "$description": "Light canvas / dark-mode field colour. Brand Platinum (D-031)." },
+    "paper":      { "$value": "#F7FAFC", "$type": "color", "$description": "Raised light surface." },
+    "white":      { "$value": "#FFFFFF", "$type": "color", "$description": "Light elevated surface." },
+    "ink-secondary": { "$value": "#33445A", "$type": "color", "$description": "Secondary text on light (8.40/9.47/9.93)." },
+    "ink-muted":  { "$value": "#5A6B7E", "$type": "color", "$description": "Muted text on light (4.63/5.22/5.47)." },
+    "hairline-light": { "$value": "#C9D4E0", "$type": "color", "$description": "Decorative separators on light." },
+    "slate-strong": { "$value": "#6B7A8C", "$type": "color", "$description": "Component-boundary border on light (3.71/4.18/4.39)." },
+    "slate-strong-dark": { "$value": "#64768C", "$type": "color", "$description": "Component-boundary border on dark (4.13/3.75/3.37 vs canvas/panel/elevated)." },
+    "brand": {
+      "violet":      { "$value": "#7364D8", "$type": "color", "$description": "Brand accent (D-031). GRAPHICS ONLY: node, wordmark AI, brand lockups. Never text, never data." },
+      "violet-bright": { "$value": "#8578E0", "$type": "color", "$description": "Accent hover/active for graphics on dark (4.9:1 vs Ink)." }
+    },
+    "green": {
+      "400": { "$value": "#2ECC71", "$type": "color", "$description": "docs/03 --green verbatim. Dark-mode positive text/graphics." },
+      "700": { "$value": "#15703C", "$type": "color", "$description": "Light-mode positive text (5.20/5.87/6.15)." }
+    },
+    "red": {
+      "300": { "$value": "#EF8074", "$type": "color", "$description": "Bright negative text for dark elevated surfaces (5.96 on steel)." },
+      "400": { "$value": "#E74C3C", "$type": "color", "$description": "docs/03 --red verbatim. Dark-mode negative on canvas/panel." },
+      "700": { "$value": "#A93226", "$type": "color", "$description": "Light-mode negative text (5.60/6.32/6.62)." }
+    },
+    "amber": {
+      "400": { "$value": "#F39C12", "$type": "color", "$description": "docs/03 --amber verbatim. Dark-mode warning text/graphics." },
+      "800": { "$value": "#7E5808", "$type": "color", "$description": "Light-mode warning text (5.41/6.10/6.39)." }
+    },
+    "cyan": {
+      "400": { "$value": "#3498DB", "$type": "color", "$description": "docs/03 --cyan verbatim. Dark-mode info text/graphics." },
+      "700": { "$value": "#1A5276", "$type": "color", "$description": "Light-mode info text (7.07/7.97/8.36)." }
+    },
+    "purple": {
+      "300": { "$value": "#B07CC6", "$type": "color", "$description": "Intelligence-layer text step for dark (4.87 on steel). docs/03 --purple #9B59B6 fails 4.5:1 as text; proposal P-3." },
+      "400": { "$value": "#9B59B6", "$type": "color", "$description": "docs/03 --purple verbatim. Graphics/borders on dark only." },
+      "700": { "$value": "#6C3483", "$type": "color", "$description": "Light-mode intelligence text (7.23/8.16/8.55)." }
+    }
+  },
+  "space": {
+    "0": { "$value": "0",     "$type": "dimension" },
+    "1": { "$value": "4px",   "$type": "dimension" },
+    "2": { "$value": "8px",   "$type": "dimension" },
+    "3": { "$value": "12px",  "$type": "dimension" },
+    "4": { "$value": "16px",  "$type": "dimension" },
+    "5": { "$value": "24px",  "$type": "dimension" },
+    "6": { "$value": "32px",  "$type": "dimension" },
+    "7": { "$value": "48px",  "$type": "dimension" },
+    "8": { "$value": "64px",  "$type": "dimension" }
+  },
+  "radius": {
+    "0":    { "$value": "0",     "$type": "dimension" },
+    "1":    { "$value": "2px",   "$type": "dimension" },
+    "2":    { "$value": "4px",   "$type": "dimension" },
+    "3":    { "$value": "6px",   "$type": "dimension" },
+    "4":    { "$value": "8px",   "$type": "dimension" },
+    "5":    { "$value": "12px",  "$type": "dimension" },
+    "full": { "$value": "999px", "$type": "dimension" }
+  },
+  "border": {
+    "width": {
+      "hairline": { "$value": "1px", "$type": "dimension" },
+      "focus":    { "$value": "2px", "$type": "dimension" }
+    }
+  },
+  "font": {
+    "family": {
+      "sans": { "$value": "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif", "$type": "fontFamily", "$description": "Self-hosted Inter latin subsets (OFL 1.1, D-019). docs/03 --font-sans." },
+      "mono": { "$value": "'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace", "$type": "fontFamily", "$description": "Self-hosted JetBrains Mono latin subsets (OFL 1.1, D-019). docs/03 --font-mono." }
+    },
+    "size": {
+      "label":    { "$value": "11px", "$type": "dimension", "$description": "docs/03 §3.2 labels." },
+      "caption":  { "$value": "12px", "$type": "dimension", "$description": "Stage 2 addition: timestamps, helper text." },
+      "data":     { "$value": "13px", "$type": "dimension", "$description": "docs/03 §3.2 data." },
+      "body":     { "$value": "14px", "$type": "dimension", "$description": "docs/03 §3.2 body." },
+      "emphasis": { "$value": "16px", "$type": "dimension", "$description": "Stage 2 addition: key metric value (weight-led hierarchy)." },
+      "heading":  { "$value": "20px", "$type": "dimension", "$description": "docs/03 §3.2 largest heading." },
+      "display":  { "$value": "24px", "$type": "dimension", "$description": "Stage 2 addition: the one hero figure per screen." }
+    },
+    "weight": {
+      "regular":  { "$value": 400, "$type": "fontWeight" },
+      "medium":   { "$value": 500, "$type": "fontWeight" },
+      "semibold": { "$value": 600, "$type": "fontWeight" },
+      "bold":     { "$value": 700, "$type": "fontWeight" }
+    },
+    "lineHeight": {
+      "display": { "$value": 1.15, "$type": "number" },
+      "label":   { "$value": 1.2,  "$type": "number" },
+      "heading": { "$value": 1.25, "$type": "number", "$description": "docs/03 'tight leading'." },
+      "caption": { "$value": 1.35, "$type": "number" },
+      "data":    { "$value": 1.4,  "$type": "number" },
+      "body":    { "$value": 1.5,  "$type": "number", "$description": "docs/03 §3.2 body leading." }
+    },
+    "tracking": {
+      "none":    { "$value": "0", "$type": "dimension" },
+      "display": { "$value": "-0.01em", "$type": "dimension" },
+      "label":   { "$value": "0.05em", "$type": "dimension", "$description": "docs/03 §3.2 labels." }
+    },
+    "numeric": {
+      "tabular":      { "$value": "tabular-nums", "$type": "string", "$description": "Mandatory on every financial figure, table column, chart axis and metric (project extension type)." },
+      "proportional": { "$value": "proportional-nums", "$type": "string", "$description": "Prose only. Never in columns." }
+    }
+  },
+  "motion": {
+    "duration": {
+      "fast": { "$value": "120ms", "$type": "duration" },
+      "base": { "$value": "200ms", "$type": "duration" },
+      "slow": { "$value": "450ms", "$type": "duration" }
+    },
+    "easing": {
+      "standard": { "$value": "cubic-bezier(0.2, 0.8, 0.2, 1)", "$type": "cubicBezier", "$description": "Same curve as the Stage 1 logo animation (docs/08 §9)." }
+    }
+  }
+}

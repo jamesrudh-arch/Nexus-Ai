@@ -1,0 +1,94 @@
+/**
+ * Design tokens — docs/03 §3.1, §3.2, §3.3. Values are copied from the ruling, not chosen here.
+ *
+ * §3.3 is the rule that shapes the components more than any colour does: colour is never the sole
+ * signal. Every P&L value pairs its colour with a sign and a direction glyph, every warning pairs
+ * amber with ⚠ and words, every status pairs a shape with a label. A dashboard that is illegible in
+ * greyscale, or to the roughly one in twelve men with a red-green colour vision deficiency, is not
+ * finished — and a trading screen that is misread is not a cosmetic failure.
+ *
+ * Fonts are named rather than loaded: no Google Fonts runtime call is permitted (§3.5). Drop the
+ * self-hosted woff2 files into `public/fonts` and add the @font-face blocks below the tokens; until
+ * then the system stack renders, and nothing reaches a third party at page load.
+ */
+
+:root {
+  /* Surfaces */
+  --bg-canvas: #0b0f14;
+  --bg-panel: #121a24;
+  --bg-elevated: #1a2433;
+  --border: #1f2b3a;
+
+  /* Text */
+  --text-primary: #e6edf3;
+  --text-secondary: #8b9bb4;
+  --text-muted: #5c6b82;
+
+  /* Semantics — always paired with a glyph and a word, never used alone */
+  --green: #2ecc71;
+  --red: #e74c3c;
+  --amber: #f39c12;
+  --cyan: #3498db;
+  --purple: #9b59b6;
+
+  /* Type */
+  --font-sans:
+    Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono",
+    monospace;
+}
+
+/* A simulated environment is amber, not green. Green on a trading screen reads as "money is real
+   and this is working", and on the paper platform that would be the single most misleading thing the
+   UI could say. */
+:root[data-environment="PAPER"] {
+  --environment-accent: var(--amber);
+}
+:root[data-environment="SHADOW"] {
+  --environment-accent: var(--cyan);
+}
+:root[data-environment="LIVE"] {
+  --environment-accent: var(--red);
+}
+:root {
+  --environment-accent: var(--text-secondary);
+}
+
+html,
+body {
+  background: var(--bg-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tabular numerals for every price, quantity and P&L figure: without them a column of numbers
+   jitters as digits change, which makes a moving value unreadable rather than merely busy. */
+.numeric {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+}
+
+/* Respect the user's own preference rather than animating over it. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}

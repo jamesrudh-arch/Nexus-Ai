@@ -1,0 +1,483 @@
+# NEXUS CI — GitHub Actions on the free plan (2,000 min/month for private repos).
+#
+# Gate: lint + format + strict types + tests must all pass before merge. Security
+# scanning (Trivy, gitleaks, Semgrep OSS) is free and runs on every push.
+# No paid CI service, no paid scanner (D-019).
+
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    # Nightly: catches free-tier/dependency drift, e.g. a transitive dep turning paid
+    # or an OSS image being yanked.
+    - cron: "20 3 * * *"
+
+permissions:
+  contents: read
+  # gitleaks-action posts its findings as a PR comment. Without this the scan still runs but
+  # the report is unreadable ("Resource not accessible by integration"), which is how a real
+  # finding could go unnoticed. Scoped to pull-requests only: no write access to code, issues
+  # or releases, and nothing here can push a commit.
+  pull-requests: write
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+  # Fail closed in CI too: no stage may enable live trading.
+  NEXUS_LIVE_TRADING_ENABLED: "false"
+  NEXUS_ENVIRONMENT: "DISABLED"
+  NEXUS_AUDIT_BACKEND: "memory"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  # ---------------------------------------------------------------- secret scanning
+  secrets:
+    name: Secret scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: gitleaks (full history)
+        # No `with:` block on purpose. gitleaks-action@v2 accepts no inputs at all — passing
+        # config-path produces "Unexpected input(s) 'config-path', valid inputs are ['']" and is
+        # silently ignored. The gitleaks binary auto-discovers .gitleaks.toml at the repository
+        # root, which is where the narrow allowlist lives.
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pinned to the version the action would pick anyway, because .gitleaks.toml is written
+          # against this exact release's config schema. 8.24.3 understands only a singular
+          # [allowlist] table; a newer gitleaks added plural [[allowlists]]. Leaving the version
+          # implicit would let the action's default move and silently change what this config
+          # means — and an unrecognised key is ignored without an error, so the failure mode is a
+          # scan that quietly stops honouring its own allowlist.
+          GITLEAKS_VERSION: "8.24.3"
+
+      - name: Trivy filesystem scan (config + secrets + licences)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret,config,vuln
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+  # ---------------------------------------------------------------- python quality
+  backend:
+    name: Backend (lint · types · tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history, not the default depth of 1. test_repo_hygiene.py verifies that the one
+          # commit excused from secret scanning in .gitleaks.toml actually exists, and that check
+          # cannot run against a shallow clone — it failed on exactly that before this was set.
+          # The repository is small (tens of commits), so this costs seconds.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check src tests
+
+      - name: Ruff format check
+        run: ruff format --check src tests
+
+      - name: Mypy (strict)
+        run: mypy
+
+      - name: Pytest
+        run: |
+          set -o pipefail
+          pytest -q --maxfail=1 2>&1 | tee pytest.log
+
+      # O-011's lesson applied to the test job as well as the image job: GitHub serves run logs from
+      # results-receiver.actions.githubusercontent.com, which is outside the egress allowlist of the
+      # environment this repository is maintained from, so a red Pytest step is unreadable there. A
+      # gate nobody can read is worse than no gate. The tail is republished as ONE error annotation,
+      # which the ordinary REST API exposes on any host.
+      - name: Publish a pytest failure as a check annotation
+        if: ${{ failure() }}
+        run: |
+          python3 - <<'PY'
+          import pathlib
+
+          path = pathlib.Path("pytest.log")
+          lines = path.read_text(errors="replace").splitlines() if path.is_file() else []
+          tail = [line for line in lines if line.strip()][-60:] or ["no pytest output was captured"]
+          text = "\n".join(tail)
+          esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          esc = esc.replace(":", "%3A").replace(",", "%2C")
+          print(f"::error title=pytest-failure::{esc}")
+          PY
+
+      # F-39: pgserver has no Linux arm64 wheel and no sdist, so the parity suite can skip on a
+      # machine that cannot provide a server. On this runner it can, and a skip here means the
+      # PostgreSQL seam went untested while the build reported green — which is precisely how six
+      # missing commas in migrations/0001_core.sql survived four stages.
+      - name: Assert the PostgreSQL parity suite ran against a real server
+        run: |
+          set -o pipefail
+          # No extra -q. addopts already carries one, and a second makes it -qq, which suppresses the
+          # summary this step reads: measured locally, `-q -rs` printed no line containing "passed" or
+          # "skipped" at all, so the assertions below matched nothing and the step could never fail. A
+          # gate that cannot fail is worse than no gate.
+          python -m pytest tests/test_postgres_store.py -rs | tee parity.log
+          if grep -qi "skipped" parity.log || ! grep -qE "[0-9]+ passed" parity.log; then
+            python3 - <<'PY'
+          import pathlib
+
+          lines = pathlib.Path("parity.log").read_text(errors="replace").splitlines()
+          tail = [line for line in lines if line.strip()][-40:] or ["no output"]
+          text = "the PostgreSQL parity suite did not run against a real server\n" + "\n".join(tail)
+          esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          esc = esc.replace(":", "%3A").replace(",", "%2C")
+          print(f"::error title=postgres-parity::{esc}")
+          PY
+            exit 1
+          fi
+          echo "parity suite ran against a real server: $(grep -oE '[0-9]+ passed' parity.log)"
+
+      - name: Assert live trading is impossible in this phase
+        run: python -c "import nexus; g=nexus.PHASE_GATE; assert g['live_trading'] is False and g['venue_adapters'] is False and g['real_money_orders_possible'] is False and g['order_capability'] is False, g; print('phase gate verified:', g)"
+
+      # Phase 3 added market-data adapters. They must stay public/read-only: no credential
+      # parameter, no order verb. This is a structural check on the shipped code, so a future
+      # edit that adds a trading capability to a data adapter fails the build.
+      - name: Assert data adapters are credential-free and order-free
+        run: |
+          python - <<'EOF'
+          import inspect
+          from nexus.ingestion.bybit import BybitPublicAdapter
+          from nexus.ingestion.okx import OkxPublicAdapter
+          from nexus.ingestion.binance_vision import BinanceVisionHistorical
+          from nexus.ingestion.dukascopy import DukascopyHistorical
+
+          forbidden_params = {"api_key", "api_secret", "secret", "passphrase", "token", "password"}
+          forbidden_verbs = ("place", "submit", "cancel", "withdraw", "transfer", "amend")
+
+          for cls in (BybitPublicAdapter, OkxPublicAdapter, BinanceVisionHistorical, DukascopyHistorical):
+              assert cls.requires_credentials is False, f"{cls.__name__} claims to need credentials"
+              params = set(inspect.signature(cls.__init__).parameters)
+              assert not (params & forbidden_params), f"{cls.__name__} takes a credential parameter"
+              for name in dir(cls):
+                  if name.startswith("_"):
+                      continue
+                  for verb in forbidden_verbs:
+                      assert verb not in name.lower(), f"{cls.__name__}.{name} looks like a trading method"
+              print(f"{cls.__name__}: read-only, credential-free")
+          EOF
+
+      - name: Assert no paid data vendor is referenced anywhere
+        run: |
+          ! grep -rEiq 'bloomberg|refinitiv|polygon\.io|databento|iqfeed|lseg|tiingo' backend/src \
+            && echo "no paid data vendors in source"
+
+      - name: Assert the API exposes no order endpoint
+        run: |
+          python - <<'EOF'
+          from nexus.api.app import create_app
+          from nexus.core.config import Settings
+          import os
+          os.environ["NEXUS_AUDIT_BACKEND"] = "memory"
+
+          app = create_app(settings=Settings())
+          paths = {getattr(r, "path", "") for r in app.routes}
+          forbidden = ("order", "trade", "execute", "position", "withdraw")
+
+          # Stage 11 (D-059) added /v1/paper/*, which keeps a simulated blotter: the word "order"
+          # appears there honestly. The namespace is exempt from the *word* check and is instead
+          # asked directly whether it can trade, which is the question the word check was standing
+          # in for. A route that cannot send an order is not one merely named as though it cannot.
+          for path in paths:
+              if path.startswith("/v1/paper"):
+                  continue
+              for verb in forbidden:
+                  assert verb not in path.lower(), f"API exposes a trading route: {path}"
+
+          paper = app.state.paper.describe()
+          assert paper["can_place_live_orders"] is False, "paper claims live order capability"
+          assert paper["simulated"] is True, "paper does not say it is simulated"
+          assert paper["is_venue_adapter"] is False, "paper registered itself as a venue adapter"
+          assert paper["adapter_count"] == 0, "paper holds a venue adapter"
+          assert paper["network_access"] is False, "paper claims network access"
+          assert paper["credentials_required"] is False, "paper requires a credential"
+
+          from nexus import PHASE_GATE
+          assert PHASE_GATE["venue_adapters"] is False, "the phase gate moved"
+          assert PHASE_GATE["order_capability"] is False, "the phase gate moved"
+          assert PHASE_GATE["live_trading"] is False, "the phase gate moved"
+
+          print(f"{len(paths)} routes; none trading-capable outside the inert paper namespace")
+          EOF
+
+  # ---------------------------------------------------------------- ARM64 build check
+  # The production host is Ampere A1 (ARM64). Verifying the image builds for arm64
+  # prevents a x86-only surprise when deploying to the free tier.
+  image:
+    name: Container image (amd64 + arm64 build)
+    runs-on: ubuntu-latest
+    needs: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build multi-arch (no push — proves amd64 + arm64 cross-compilation)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          platforms: linux/amd64,linux/arm64
+          push: false
+          load: false
+          tags: nexus-core:ci-multiarch
+
+      - name: Build amd64 and load it (the image Trivy can actually read)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: nexus-core:ci
+
+      # HIGH and CRITICAL both block, which is the posture this gate is supposed to have.
+      #
+      # It was split for a while — CRITICAL blocking, HIGH reported only — and that split was a
+      # consequence of not being able to read the report, not a risk judgement: GitHub serves job
+      # logs from results-receiver.actions.githubusercontent.com, which is outside this
+      # environment's egress allowlist. A gate nobody can read is worse than no gate, because it
+      # stays red and a permanently red build teaches everyone to ignore it. That was O-011.
+      #
+      # Two things closed it. The findings are now republished below as check annotations, which
+      # the ordinary REST API exposes on any host — the same route that finally made the gitleaks
+      # findings readable. And there was exactly one HIGH finding to triage: CVE-2025-47273,
+      # setuptools 70.3.0 in the base image (arbitrary file write via PackageIndex.download,
+      # fixed in 78.1.1), now upgraded in the Dockerfile. With the report readable and the
+      # finding fixed, HIGH blocks again.
+      - name: Trivy image scan (HIGH + CRITICAL block)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: nexus-core:ci
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: json
+          output: trivy-findings.json
+
+      - name: Publish findings as check annotations
+        if: ${{ always() }}
+        run: |
+          # Turns the JSON report into annotations so the findings can be read without log
+          # access, including on the runs where the scan above failed the job — which is exactly
+          # when they matter.
+          #
+          # Everything is packed into ONE warning annotation. GitHub Actions allows at most 10
+          # annotations per level per step, so a report that emitted one annotation per finding
+          # would silently lose everything past the tenth — the cap would look like the answer.
+          # The finding list inside the annotation is capped at 60 with truncation stated.
+          python3 - <<'PY'
+          import json, pathlib
+
+          CAP = 60
+
+          def annotation(level, title, lines):
+              text = "\n".join(lines[:CAP + 2])
+              esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              esc = esc.replace(":", "%3A").replace(",", "%2C")
+              print(f"::{level} title={title}::{esc}")
+
+          path = pathlib.Path("trivy-findings.json")
+          if not path.is_file():
+              annotation("warning", "trivy-image", ["no report produced - the scan step did not run"])
+              raise SystemExit(0)
+
+          report = json.loads(path.read_text() or "{}")
+          findings = []
+          for result in report.get("Results") or []:
+              for vuln in result.get("Vulnerabilities") or []:
+                  findings.append(
+                      {
+                          "pkg": vuln.get("PkgName", "?"),
+                          "installed": vuln.get("InstalledVersion", "?"),
+                          "fixed": vuln.get("FixedVersion") or "no-fix",
+                          "id": vuln.get("VulnerabilityID", "?"),
+                          "severity": vuln.get("Severity", "?"),
+                          "target": result.get("Target", "?"),
+                          "cls": result.get("Class", "?"),
+                          # The file the scanner actually read. Without it, "setuptools 70.3.0"
+                          # cannot be told apart from a vendored SBOM that merely declares that
+                          # version — which is exactly the confusion defect 23 cost three attempts.
+                          "path": vuln.get("PkgPath") or "-",
+                      }
+                  )
+
+          if not findings:
+              annotation(
+                  "notice",
+                  "trivy-image",
+                  ["no HIGH or CRITICAL fixable vulnerabilities in nexus-core:ci"],
+              )
+              raise SystemExit(0)
+
+          critical = sum(1 for f in findings if f["severity"] == "CRITICAL")
+          body = [
+              f"{len(findings)} findings ({critical} CRITICAL), each with an available fix. "
+              "The scan fails the build until every one is fixed or explicitly justified."
+          ]
+          body += [
+              "{severity} {id} {pkg} {installed} -> {fixed} [{cls}] in {target} @ {path}".format(**f)
+              for f in findings[:CAP]
+          ]
+          if len(findings) > CAP:
+              body.append(f"...and {len(findings) - CAP} more; see trivy-findings.json")
+          by_pkg = {}
+          for f in findings:
+              by_pkg.setdefault(f["pkg"], []).append(f["id"])
+          body.append("packages: " + ", ".join(f"{k}({len(v)})" for k, v in sorted(by_pkg.items())))
+          annotation("warning", "trivy-image", body)
+          PY
+
+  # ---------------------------------------------------------------- compose sanity
+  compose:
+    name: Compose config valid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml
+        run: |
+          # Every `:?` (required) variable in docker-compose.yml must be supplied, or compose
+          # aborts before validating anything. These are throwaway values for a config parse
+          # only: no container is started and nothing here is a credential.
+          POSTGRES_PASSWORD=ci-only \
+            MINIO_ROOT_USER=ci-only MINIO_ROOT_PASSWORD=ci-only \
+            GRAFANA_ADMIN_PASSWORD=ci-only \
+            docker compose config --quiet
+          echo "compose config valid"
+
+      - name: Assert no paid images are referenced
+        run: |
+          ! grep -Eiq 'datadog|newrelic|dynatrace|splunk|snowflake|databricks' docker-compose.yml \
+            && echo "no paid observability/data vendors in compose"
+
+  # ---------------------------------------------------------------- runtime smoke test
+  #
+  # Every other job in this workflow proves something about a *file*: the config parses, the image
+  # builds, the SBOM is clean, the tests pass against an in-process app object. None of them has
+  # ever started a container. Before Phase 4 this was limitation 1 in docs/06 §4, and it is the
+  # reason three defects (31, 32, 34) were found by reading rather than by running. This job closes
+  # B-1/B-2/B-3 of docs/06 §3: bring the stack up for real on an x86-64 runner and assert, from
+  # inside the running container, that it serves, that it serves the *right* posture, and that its
+  # audit log survives losing the container.
+  #
+  # It is deliberately not `needs: image`. A lint failure must not hide a runtime failure; both
+  # signals are wanted from one push.
+  smoke:
+    name: Runtime smoke test (container actually serves)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Loaded locally under the tag docker-compose.yml names, so `compose up` finds it instead of
+      # rebuilding. A multi-arch build with push:false and load:false leaves no local image at all —
+      # that cost a CI cycle once already.
+      - name: Build the amd64 image and load it
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: nexus-core:0.2.0
+
+      - name: Bring the stack up and run the smoke test
+        run: |
+          # Runs the whole check rather than stopping at the first failure, so one push produces one
+          # complete report. The script exits non-zero if any check failed, which fails this step.
+          sh infra/smoke-test.sh
+
+      # The report is published as an annotation because this environment cannot read job logs:
+      # GitHub serves them from a host outside the egress allowlist. Without this step a failure
+      # here would be a red X with no content, and a permanently unreadable gate gets ignored.
+      - name: Publish the smoke report as a check annotation
+        if: ${{ always() }}
+        run: |
+          python3 - <<'PY'
+          import pathlib
+
+          # One annotation only. GitHub caps annotations at 10 per level per step, and a report with
+          # one annotation per failure would silently drop everything past the tenth.
+          LIMIT = 8000
+
+          def annotation(level, title, lines):
+              # Accepts a list so no caller can pass one and silently crash on `.replace`, which is
+              # what this function did the first time it was tested with the report missing.
+              text = "\n".join(lines) if isinstance(lines, (list, tuple)) else str(lines)
+              if len(text) > LIMIT:
+                  text = text[:LIMIT] + f"\n...truncated ({len(text) - LIMIT} more characters)"
+              esc = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              esc = esc.replace(":", "%3A").replace(",", "%2C")
+              print(f"::{level} title={title}::{esc}")
+
+          report = pathlib.Path("smoke-report.txt")
+          if not report.is_file():
+              annotation("warning", "smoke-test", ["no report produced - the smoke test did not run"])
+              raise SystemExit(0)
+
+          lines = report.read_text(errors="replace").splitlines()
+          failures = [line for line in lines if line.startswith("FAIL ")]
+          passes = [line for line in lines if line.startswith("PASS ")]
+
+          if not failures:
+              annotation(
+                  "notice",
+                  "smoke-test",
+                  f"{len(passes)} checks passed; the stack served requests from a real container\n"
+                  + "\n".join(passes),
+              )
+              raise SystemExit(0)
+
+          # On failure the interesting content is the failures plus whatever the script dumped
+          # after them (container state and core's own log), so keep the tail of the report.
+          body = [f"{len(failures)} of {len(passes) + len(failures)} checks FAILED", ""]
+          body += failures
+          body += ["", "--- report tail ---"]
+          body += lines[-80:]
+          annotation("warning", "smoke-test", "\n".join(body))
+          PY
+
+      - name: Upload the full smoke report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-report
+          path: smoke-report.txt
+          if-no-files-found: warn

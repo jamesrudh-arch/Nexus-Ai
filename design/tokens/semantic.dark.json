@@ -1,0 +1,55 @@
+{
+  "$description": "NEXUS-AI semantic colour + elevation tokens, DARK mode (the product default, docs/03). Every text token passes WCAG 2.1 4.5:1 on all three dark surfaces; every graphical token passes 3:1. Verified by design/test_tokens.py — the matrix is evidence, not intent.",
+  "color": {
+    "surface": {
+      "canvas":   { "$value": "{color.ink}", "$type": "color" },
+      "panel":    { "$value": "{color.graphite}", "$type": "color" },
+      "elevated": { "$value": "{color.steel}", "$type": "color" }
+    },
+    "text": {
+      "primary":   { "$value": "{color.platinum}", "$type": "color", "$description": "16.27 / 14.82 / 13.22." },
+      "secondary": { "$value": "{color.secondary-dark}", "$type": "color", "$description": "6.81 / 6.21 / 5.54. docs/03 value verbatim." },
+      "muted":     { "$value": "{color.muted-dark}", "$type": "color", "$description": "5.60 / 5.10 / 4.55. Stage 2 step; docs/03 #5C6B82 fails (3.55) — proposal P-2, not applied to docs/03." }
+    },
+    "border": {
+      "subtle": { "$value": "{color.hairline-dark}", "$type": "color", "$description": "Decorative separators only (docs/03 --border)." },
+      "strong": { "$value": "{color.slate-strong-dark}", "$type": "color", "$description": "Component boundaries (inputs, focusable cards): 4.13 / 3.75 / 3.37 — passes 3:1 on all dark surfaces." }
+    },
+    "focus": { "$value": "{color.platinum}", "$type": "color", "$description": "2px outline. Monochrome on purpose: the accent is brand voice, not interaction state (D-031)." },
+    "brand": {
+      "accent": { "$value": "{color.brand.violet}", "$type": "color", "$description": "GRAPHICS ONLY (4.16 vs Ink, 3.91 vs Platinum — passes 3:1 graphical, fails 4.5:1 text, therefore never text). Node, wordmark AI, brand lockups." }
+    },
+    "feedback": {
+      "positive": {
+        "text":    { "$value": "{color.green.400}", "$type": "color", "$description": "9.14 / 8.33 / 7.43. Always with ▲/+ and label (docs/03 §3.3)." },
+        "graphic": { "$value": "{color.green.400}", "$type": "color" },
+        "subtle":  { "$value": "#152F2D", "$type": "color", "$description": "12% of green.400 over panel (badge ground); text-on-tint 6.2+." }
+      },
+      "negative": {
+        "text":    { "$value": "{color.red.300}", "$type": "color", "$description": "7.33 / 6.68 / 5.96. docs/03 #E74C3C fails 4.09 on elevated as text — proposal P-4; kept as graphic step." },
+        "graphic": { "$value": "{color.red.400}", "$type": "color", "$description": "docs/03 --red verbatim; 5.03 / 4.58 / 4.09 — graphical 3:1 everywhere." },
+        "subtle":  { "$value": "#2C2027", "$type": "color", "$description": "12% of red.400 over panel; text-on-tint 5.7+." }
+      },
+      "warning": {
+        "text":    { "$value": "{color.amber.400}", "$type": "color", "$description": "8.76 / 7.99 / 7.12." },
+        "graphic": { "$value": "{color.amber.400}", "$type": "color" },
+        "subtle":  { "$value": "#2D2A22", "$type": "color", "$description": "12% of amber.400 over panel; text-on-tint 6.0+." }
+      },
+      "info": {
+        "text":    { "$value": "{color.cyan.400}", "$type": "color", "$description": "6.10 / 5.56 / 4.96; on its subtle tint 4.71." },
+        "graphic": { "$value": "{color.cyan.400}", "$type": "color" },
+        "subtle":  { "$value": "#16293A", "$type": "color", "$description": "12% of cyan.400 over panel." }
+      },
+      "intelligence": {
+        "text":    { "$value": "{color.purple.300}", "$type": "color", "$description": "5.99 / 5.46 / 4.87. docs/03 #9B59B6 fails as text (4.12) — proposal P-3; kept as graphic step." },
+        "graphic": { "$value": "{color.purple.400}", "$type": "color", "$description": "docs/03 --purple verbatim; 3:1 graphical on canvas/panel, 3.35 on elevated." },
+        "subtle":  { "$value": "#222236", "$type": "color", "$description": "12% of purple.400 over panel; text-on-tint 4.9+." }
+      }
+    }
+  },
+  "shadow": {
+    "1": { "$value": { "color": "#00000066", "offsetX": "0", "offsetY": "1px", "blur": "2px", "spread": "0" }, "$type": "shadow" },
+    "2": { "$value": { "color": "#00000073", "offsetX": "0", "offsetY": "4px", "blur": "12px", "spread": "0" }, "$type": "shadow" },
+    "3": { "$value": { "color": "#00000080", "offsetX": "0", "offsetY": "12px", "blur": "32px", "spread": "0" }, "$type": "shadow", "$description": "Dark UI elevates mostly by surface step (canvas→panel→elevated); shadows are reinforcement, never the sole elevation cue." }
+  }
+}

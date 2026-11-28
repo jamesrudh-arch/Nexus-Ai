@@ -1,0 +1,359 @@
+# NEXUS — zero-cost self-hosted stack (D-019)
+#
+# Every image below is free/open-source. Total memory budget is sized for the Oracle
+# Cloud Always Free Ampere A1 VM (2 OCPU / 12 GB RAM, allowance halved 15 Jun 2026).
+# Caps below total ~3.7 GB with the default profiles; the opt-in `postgres` profile adds 1.5 GB.
+#
+# Startup tiers (Stage 5.2, D-041) — bring up in order and stop at the tier the host can hold:
+#   T1 core + caddy 1.15 GB   docker compose up -d core caddy
+#   T2 + nats/cache/minio     docker compose up -d core caddy nats cache minio   (2.18 GB)
+#   T3 + observability        docker compose --profile observability up -d       (3.71 GB)
+#   T4 + TimescaleDB (opt-in) docker compose --profile postgres up -d            (5.25 GB)
+#   T5 + ollama (opt-in)      see the commented `ai` profile                     (10.37 GB)
+# Budget law: T4 and T5 are mutually exclusive with headroom on a 12 GB host — never both while
+# trading is armed.
+#
+# Nothing here connects to a venue or can place an order. Live trading is disabled in
+# code (Phase 2), not by configuration.
+#
+# GAP RESOLVED (Stage 6, R-1 / D-042). This file used to record that `core` waited for `db` to be
+# healthy while nothing read it — 1.5 GB of a 12 GB free-tier budget spent on a database no code
+# connected to. R-1 declares SQLite (audit chain + operational state, both in `core-data`) and the
+# Parquet/zstd archive (market time series) the single-node system of record, so TimescaleDB is now
+# an opt-in `postgres` profile and `core` no longer depends on it.
+#
+# backend/migrations/*.sql are the PostgreSQL target, column-for-column compatible with the SQLite
+# schema in backend/src/nexus/store/schema.py, and they are applied by the store at boot
+# (bootstrap_schema) — so the `./backend/migrations:/migrations:ro` mount below is vestigial: the
+# PostgreSQL image executes /docker-entrypoint-initdb.d and never reads /migrations.
+#
+# Promotion happened. R-1 (D-042) gated it on four measured triggers — T-1 a second writer process,
+# T-2 a benchmarked write ceiling, T-3 a genuine hypertable or pgvector need, T-4 leaving the single
+# VM — and the owner ruled T-4 on 2026-11-28 (D-058; the audit is docs/17). T-1…T-3 remain unmeasured
+# and no scale claim is made. L-3 is satisfied by construction rather than by absence: there is ONE
+# store implementation with three driver seams, not two systems of record, and NEXUS_DATABASE_URL
+# selects which engine it opens. SQLite stays the default because a server is not $0 (D-019).
+#
+# Two things to know before pointing this at a real server. Promotion is a fresh start and NOT a
+# migration — nothing carries an existing SQLite database across (docs/17 F-37). And PostgreSQL
+# enforces nine foreign keys that SQLite declares but does not enforce, so a write SQLite accepts can
+# be refused here (docs/17 F-35, Q-1).
+
+name: nexus
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-restart: &restart-policy
+  restart: unless-stopped
+
+services:
+  # ---------------------------------------------------------------- system of record
+  db:
+    image: timescale/timescaledb:latest-pg16   # PostgreSQL 16 + TimescaleDB (Apache-2)
+    profiles: [postgres, full]                 # opt-in; read when NEXUS_DATABASE_URL points here (D-058)
+    <<: *restart-policy
+    logging: *default-logging
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-nexus}
+      POSTGRES_USER: ${POSTGRES_USER:-nexus}
+      # Value comes from the host env / secrets file — never committed.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env, never commit}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./backend/migrations:/migrations:ro
+    deploy:
+      resources:
+        limits:
+          memory: 1536M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexus} -d ${POSTGRES_DB:-nexus}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [nexus-internal]
+
+  # ---------------------------------------------------------------- event bus
+  nats:
+    image: nats:2-alpine                       # NATS + JetStream (Apache-2)
+    <<: *restart-policy
+    logging: *default-logging
+    # `-m 8222` is load-bearing, not decoration. Overriding `command:` discards the image's own
+    # default (`nats-server --config /etc/nats/nats-server.conf`), and that config file is what
+    # set `monitor_port: 8222`. Without it the monitoring port is never opened, the healthcheck
+    # below can only ever get a connection refused, the container is permanently unhealthy, and
+    # `core` — which waits on `nats: condition: service_healthy` — never starts at all. The stack
+    # was unstartable until the first real `docker compose up` proved it (defect 36, docs/06 §2).
+    #
+    # Restoring `--config /etc/nats/nats-server.conf` instead would be worse, not simpler: that
+    # file also opens cluster route port 6222 with an upstream hardcoded credential
+    # (ruser/T0pS3cr3t). Enabling only the monitoring port keeps the healthcheck working without
+    # turning on clustering this deployment does not use or authenticate.
+    command: ["--jetstream", "--store_dir", "/data", "-m", "8222"]
+    volumes:
+      - nats-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8222/healthz"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [nexus-internal]
+
+  # ---------------------------------------------------------------- cache / rate limits
+  cache:
+    image: valkey/valkey:8-alpine              # Valkey, the Redis OSS fork (BSD-3)
+    <<: *restart-policy
+    logging: *default-logging
+    command: ["valkey-server", "--maxmemory", "200mb", "--maxmemory-policy", "allkeys-lru"]
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks: [nexus-internal]
+
+  # ---------------------------------------------------------------- object storage
+  minio:
+    image: minio/minio:latest                  # MinIO community (AGPL-3, self-hosted)
+    <<: *restart-policy
+    logging: *default-logging
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set in .env, never commit}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set in .env, never commit}
+    volumes:
+      - minio-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+    networks: [nexus-internal]
+
+  # ---------------------------------------------------------------- NEXUS core API
+  core:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: nexus-core:0.2.0
+    <<: *restart-policy
+    logging: *default-logging
+    environment:
+      NEXUS_ENVIRONMENT: ${NEXUS_ENVIRONMENT:-DISABLED}
+      NEXUS_LIVE_TRADING_ENABLED: "false"          # hard-off in Phase 3 (read-only data)
+      NEXUS_LEGAL_REVIEW_COMPLETE: "false"         # O-004 pending
+      NEXUS_OWNER_LIVE_AUTHORITY_GRANTED: "false"
+      NEXUS_DATABASE_URL: ${NEXUS_DATABASE_URL:-sqlite:///./data/nexus.db}
+      NEXUS_NATS_URL: nats://nats:4222
+      NEXUS_SECRETS_BACKEND: ${NEXUS_SECRETS_BACKEND:-env}
+      NEXUS_ALERTS_TELEGRAM_ENABLED: "true"
+      NEXUS_ALERTS_WEBPUSH_ENABLED: "true"
+      NEXUS_ALERTS_EMAIL_ENABLED: "true"
+      NEXUS_MODEL_ALLOW_PAID_APIS: "false"         # D-019
+      # ---- Phase 3: first-party market-data archive (D-024 tiered retention) ----
+      NEXUS_ARCHIVE_ROOT: /app/data/archive
+      NEXUS_BASE_CURRENCY: "USD"                   # D-025: all risk math in USD
+      NEXUS_REPORTING_CURRENCY: "NGN"              # D-025: NGN shown alongside for tax/ISA
+      # Public, unauthenticated market-data sources only. No venue credential is mounted.
+      NEXUS_DATA_SOURCES_ENABLED: "bybit-public,okx-public,binance-vision,dukascopy"
+    volumes:
+      # Named volumes, not the container filesystem. `archive_root` defaults to ./data/archive and
+      # the Parquet archive is the system of record R-1 reconciles against, so it gets its own
+      # volume mounted *inside* core-data: on an ephemeral filesystem a redeploy would discard every
+      # archived bar, and a restart would recover its audit chain from PostgreSQL and its market
+      # history from nothing. core-data holds the rest (the SQLite default database among it).
+      - core-data:/app/data
+      # The tick/bar archive is the system's memory and the only series it can prove is
+      # complete. Separate volume so it can be backed up and sized on its own.
+      - archive-data:/app/data/archive
+    depends_on:
+      # `db` is deliberately absent: it is an opt-in profile and core does not connect to it (R-1).
+      nats:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+    # Bound to the internal network only; Caddy is the single public entry point.
+    expose:
+      - "8000"
+    networks: [nexus-internal]
+
+  # ------------------------------------------------------- paper trading loop (Stage 11, D-059)
+  # The same image as `core`, run as a different process. The loop is separate by design: the API is
+  # request/response, while a real-time loop must keep polling across an API redeploy, and a crash in
+  # either must not take the other down. `command:` replaces the Dockerfile's CMD (there is no
+  # ENTRYPOINT to fight), and the reasoning is in backend/src/nexus/paper/runner.py.
+  #
+  # Opt-in via a profile rather than always up, because it polls a public endpoint on a rate budget
+  # this project shares across every endpoint (P-9/F-8, accumulating) and an operator should choose to
+  # spend it. Start it with `docker compose --profile paper up`.
+  paper-runner:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: nexus-core:0.2.0
+    profiles: [paper, full]
+    <<: *restart-policy
+    logging: *default-logging
+    command: ["python", "-m", "nexus.paper.runner"]
+    environment:
+      NEXUS_ENVIRONMENT: ${NEXUS_ENVIRONMENT:-DISABLED}
+      # The runner refuses to start if the phase gate or this flag would permit a real order, so these
+      # are belt and braces: the check is redundant with the paper package having no send path, and the
+      # redundancy is the point for the one process holding venue symbols and an outbound connection.
+      NEXUS_LIVE_TRADING_ENABLED: "false"
+      NEXUS_LEGAL_REVIEW_COMPLETE: "false"
+      NEXUS_OWNER_LIVE_AUTHORITY_GRANTED: "false"
+      NEXUS_MODEL_ALLOW_PAID_APIS: "false"           # D-019
+      # The same archive root `core` uses, so the quotes this loop observes are the quotes the API can
+      # re-read. The archive is the runner's only durable output: it constructs no store and no audit
+      # log, and its blotter is in-process (F-44), so a dashboard reading the API's /v1/paper routes
+      # does not show this process. Stated here because it is the kind of thing a deployment assumes.
+      NEXUS_ARCHIVE_ROOT: /app/data/archive
+      NEXUS_DATA_SOURCES_ENABLED: "bybit-public,okx-public,binance-vision,dukascopy"
+      NEXUS_PAPER_ENABLED: "true"
+      # okx-public is the one free real-time source whose seeded mapping is at DATA_AVAILABLE. Bybit's
+      # BTCUSDT mapping is only SUPPORTED — below MINIMUM_STATUS_FOR_ARCHIVE — and F-2 records that
+      # bybit v5 answers 403 from hosted runners, so a Bybit default would accept zero quotes and still
+      # report a healthy-looking flat curve. binance-vision and dukascopy are historical archives and
+      # the runner refuses them by name.
+      NEXUS_PAPER_FEED: ${NEXUS_PAPER_FEED:-okx-public:BTC-USDT-SWAP}
+      NEXUS_PAPER_POLL_SECONDS: ${NEXUS_PAPER_POLL_SECONDS:-5.0}
+    volumes:
+      # Only the archive. The runner writes no database, so mounting core-data would advertise a
+      # shared store that does not exist; F-44 is the finding that would change that.
+      - archive-data:/app/data/archive
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    # No healthcheck, and that is a gap stated rather than hidden: the loop exposes no port, so there
+    # is nothing to curl. Its per-cycle logs carry quotes_accepted and the stack's Loki collects them,
+    # so a dead feed is readable in logs; alerting on one would need a heartbeat file. An unbounded run
+    # keeps polling through an outage, which is correct, and the bounded form (`--cycles N`) exits 4
+    # when it observed nothing — that is the form a cron entry or a CI step should use.
+    networks: [nexus-internal]
+
+  # ---------------------------------------------------------------- TLS entry point
+  caddy:
+    image: caddy:2-alpine                      # Caddy (Apache-2) + Let's Encrypt
+    <<: *restart-policy
+    logging: *default-logging
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - core
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks: [nexus-internal]
+
+  # ---------------------------------------------------------------- observability
+  prometheus:
+    image: prom/prometheus:latest              # Prometheus (Apache-2)
+    profiles: [observability, full]
+    <<: *restart-policy
+    logging: *default-logging
+    volumes:
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks: [nexus-internal]
+
+  grafana:
+    image: grafana/grafana-oss:latest          # Grafana OSS (AGPL-3)
+    profiles: [observability, full]
+    <<: *restart-policy
+    logging: *default-logging
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set in .env, never commit}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks: [nexus-internal]
+
+  loki:
+    image: grafana/loki:latest                 # Loki (AGPL-3)
+    profiles: [observability, full]
+    <<: *restart-policy
+    logging: *default-logging
+    volumes:
+      - loki-data:/loki
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks: [nexus-internal]
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:latest         # Uptime Kuma (MIT) — self-monitoring
+    profiles: [observability, full]
+    <<: *restart-policy
+    logging: *default-logging
+    volumes:
+      - kuma-data:/app/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks: [nexus-internal]
+
+  # ------------------------------------------------- optional local model (no GPU on free tier)
+  # Uncomment on the 12 GB host only after the core stack is stable. Quantized 7B models
+  # run at roughly 5-12 tok/s on Ampere A1 CPU. Never receives credentials or positions.
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   profiles: [ai]
+  #   volumes: [ollama-data:/root/.ollama]
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         memory: 5120M
+  #   networks: [nexus-internal]
+
+volumes:
+  db-data:
+  nats-data:
+  minio-data:
+  core-data:
+  # Capped in practice by the D-024 retention ladder, not by the volume driver: ticks 30d,
+  # 1m bars 12mo, 5m/daily bars indefinite. On the 200 GB free-tier disk this is the largest
+  # consumer, so retention runs before the disk-watermark fail-safe, not after.
+  archive-data:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  grafana-data:
+  loki-data:
+  kuma-data:
+  # ollama-data:
+
+networks:
+  nexus-internal:
+    driver: bridge

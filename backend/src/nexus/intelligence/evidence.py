@@ -1,0 +1,516 @@
+"""The first writer for the intelligence-memory tables: ``evidence_ref`` (L-C, Stage 8.2).
+
+Stage 6 built the table and left it empty. Nothing in ``src/`` had ever inserted into it, so the shape
+was a promise nobody had kept: an evidence row that cannot say where it came from, when it was observed
+and what its data status was cannot support a decision anyone can audit. This module keeps the promise
+for one table, audited as ``evidence.recorded`` and projected through the existing write-ahead path, so
+a crash between the audit entry and the row is a hole :func:`reproject_missing` can fill.
+
+**The two timestamps are the point.** ``observed_at`` is the venue's own timestamp for the observation;
+``retrieved_at`` is this system's clock at the moment it received it. Finding F-14 is that all four
+adapters put *venue* time into ``observed_at`` and record no receipt time anywhere, so the interval
+between the two — the only thing that would make latency measurable — does not currently exist in the
+system. The owner's ruling for this batch was the cheap half: write both columns separately and leave
+F-14 open rather than change four adapters inside a batch that is also rebuilding two tables. So:
+
+* ``retrieved_at`` is a **required** argument with no default. Defaulting it to ``observed_at`` — or to
+  "now" at write time, which is later than receipt — would manufacture a latency figure out of nothing,
+  and a fabricated zero is worse than a missing number because it looks like a measurement.
+* ``observed_at_source`` records whether the observation time really came from the venue. When it did
+  not, the two timestamps are equal by construction, the row says so, and no consumer can read a latency
+  off it. Passing ``LOCAL_FALLBACK`` with two *different* timestamps is refused: the flag would then be
+  claiming something the row contradicts.
+*(Pointer added by Stage 8.4, which closed F-14 at the adapters: the four now stamp a real receipt
+time — ``observed_at`` on every record is ours, ``venue_timestamp`` is the venue's — so the interval this
+module wanted exists upstream at last. Nothing here changed and nothing is wired: ``retrieved_at`` is
+still a required argument supplied by the caller, because D-052 scoped 8.4 to the adapters alone, with no
+writer wiring and no new columns. What 8.4 changes for a future caller is that a receipt time worth
+passing now exists; the paragraph above stays as it was ruled.)*
+
+* The apparent interval is stored beside them as ``apparent_latency_seconds``. It is **not** a latency
+  measurement. It is ``retrieved_at - observed_at``, which conflates network delay with the offset
+  between the venue's clock and ours, and the venue's clock runs both ahead of and behind ours —
+  run 27 measured 1.089 s of venue time against 0.298 s of wall clock. A negative value is not an error
+  either; it is evidence that the venue's clock is ahead. Treating this number as latency is exactly the
+  mistake F-14 exists to prevent, which is why it is written down next to the flag that qualifies it.
+
+**The checksum covers the row, not just its payload** — and did not when this module was first shipped.
+Stage 8.2 hashed ``payload`` alone and documented the result as "an integrity checksum over the recorded
+row", which was wrong in a way that only a second pair of rows could show: two evidence rows recorded
+with different ``source``, ``observed_at``, ``retrieved_at`` and ``locator`` values but no caller payload
+produced the *same* checksum, because the material hashed was the two provenance keys the writer adds and
+nothing else. Eleven of the row's stored fields could change undetected, ``observed_at`` among them — the
+field finding F-14 is about. Stage 8.3's route probe found it and this is recorded as **F-21**: the hash
+now covers every stored field except ``checksum`` itself and ``audit_ref``, and
+:func:`verify_evidence_checksum` recomputes it from a row so the property is checkable rather than
+asserted. ``audit_ref`` is excluded because it does not exist yet when the writer hashes — the audit entry
+is written first (L-2) and the ref comes back from it — and because the link into the chain is protected
+by the chain's own hash linkage, not by this value.
+*(Pointer added by Stage 8.5, which grew the row: migration ``0005_memory_beliefs`` added
+``evidence_ref.contradicts`` — F-18's fourth gap, the link ``docs/10`` §3.1's "contradictions highlighted
+and linked" needs — and ``contradicts`` therefore joined this tuple, so the covered set is ten fields of
+twelve stored. The paragraph above is unchanged and still describes the reason the list is what it is; the
+existing guard in ``tests/test_evidence_writer.py`` that derives the covered set from ``PRAGMA
+table_info(evidence_ref)`` is what forced the column and the list to move in one commit rather than two,
+which is the guard doing exactly the job its docstring claims. What Stage 8.5 does **not** change is the
+meaning of the value: it is still an integrity checksum over the recorded row and not an authenticity
+signature over the bytes the venue sent.)*
+
+**``contradicts`` records a disagreement; it does not detect one, and it does not settle one.** Stage 8.5
+added the column because ``docs/10`` §3.1 asks the dossier view for *"contradictions highlighted and
+linked"* and ``docs/03`` J-04 step 4 asks for *"corroborating/contradictory sources"* — and until then
+nothing could record that two sources disagree, so nothing could be highlighted. Three things about it are
+stated here because each is a way the column could be over-read:
+
+* It is a **claim by whoever recorded the row**, not a computed fact. Nothing in this system can detect
+  that two observations disagree semantically, and a column that looked like a detection would be a
+  judgement dressed as data. The recorder is named by the audit entry beside the row.
+* It points **one way**. ``evidence_ref`` has no back-link column, so "which rows contradict this one" is
+  a scan; the dossier route derives the reverse direction at read time and says so, and a reader going
+  straight to the database has to scan too.
+* It **resolves nothing**. Both rows stay readable and neither is deleted, downgraded or hidden, and the
+  row with the higher confidence does not win: ``docs/12`` §1.3's law (A-02+A-08) is that *no gate can be
+  satisfied by a confidence value*, and ``docs/10`` §3.2 that confidence never overrides a failed stage. A
+  contradiction is an input to a review, which is a person, and this batch builds no reviewer.
+
+**``dossier_id`` names a case, and the case must exist.** Stage 8.6 added the check and closed **F-25**,
+which Stage 8.5 measured rather than fixed: ``record_evidence(dossier_id="DOS-NOPE")`` was accepted, the
+row landed, and the store held zero dossiers — while the same codebase already refused a dangling
+``instrument_id``, a dangling ``contradicts`` and a dangling ``evidence_ids`` entry, so the fourth parent
+was the only one nothing guarded. ``evidence_ref.dossier_id`` has carried a ``REFERENCES`` clause since
+``0002_memory``, and ``PRAGMA foreign_keys`` is deliberately off (``docs/13`` §2.5: recovery re-projects in
+chain order, which is not always parent-first, and a hard FK failure mid-recovery would be worse than the
+inconsistency it prevents), so SQLite stored the dangling parent without comment. The row was not corrupt —
+it verified against its own checksum — it was **orphaned**: ``GET /v1/intelligence/dossiers/{id}`` returns
+404 for an id that names no case, so it was unreachable through the one route that serves evidence, and
+``ix_evidence_dossier`` indexed a value that matched nothing. Two things are stated here because each is a
+way the check could be over-read:
+
+* ``None`` stays legitimate and is **not** the same claim as a name that resolves. ``None`` says the
+  evidence belongs to no case yet, which ``0002_memory`` allows by making the column nullable, and refusing
+  it would make the first writer depend on the second — the reason ``0002_memory``'s own ordering survived
+  Stage 8.3 at all.
+* The value is stored **as given**, not stripped and not normalised. An id with padding is not an id the
+  store holds, so it is refused as dangling rather than quietly rewritten into one that is, and what a
+  caller said is what lands in the row — the same choice §12.12's limitation 12 records for a confidence.
+
+The check lives in this writer and not in ``store.save_evidence_ref``, for the reason ``save_dossier``'s
+docstring already gives for the instrument check: the store cannot refuse a dangling parent without making
+boot recovery depend on a read, and a replay that fails on a missing parent is worse than the row it was
+replaying. ``record_snapshot`` forwards here, so it inherits the refusal rather than needing its own.
+
+``kind`` is passed through as free text with the schema's default. No vocabulary for it is declared
+anywhere in the repository — the only thing the schema says is ``DEFAULT 'DATA'`` — and inventing one
+here would put a plausible-looking enum in front of a distinction nobody has yet drawn.
+
+The refusals in this module raise ``ValueError``, following ``core.time.iso_utc``, which refuses a naive
+datetime the same way. These are programmer errors at an internal boundary, not operational conditions,
+so they get no ``RejectReason``: a reason code is vocabulary the audit log and the UI both consume, and
+spending it on a call that should never have been written that way would dilute it.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
+from typing import Any
+
+from nexus.audit.chain import sha256_hex
+from nexus.core.ids import iso_utc, new_id
+from nexus.data.freshness import DataStatus, MarketSnapshot
+from nexus.store.serialise import dumps_canonical, to_jsonable
+from nexus.store.writeahead import write_with_audit
+
+__all__ = [
+    "CHECKSUMMED_FIELDS",
+    "EVENT_TYPE",
+    "EvidenceReceipt",
+    "ObservedAtSource",
+    "evidence_checksum",
+    "record_evidence",
+    "record_snapshot",
+    "snapshot_payload",
+    "verify_evidence_checksum",
+]
+
+#: The audited event this writer emits. In ``writeahead.PROJECTABLE`` since Stage 8.2.
+EVENT_TYPE = "evidence.recorded"
+
+#: Evidence ids. The repository's test fixtures already used this prefix for evidence rows.
+EVIDENCE_PREFIX = "EV"
+
+
+class ObservedAtSource(StrEnum):
+    """Where ``observed_at`` came from. The distinction is the whole content of finding F-14."""
+
+    #: The venue published this timestamp. ``retrieved_at - observed_at`` then means something, up to
+    #: the clock offset between the venue and us, which is not bounded anywhere in the system.
+    VENUE = "VENUE"
+    #: The venue published none, so the local clock stands in. The two timestamps are equal by
+    #: construction and the row carries no latency information at all.
+    LOCAL_FALLBACK = "LOCAL_FALLBACK"
+
+
+#: The stored fields :func:`evidence_checksum` covers. ``checksum`` is excluded by definition;
+#: ``audit_ref`` is excluded because the audit entry is written first and its ref does not exist yet when
+#: the writer hashes — the chain's own hash linkage protects that link instead. Named once so the writer
+#: that computes the value and the reader that verifies it cannot drift apart.
+#:
+#: ``contradicts`` joined in Stage 8.5, when migration ``0005_memory_beliefs`` added the column. It joins
+#: because a stored column this tuple does not name is a column that can change undetected, which is F-21
+#: stated one column at a time — and neither of the two exclusions above applies to it, since it is known
+#: at write time and is not the value being computed. ``tests/test_evidence_writer.py`` derives this set
+#: from the live table's ``PRAGMA table_info`` and fails when the two disagree, which is what made adding
+#: the column and adding it here one decision rather than two.
+CHECKSUMMED_FIELDS: tuple[str, ...] = (
+    "evidence_id",
+    "dossier_id",
+    "source",
+    "kind",
+    "observed_at",
+    "retrieved_at",
+    "data_status",
+    "locator",
+    "payload",
+    "contradicts",
+)
+
+
+def evidence_checksum(row: Mapping[str, Any]) -> str:
+    """The integrity checksum of one evidence row, recomputable from the row itself.
+
+    Works on the event a writer is about to send and on a row read back from the store, because both
+    carry :data:`CHECKSUMMED_FIELDS` under the same names and ``dumps_canonical`` is stable across the
+    JSON round trip. Anything else in the mapping is ignored, so a reader cannot change the value by
+    adding a key.
+    """
+    material = {name: row.get(name) for name in CHECKSUMMED_FIELDS}
+    return sha256_hex(dumps_canonical(material))
+
+
+def verify_evidence_checksum(row: Mapping[str, Any]) -> bool:
+    """True when a stored row still matches what its writer hashed.
+
+    ``False`` means the row was altered after it was written, or was written before the covered set last
+    changed — Stage 8.3 widened it from one field to nine (F-21) and Stage 8.5 from nine to ten when
+    ``contradicts`` joined the table. Which of those happened is indistinguishable from the row alone,
+    which is why the caller is told only that the value does not match. A row written before either change
+    would therefore report tampering that did not occur; D-052's ruling 4 records that both intelligence
+    tables are empty in production because no writer has a caller, so no stored row is in that position.
+    A row with no checksum at all (``checksum`` is nullable) verifies as ``False`` rather than ``True``: an
+    absence of evidence of tampering is not evidence of integrity.
+    """
+    stored = row.get("checksum")
+    if stored is None or str(stored) == "":
+        return False
+    return str(stored) == evidence_checksum(row)
+
+
+def _aware(moment: datetime, name: str) -> datetime:
+    """Refuse a naive datetime before any arithmetic is done with it.
+
+    :func:`iso_utc` refuses one too, but it runs *after* the two timestamps have been subtracted, and a
+    naive ``observed_at`` against an aware ``retrieved_at`` raises a bare ``TypeError`` from the
+    subtraction — an unclassified crash at a point where nothing names the condition (the failure mode
+    finding F-4 was about). Checking here puts the refusal at the boundary, with the argument named.
+    """
+    if moment.tzinfo is None:
+        raise ValueError(f"{name} must be an aware UTC datetime; got a naive {moment.isoformat()!r}")
+    return moment
+
+
+def _resolve_contradiction(store: Any, contradicts: str | None, evidence_id: str) -> str | None:
+    """Check a claimed contradiction and return the id it points at, or ``None`` when none was claimed.
+
+    Two claims are refused because neither can be true. A row cannot contradict itself: a contradiction is
+    a disagreement between two observations, and a pointer at the row's own id records neither. And it
+    cannot contradict an id the store has never held — ``evidence_ref.contradicts`` carries a
+    ``REFERENCES`` clause that ``PRAGMA foreign_keys`` deliberately leaves unenforced, so SQLite would
+    store the dangling pointer without comment, and the dossier route would then render a contradiction
+    whose other side does not exist. That is a link to nothing inside the one view ``docs/10`` §3.1 asks to
+    carry contradictions "highlighted and linked", which is worse than no link: it reads as evidence of a
+    disagreement nobody has recorded.
+
+    The consequence is an ordering rule, stated rather than left to be inferred: the contradicted row must
+    exist first, so a disagreement between two new observations takes two calls, and the earlier row never
+    learns about the later one. Nothing back-links in the store — the route derives the reverse direction
+    by scanning, and says so.
+    """
+    if contradicts is None:
+        return None
+    target = str(contradicts).strip()
+    if not target:
+        raise ValueError(
+            "contradicts must name an evidence row or be None; an empty string is neither, and a "
+            "contradiction nobody can identify is not a link"
+        )
+    if target == evidence_id:
+        raise ValueError(
+            f"evidence {target!r} cannot contradict itself: a contradiction is a disagreement between two "
+            "observations, and a row pointing at its own id records neither. Record the second observation "
+            "and point one of the two at the other"
+        )
+    if store.get_evidence_ref(target) is None:
+        raise ValueError(
+            f"evidence {target!r} does not exist, so nothing can be recorded as contradicting it. "
+            "evidence_ref.contradicts REFERENCES evidence_ref since migration 0005_memory_beliefs, but "
+            "PRAGMA foreign_keys is deliberately off, so SQLite would store this dangling pointer without "
+            "comment and the dossier route would serve a link whose other side is absent — record the "
+            "other observation first"
+        )
+    return target
+
+
+def _resolve_dossier(store: Any, dossier_id: str | None) -> str | None:
+    """Check the case a row is attached to, and return it as given, or ``None`` when none was named.
+
+    Two claims are refused, separately, because they are different mistakes and folding them into one
+    message would tell a caller less than the writer knows. An empty string is neither a case nor ``None``:
+    ``None`` is how this writer records evidence that belongs to no case yet, and ``''`` is a caller that
+    meant to pass one of the two and passed neither. A name the store has never held is a dangling parent —
+    ``evidence_ref.dossier_id`` has carried ``REFERENCES dossier`` since ``0002_memory``, but
+    ``PRAGMA foreign_keys`` is deliberately off (``docs/13`` §2.5), so SQLite would store it without
+    comment and the row would be orphaned rather than corrupt: it still verifies its own checksum, it is
+    indexed by ``ix_evidence_dossier`` against nothing, and the route that serves evidence 404s on an id
+    naming no case, so nothing that reads the system through its API can ever find it again. That is F-25,
+    which Stage 8.5 measured and D-054's ruling 3 ordered fixed alone.
+
+    The parent is checked before the contradiction because it is the wider claim of the two: a row that
+    belongs to no case that exists has no business recording a disagreement inside one.
+    """
+    if dossier_id is None:
+        return None
+    target = str(dossier_id)
+    if not target.strip():
+        raise ValueError(
+            "dossier_id must name a dossier or be None; an empty string is neither, and None — not '' — "
+            "is how this writer records evidence that belongs to no case yet"
+        )
+    if store.get_dossier(target) is None:
+        raise ValueError(
+            f"dossier {target!r} does not exist, so evidence cannot be attached to it: the row would be "
+            "orphaned rather than corrupt — it would still verify its own checksum, ix_evidence_dossier "
+            "would index a value matching nothing, and the route that serves evidence 404s on an id naming "
+            "no case, so nothing reading through the API could find it again. evidence_ref.dossier_id "
+            "REFERENCES dossier since migration 0002_memory, but PRAGMA foreign_keys is deliberately off, "
+            "so SQLite would store this dangling parent without comment. Open the dossier first, or pass "
+            "dossier_id=None to record evidence that belongs to no case yet"
+        )
+    return target
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceReceipt:
+    """What one write produced. Returned so the caller can cite the evidence it just recorded."""
+
+    evidence_id: str
+    audit_ref: str
+    source: str
+    kind: str
+    observed_at: datetime
+    retrieved_at: datetime
+    observed_at_source: ObservedAtSource
+    #: ``retrieved_at - observed_at`` in seconds. Conflates network delay with clock offset; may be
+    #: negative. Not a latency measurement — see the module docstring.
+    apparent_latency_seconds: float
+    data_status: str
+    checksum: str
+    dossier_id: str | None = None
+    #: The row this one is recorded as contradicting, or ``None``. A claim by the recorder, one-way, and
+    #: not a resolution — see the module docstring.
+    contradicts: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "evidence_id": self.evidence_id,
+            "audit_ref": self.audit_ref,
+            "source": self.source,
+            "kind": self.kind,
+            "observed_at": iso_utc(self.observed_at),
+            "retrieved_at": iso_utc(self.retrieved_at),
+            "observed_at_source": self.observed_at_source.value,
+            "apparent_latency_seconds": self.apparent_latency_seconds,
+            "data_status": self.data_status,
+            "checksum": self.checksum,
+            "dossier_id": self.dossier_id,
+            "contradicts": self.contradicts,
+        }
+
+
+def snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
+    """A market observation as evidence: the prices, and both of the snapshot's own time fields.
+
+    ``MarketSnapshot`` carries ``observed_at`` *and* ``venue_timestamp``. Where the two disagree, that
+    disagreement is evidence about the venue's clock and is preserved rather than resolved here.
+    """
+    return {
+        "instrument_id": snapshot.instrument_id,
+        "venue": snapshot.venue,
+        "bid": str(snapshot.bid) if snapshot.bid is not None else None,
+        "ask": str(snapshot.ask) if snapshot.ask is not None else None,
+        "last": str(snapshot.last) if snapshot.last is not None else None,
+        "mid": str(snapshot.mid) if snapshot.mid is not None else None,
+        "spread": str(snapshot.spread) if snapshot.spread is not None else None,
+        "delayed": snapshot.delayed,
+        "delay_seconds": snapshot.delay_seconds,
+        "source": snapshot.source,
+        "venue_timestamp": (
+            iso_utc(snapshot.venue_timestamp) if snapshot.venue_timestamp is not None else None
+        ),
+    }
+
+
+def record_evidence(
+    *,
+    audit: Any,
+    store: Any,
+    source: str,
+    observed_at: datetime,
+    retrieved_at: datetime,
+    payload: Mapping[str, Any] | None = None,
+    kind: str = "DATA",
+    data_status: DataStatus | str = DataStatus.UNAVAILABLE,
+    locator: str = "",
+    dossier_id: str | None = None,
+    contradicts: str | None = None,
+    observed_at_source: ObservedAtSource = ObservedAtSource.VENUE,
+    evidence_id: str | None = None,
+    actor: str = "EVIDENCE",
+) -> EvidenceReceipt:
+    """Record one piece of evidence, audit entry first and projection second (L-2).
+
+    ``audit`` and ``store`` are typed loosely to match :func:`write_with_audit`, which takes the same
+    seam. ``data_status`` defaults to ``UNAVAILABLE`` — the fail-closed value, and the schema's own
+    default: a writer that assumed ``LIVE`` would be asserting freshness it has not checked.
+
+    ``contradicts`` names another ``evidence_ref`` row this one is recorded as disagreeing with. It is
+    optional and ``None`` means no disagreement was claimed, which is not the same as claiming that none
+    exists — nothing in this system can establish that, and the column does not pretend to.
+
+    ``dossier_id`` names the case this evidence belongs to and must exist in the store, or be ``None`` —
+    which is a different claim, not a missing one: evidence that belongs to no case yet (F-25, closed by
+    Stage 8.6).
+    """
+    if not source:
+        raise ValueError("evidence needs a source: an observation from nowhere cannot be audited")
+    try:
+        status = DataStatus(str(data_status))
+    except ValueError as exc:
+        raise ValueError(
+            f"data_status must be one of {[member.value for member in DataStatus]}; got {data_status!r}"
+        ) from exc
+
+    observed_at = _aware(observed_at, "observed_at")
+    retrieved_at = _aware(retrieved_at, "retrieved_at")
+    latency = (retrieved_at - observed_at).total_seconds()
+    if observed_at_source is ObservedAtSource.LOCAL_FALLBACK and latency != 0.0:
+        raise ValueError(
+            "observed_at_source=LOCAL_FALLBACK means the observation time is our own clock, so it "
+            f"cannot differ from retrieved_at; got {latency:+.6f}s apart, which means the venue "
+            "timestamp exists and should be passed with observed_at_source=VENUE"
+        )
+
+    # The case before the contradiction: the parent is the wider claim, and a row attached to no case
+    # that exists has no business recording a disagreement inside one.
+    resolved_dossier = _resolve_dossier(store, dossier_id)
+
+    # Resolved before the contradiction is checked, so a row generated in this same call can be compared
+    # against the id it points at: a self-contradiction is not a disagreement, it is a mistake.
+    resolved_id = str(evidence_id or "") or new_id(EVIDENCE_PREFIX)
+    resolved_contradicts = _resolve_contradiction(store, contradicts, resolved_id)
+
+    # The provenance fields are written last so a caller's payload cannot overwrite them: they are what
+    # makes the row interpretable, and a row that can be talked out of its own qualifications is a row
+    # that will be.
+    body: dict[str, Any] = dict(to_jsonable(dict(payload or {})))
+    body.update(
+        {
+            "observed_at_source": observed_at_source.value,
+            "apparent_latency_seconds": round(latency, 6),
+        }
+    )
+
+    event: dict[str, Any] = {
+        "evidence_id": resolved_id,
+        "dossier_id": resolved_dossier,
+        "contradicts": resolved_contradicts,
+        "source": source,
+        "kind": kind,
+        # iso_utc refuses a naive datetime, so an ambiguous timestamp cannot be recorded at all.
+        "observed_at": iso_utc(observed_at),
+        "retrieved_at": iso_utc(retrieved_at),
+        "data_status": status.value,
+        "locator": locator,
+        "payload": body,
+    }
+    # Computed over the whole event rather than over `body` alone, so a change to any stored field is
+    # detectable and not only a change to the payload (F-21). This is an integrity checksum over the
+    # recorded row, not an authenticity signature over the bytes the venue sent: nothing in this system
+    # can yet attest to those.
+    event["checksum"] = evidence_checksum(event)
+
+    entry = write_with_audit(audit=audit, store=store, event_type=EVENT_TYPE, payload=event, actor=actor)
+
+    return EvidenceReceipt(
+        evidence_id=str(event["evidence_id"]),
+        audit_ref=str(entry.record_id),
+        source=source,
+        kind=kind,
+        observed_at=observed_at,
+        retrieved_at=retrieved_at,
+        observed_at_source=observed_at_source,
+        apparent_latency_seconds=round(latency, 6),
+        data_status=status.value,
+        checksum=str(event["checksum"]),
+        dossier_id=resolved_dossier,
+        contradicts=resolved_contradicts,
+    )
+
+
+def record_snapshot(
+    *,
+    audit: Any,
+    store: Any,
+    snapshot: MarketSnapshot,
+    retrieved_at: datetime,
+    kind: str = "DATA",
+    data_status: DataStatus | str = DataStatus.UNAVAILABLE,
+    locator: str = "",
+    dossier_id: str | None = None,
+    contradicts: str | None = None,
+    observed_at_source: ObservedAtSource = ObservedAtSource.VENUE,
+    actor: str = "EVIDENCE",
+) -> EvidenceReceipt:
+    """Record one market observation as evidence.
+
+    A snapshot with no ``observed_at`` is refused unless the caller says out loud that the local clock
+    is standing in for the venue's. Substituting silently is the failure F-14 describes: the row would
+    look like a measurement of latency and be a measurement of nothing.
+    """
+    retrieved_at = _aware(retrieved_at, "retrieved_at")
+    observed = snapshot.observed_at
+    if observed is None:
+        if observed_at_source is not ObservedAtSource.LOCAL_FALLBACK:
+            raise ValueError(
+                "the snapshot carries no observed_at, so the venue published no timestamp for it; "
+                "record it with observed_at_source=LOCAL_FALLBACK to say that the observation time is "
+                "our own clock, or pass the venue's timestamp"
+            )
+        observed = retrieved_at
+    return record_evidence(
+        audit=audit,
+        store=store,
+        source=snapshot.source or snapshot.venue,
+        observed_at=observed,
+        retrieved_at=retrieved_at,
+        payload=snapshot_payload(snapshot),
+        kind=kind,
+        data_status=data_status,
+        locator=locator,
+        dossier_id=dossier_id,
+        contradicts=contradicts,
+        observed_at_source=observed_at_source,
+        actor=actor,
+    )

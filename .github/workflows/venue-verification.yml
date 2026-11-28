@@ -1,0 +1,260 @@
+# Live verification of the free public market-data endpoints — closes O-009 and O-010.
+#
+# Why this is a separate workflow and not a job in ci.yml
+# ------------------------------------------------------
+# ci.yml must be runnable from a checkout with no network beyond the package indexes, because
+# every other job in it is deterministic. This one contacts Bybit, OKX, data.binance.vision and
+# datafeed.dukascopy.com, so its result depends on the state of four services nobody here controls.
+# Mixing the two would make an upstream outage look like a broken build.
+#
+# It exists because the adapter tests all run against a `RecordingTransport` holding synthetic
+# responses written from published API contracts. That proves the normalisation logic is internally
+# consistent and proves nothing about the world: it cannot notice a renamed field, a changed
+# divisor, a number that became a string, or a URL shape that was misread. For Dukascopy the gap is
+# wider — the bi5 binary layout was implemented from documentation alone and `LAYOUT_VERIFIED` is
+# False because no real file had ever been downloaded.
+#
+# Cost: $0. Every endpoint here is public and unauthenticated (D-026). This workflow has no secrets
+# in its environment and needs none; that is asserted by test_repo_hygiene.py rather than merely
+# intended.
+
+name: venue-verification
+
+on:
+  # Upstream drift is the thing a schedule catches: a venue can change its response shape on any
+  # day, and no commit here will have happened to trigger a run.
+  schedule:
+    - cron: "40 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: >-
+          Runner label. Use the default for a GitHub-hosted runner; use a self-hosted label once the
+          deployment VM exists, because Bybit geo-blocks hosted runners and cannot be verified from
+          them.
+        required: false
+        default: "ubuntu-latest"
+  # A change to an adapter, to the transport, or to the verification itself should be checked
+  # against the live endpoints before it merges, not only on Monday mornings.
+  push:
+    paths:
+      - "backend/src/nexus/ingestion/**"
+      - "backend/src/nexus/data/records.py"
+      - "backend/tests/test_live_endpoints.py"
+      - ".github/workflows/venue-verification.yml"
+  pull_request:
+    paths:
+      - "backend/src/nexus/ingestion/**"
+      - "backend/src/nexus/data/records.py"
+      - "backend/tests/test_live_endpoints.py"
+      - ".github/workflows/venue-verification.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: venue-verify-${{ github.ref }}
+  # Do not cancel a run in flight. Each one makes real network calls and produces the evidence that
+  # closes O-009/O-010; cancelling trades that evidence for minutes this repository does not need
+  # to save.
+  cancel-in-progress: false
+
+env:
+  PYTHON_VERSION: "3.11"
+  # The same fail-closed posture as ci.yml. This workflow reads public market data and nothing
+  # else; no stage of it may enable trading.
+  NEXUS_LIVE_TRADING_ENABLED: "false"
+  NEXUS_ENVIRONMENT: "DISABLED"
+  NEXUS_AUDIT_BACKEND: "memory"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  live:
+    name: Live public endpoints (O-009 / O-010)
+    # ubuntu-latest unless a dispatch asked for a self-hosted runner. GitHub's hosted runners are in
+    # jurisdictions Bybit restricts, so its five checks can only be verified from elsewhere.
+    runs-on: ${{ github.event.inputs.runner || 'ubuntu-latest' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run the adapters against the live public endpoints
+        working-directory: backend
+        run: |
+          # NEXUS_LIVE_VERIFY=1 lifts the module-level skip; without it the file collects one skip
+          # and verifies nothing, which is the correct behaviour for a sandbox and useless here.
+          #
+          # `junit_logging=all` is load-bearing. pytest's default writes no captured output into the
+          # JUnit XML, and the measurements this run exists to produce are printed to stdout by the
+          # tests. Without this option the report below has statuses and no numbers — a green or red
+          # mark with nothing inside it.
+          #
+          # The captures directory holds the raw responses, which are the durable prize: real
+          # payloads, where the offline suite has only ever had synthetic ones.
+          NEXUS_LIVE_VERIFY=1 \
+          NEXUS_LIVE_FIXTURE_DIR=../live-captures \
+            python -m pytest tests/test_live_endpoints.py -m live \
+            -q -p no:cacheprovider -o junit_logging=all \
+            --junitxml=../live-report.xml
+
+      # Runs even when the step above failed, because the failure detail is the point. Published as
+      # an annotation for the same reason the Trivy and smoke reports are: GitHub serves job logs
+      # from a host outside the development environment's egress allowlist, so a finding that lives
+      # only in the log is a finding nobody can read (that was O-011).
+      - name: Publish the verification report as a check annotation
+        if: ${{ always() }}
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import sys
+          import xml.etree.ElementTree as ET
+
+          # One annotation only: GitHub caps annotations at 10 per level per step, so a report that
+          # emitted one per test would silently lose everything past the tenth.
+          # GitHub caps an annotation message at 4096 characters and truncates it *silently*, which
+          # is how the Dukascopy layout evidence -- the whole point of the run -- was once cut off
+          # mid-value. The cap applies to the ESCAPED form, and escaping expands the text (":" becomes
+          # "%3A", "," becomes "%2C", a newline becomes "%0A"), so budgeting the raw length is not
+          # enough: a body of 4000 characters full of URLs escapes past the limit and loses its tail.
+          LIMIT = 4096
+
+          def escape(text):
+              return (
+                  text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+                  .replace(":", "%3A").replace(",", "%2C")
+              )
+
+          def annotation(level, title, lines):
+              """Emit one annotation whose escaped form is guaranteed to fit."""
+              text = "\n".join(lines) if isinstance(lines, (list, tuple)) else str(lines)
+              if len(escape(text)) <= LIMIT:
+                  print(f"::{level} title={title}::{escape(text)}")
+                  return
+              # Truncate on the raw text, then re-check the escaped length, shrinking until it fits.
+              # The notice is appended last so it survives rather than being cut off itself.
+              cut = len(text)
+              while cut > 200:
+                  cut = int(cut * 0.85)
+                  candidate = text[:cut]
+                  notice = f"\n...truncated: {len(escape(text)) - LIMIT} escaped characters over the cap"
+                  if len(escape(candidate + notice)) <= LIMIT:
+                      print(f"::{level} title={title}::{escape(candidate + notice)}")
+                      return
+              print(f"::{level} title={title}::{escape(text[:200])}")
+
+          path = pathlib.Path("live-report.xml")
+          if not path.is_file():
+              annotation("warning", "live-verification", ["no report produced - the run did not happen"])
+              raise SystemExit(1)
+
+          suite = ET.parse(path).getroot().find("testsuite")
+          cases = list(suite.iter("testcase")) if suite is not None else []
+          if not cases:
+              annotation("warning", "live-verification", ["the report contains no test cases"])
+              raise SystemExit(1)
+
+          rows = []
+          for case in cases:
+              short = case.get("classname", "").split(".")[-1].removeprefix("Test")
+              name = f"{short}.{case.get('name', '?').removeprefix('test_')}"
+              evidence = []
+              for out in case.iter("system-out"):
+                  evidence += [
+                      line.removeprefix("EVIDENCE ").strip()
+                      for line in (out.text or "").splitlines()
+                      if line.startswith("EVIDENCE ")
+                  ]
+              failure = case.find("failure") if case.find("failure") is not None else case.find("error")
+              skipped = case.find("skipped")
+              if failure is not None:
+                  status, detail = "FAIL", (failure.get("message") or failure.text or "")[:400]
+              elif skipped is not None:
+                  message = skipped.get("message") or ""
+                  # A geo-block is not the same fact as a timeout. Bybit refuses GitHub's hosted
+                  # runners at the edge with 403 on public endpoints; nothing about our code is
+                  # wrong and nothing about their API was verified either. Reported separately so
+                  # the reader knows which endpoint still needs a runner elsewhere.
+                  status = "GEO-BLOCKED" if message.startswith("GEO-BLOCKED") else "SKIP"
+                  detail = message[:220]
+              else:
+                  status, detail = "PASS", ""
+              rows.append((status, name, detail, evidence))
+
+          passed = [r for r in rows if r[0] == "PASS"]
+          failed = [r for r in rows if r[0] == "FAIL"]
+          geo = [r for r in rows if r[0] == "GEO-BLOCKED"]
+          skipped = [r for r in rows if r[0] == "SKIP"]
+
+          # Failures and passes carry the evidence and come first: if anything has to be cut, it
+          # should be the repetitive explanation of why five endpoints were unreachable, not the
+          # measurements. Grouped skips replace five near-identical 220-character messages with one.
+          body = [
+              f"{len(passed)} passed / {len(failed)} failed / {len(geo)} geo-blocked / "
+              f"{len(skipped)} skipped of {len(rows)} live checks",
+              "",
+          ]
+          for status, name, detail, evidence in rows:
+              if status in ("FAIL", "PASS"):
+                  body.append(f"{status} {name}")
+                  body.extend(f"      {item}" for item in evidence)
+                  if status == "FAIL" and detail:
+                      body.append(f"      {detail}")
+
+          for label, group in (("GEO-BLOCKED", geo), ("SKIP", skipped)):
+              if not group:
+                  continue
+              body.append("")
+              body.append(f"{label} ({len(group)}): " + ", ".join(name for _, name, _, _ in group))
+              # One representative reason per group: they differ only in the URL, and the URLs are
+              # already visible in the failures and passes above.
+              body.append(f"      e.g. {group[0][2]}")
+
+          if failed:
+              # An adapter that mis-normalises a live response is a defect in this repository.
+              annotation("warning", "live-verification", body)
+              raise SystemExit(1)
+
+          if not passed:
+              # Every source unreachable. This is NOT a pass: a verification run that verified
+              # nothing must not look green, or the gate quietly stops meaning anything. Failing
+              # closed here is the same rule the rest of the codebase follows.
+              body.insert(1, "NOTHING WAS VERIFIED - every source was unreachable")
+              annotation("warning", "live-verification", body)
+              raise SystemExit(1)
+
+          if skipped or geo:
+              # Partial. Honest about it rather than reporting a clean sweep, and naming which
+              # endpoints were never reached: an unverified endpoint must stay visible.
+              parts = []
+              if geo:
+                  parts.append(f"{len(geo)} geo-blocked (need a runner outside the restricted region)")
+              if skipped:
+                  parts.append(f"{len(skipped)} could not reach their source")
+              body.insert(1, "PARTIAL - " + "; ".join(parts))
+              annotation("warning", "live-verification", body)
+              raise SystemExit(0)
+
+          annotation("notice", "live-verification", body)
+          PY
+
+      - name: Upload the raw captures and the report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-verification
+          path: |
+            live-captures/
+            live-report.xml
+          if-no-files-found: warn
